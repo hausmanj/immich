@@ -16,7 +16,12 @@ class StorageRepository {
 
     try {
       final entity = await AssetEntity.fromId(assetId);
-      file = await entity?.originFile;
+      if (entity == null) {
+        log.warning("Cannot get AssetEntity for asset $assetId");
+        return null;
+      }
+
+      file = await _getOriginalFile(assetId, entity);
       if (file == null) {
         log.warning("Cannot get file for asset $assetId");
         return null;
@@ -31,6 +36,68 @@ class StorageRepository {
       log.warning("Error getting file for asset $assetId", error, stackTrace);
     }
     return file;
+  }
+
+  Future<File?> _getOriginalFile(
+    String assetId,
+    AssetEntity entity, {
+    PMProgressHandler? progressHandler,
+  }) async {
+    var attemptedBaseExport = false;
+    var title = entity.title;
+
+    if (CurrentPlatform.isIOS) {
+      final hasAdjustments = await entity.darwin.hasAdjustments;
+      if (hasAdjustments) {
+        attemptedBaseExport = true;
+        title = await _getAssetTitle(entity);
+        log.warning(
+          "iOS asset has Photos adjustments; attempting unedited base export: "
+          "assetId=$assetId, title=$title, type=${entity.type}, "
+          "width=${entity.width}, height=${entity.height}, "
+          "duration=${entity.duration}",
+        );
+
+        final baseFile = await entity.darwin.getBaseFile(progressHandler: progressHandler);
+        if (baseFile != null) {
+          log.info(
+            "Using unedited base file for adjusted iOS asset: "
+            "assetId=$assetId, title=$title, path=${baseFile.path}",
+          );
+          return baseFile;
+        }
+
+        log.warning(
+          "Unable to export unedited base file for adjusted iOS asset; "
+          "falling back to existing original-file export to avoid skipping content: "
+          "assetId=$assetId, title=$title",
+        );
+      }
+    }
+
+    final file = await (progressHandler == null
+        ? entity.originFile
+        : entity.loadFile(isOrigin: true, progressHandler: progressHandler));
+    if (attemptedBaseExport) {
+      log.warning(
+        "Adjusted iOS asset fallback export result: "
+        "assetId=$assetId, title=$title, fallbackPath=${file?.path ?? "<null>"}",
+      );
+    }
+
+    return file;
+  }
+
+  Future<String> _getAssetTitle(AssetEntity entity) async {
+    try {
+      final title = await entity.titleAsync;
+      if (title.isNotEmpty) {
+        return title;
+      }
+    } catch (_) {
+      // Best-effort context only; file export should continue.
+    }
+    return entity.title;
   }
 
   // TODO(agg23): Unify these methods
@@ -108,7 +175,7 @@ class StorageRepository {
         return null;
       }
 
-      return await entity.loadFile(progressHandler: progressHandler);
+      return await _getOriginalFile(assetId, entity, progressHandler: progressHandler);
     } catch (error, stackTrace) {
       log.warning("Error loading file from cloud for asset $assetId", error, stackTrace);
       return null;
