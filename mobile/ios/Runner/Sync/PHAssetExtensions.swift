@@ -64,23 +64,29 @@ extension PHAsset {
       return filteredResources.first
     }
 
-    if let currentResource = filteredResources.first(where: { $0.isCurrent }) {
-      return currentResource
+    if let originalResource = getOriginalResource(from: filteredResources) {
+      return originalResource
     }
 
     if let fullSizeResource = filteredResources.first(where: { isFullSizeResourceType($0.type) }) {
       return fullSizeResource
     }
 
-    return nil
+    return filteredResources.first(where: { $0.isCurrent })
   }
 
   private func isValidResourceType(_ type: PHAssetResourceType) -> Bool {
     switch mediaType {
     case .image:
-      return [.photo, .alternatePhoto, .fullSizePhoto].contains(type)
+      return [.photo, .alternatePhoto, .fullSizePhoto, .adjustmentBasePhoto].contains(type)
     case .video:
-      return [.video, .fullSizeVideo, .fullSizePairedVideo].contains(type)
+      if [.video, .fullSizeVideo, .fullSizePairedVideo].contains(type) {
+        return true
+      }
+      if #available(iOS 13, *) {
+        return type == .adjustmentBaseVideo
+      }
+      return false
     default:
       return false
     }
@@ -94,6 +100,29 @@ extension PHAsset {
       return type == .fullSizeVideo
     default:
       return false
+    }
+  }
+
+  private func getOriginalResource(from resources: [PHAssetResource]) -> PHAssetResource? {
+    switch mediaType {
+    case .image:
+      return resources.first(where: { $0.type == .photo && !$0.isCurrent })
+        ?? resources.first(where: { $0.type == .adjustmentBasePhoto })
+        ?? resources.first(where: { $0.type == .photo })
+    case .video:
+      if let video = resources.first(where: { $0.type == .video && !$0.isCurrent }) {
+        return video
+      }
+
+      if #available(iOS 13, *) {
+        if let adjustmentBaseVideo = resources.first(where: { $0.type == .adjustmentBaseVideo }) {
+          return adjustmentBaseVideo
+        }
+      }
+
+      return resources.first(where: { $0.type == .video })
+    default:
+      return nil
     }
   }
 }

@@ -51,7 +51,6 @@ class ConnectivityApiImpl: ConnectivityApi {
     // - Not constrained (Low Data Mode)
     // Note: VPN over cellular stays metered because the path is still expensive.
     let isOnCellular = path.usesInterfaceType(.cellular)
-
     if !isOnCellular && !path.isExpensive && !path.isConstrained {
       capabilities.append(.unmetered)
     }
