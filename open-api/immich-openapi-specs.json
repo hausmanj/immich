@@ -5107,6 +5107,98 @@
         "x-immich-state": "Alpha"
       }
     },
+    "/assistant/assessment": {
+      "get": {
+        "description": "Read library metadata and return organization findings without mutating assets.",
+        "operationId": "assessLibrary",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssistantAssessmentResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Assess library organization",
+        "tags": [
+          "Assistant"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          }
+        ],
+        "x-immich-permission": "asset.read"
+      }
+    },
+    "/assistant/chat": {
+      "post": {
+        "description": "Ask the configured LLM provider for photo library organization suggestions.",
+        "operationId": "assistantChat",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssistantChatRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssistantChatResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Chat with the library assistant",
+        "tags": [
+          "Assistant"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          }
+        ],
+        "x-immich-permission": "asset.read"
+      }
+    },
     "/auth/admin-sign-up": {
       "post": {
         "description": "Create the first admin user in the system.",
@@ -18157,6 +18249,306 @@
           "locked"
         ],
         "type": "string"
+      },
+      "AssistantActionDto": {
+        "properties": {
+          "albumName": {
+            "nullable": true,
+            "type": "string"
+          },
+          "assetIds": {
+            "items": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "confidence": {
+            "maximum": 1,
+            "minimum": 0,
+            "type": "number"
+          },
+          "query": {
+            "nullable": true,
+            "type": "string"
+          },
+          "rationale": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "search",
+              "album_plan",
+              "folder_plan",
+              "metadata_audit",
+              "original_file_audit",
+              "review"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "albumName",
+          "assetIds",
+          "confidence",
+          "query",
+          "rationale",
+          "title",
+          "type"
+        ],
+        "type": "object"
+      },
+      "AssistantAssessmentBucketDto": {
+        "properties": {
+          "count": {
+            "type": "number"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "count",
+          "label"
+        ],
+        "type": "object"
+      },
+      "AssistantAssessmentFindingDto": {
+        "properties": {
+          "assetCount": {
+            "nullable": true,
+            "type": "number"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "query": {
+            "nullable": true,
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "album_plan",
+              "folder_plan",
+              "metadata_audit",
+              "original_file_audit",
+              "review"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "assetCount",
+          "detail",
+          "query",
+          "title",
+          "type"
+        ],
+        "type": "object"
+      },
+      "AssistantAssessmentResponseDto": {
+        "properties": {
+          "cameraMakes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "cameraModels": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "cities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "countries": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "findings": {
+            "items": {
+              "$ref": "#/components/schemas/AssistantAssessmentFindingDto"
+            },
+            "type": "array"
+          },
+          "generatedAt": {
+            "type": "string"
+          },
+          "summary": {
+            "properties": {
+              "albums": {
+                "type": "number"
+              },
+              "archivedAssets": {
+                "type": "number"
+              },
+              "audioAssets": {
+                "type": "number"
+              },
+              "favoriteAssets": {
+                "type": "number"
+              },
+              "imageAssets": {
+                "type": "number"
+              },
+              "otherAssets": {
+                "type": "number"
+              },
+              "totalAssets": {
+                "type": "number"
+              },
+              "unorganizedAssets": {
+                "type": "number"
+              },
+              "videoAssets": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "totalAssets",
+              "imageAssets",
+              "videoAssets",
+              "audioAssets",
+              "otherAssets",
+              "albums",
+              "unorganizedAssets",
+              "favoriteAssets",
+              "archivedAssets"
+            ],
+            "type": "object"
+          },
+          "topYears": {
+            "items": {
+              "$ref": "#/components/schemas/AssistantAssessmentBucketDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "cameraMakes",
+          "cameraModels",
+          "cities",
+          "countries",
+          "findings",
+          "generatedAt",
+          "summary",
+          "topYears"
+        ],
+        "type": "object"
+      },
+      "AssistantChatMessageDto": {
+        "properties": {
+          "content": {
+            "description": "Message content",
+            "maxLength": 8000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "role": {
+            "description": "Message author",
+            "enum": [
+              "user",
+              "assistant"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "content",
+          "role"
+        ],
+        "type": "object"
+      },
+      "AssistantChatRequestDto": {
+        "properties": {
+          "messages": {
+            "description": "Conversation messages",
+            "items": {
+              "$ref": "#/components/schemas/AssistantChatMessageDto"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "messages"
+        ],
+        "type": "object"
+      },
+      "AssistantChatResponseDto": {
+        "properties": {
+          "actions": {
+            "items": {
+              "$ref": "#/components/schemas/AssistantActionDto"
+            },
+            "type": "array"
+          },
+          "answer": {
+            "type": "string"
+          },
+          "context": {
+            "properties": {
+              "albums": {
+                "type": "number"
+              },
+              "sampledAssets": {
+                "type": "number"
+              },
+              "unorganizedAssets": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "albums",
+              "sampledAssets",
+              "unorganizedAssets"
+            ],
+            "type": "object"
+          },
+          "error": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "provider": {
+            "enum": [
+              "openai",
+              "anthropic"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "success",
+              "disabled",
+              "error"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "actions",
+          "answer",
+          "context",
+          "status"
+        ],
+        "type": "object"
       },
       "AudioCodec": {
         "description": "Target audio codec",

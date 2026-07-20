@@ -2,6 +2,39 @@
 
 This file tracks local-only changes in this checkout that have not necessarily been pulled from upstream Immich.
 
+## 2026-07-19 - In-App Library Assistant Prototype
+
+- Added a first-pass authenticated Immich web assistant at `/assistant`.
+  - Sidebar entry: `Assistant`.
+  - UI behavior: full-library assessment panel plus chat-style interaction inside Immich.
+  - Current behavior is read-only; no albums, tags, assets, files, or metadata are changed automatically.
+- Added `GET /assistant/assessment` on the server.
+  - Requires `asset.read`.
+  - Reads indexed metadata/statistics for large-library organization planning.
+  - Returns total/type counts, album/unorganized/favorite/archive counts, top year buckets, camera make/model slices, location slices, and review-first findings.
+- Added `POST /assistant/chat` on the server.
+  - Requires `asset.read`.
+  - Samples owned albums, recent assets, unorganized assets, and search statistics.
+  - Uses the existing local LLM env config from the workflow plugin prototype.
+  - Supports OpenAI Responses API and Anthropic Messages API.
+- Added OpenAPI schema entries for the assistant request/response DTOs.
+- The assistant prompt is intentionally review-first:
+  - suggest searches, album plans, folder plans, metadata audits, original-file audits, and review sets;
+  - do not suggest tagging unless explicitly requested;
+  - never claim changes were applied;
+  - avoid deletion suggestions unless explicitly asked.
+
+### Verification
+
+- Server TypeScript check passed: `pnpm --filter immich run check`.
+- Server lint passed: `pnpm --filter immich run lint`.
+- Server build passed: `mise run //server:build`.
+- OpenAPI spec sync passed: `mise run //server:sync-open-api`.
+- Web Svelte check passed: `pnpm --filter immich-web run check:svelte`.
+- Web TypeScript check passed: `pnpm --filter immich-web run check:typescript`.
+- Web lint passed: `pnpm --filter immich-web run lint`.
+- `git diff --check` passed.
+
 ## 2026-07-19 - LLM Workflow Plugin Prototype
 
 - Added `packages/plugin-llm`, a built-in workflow plugin prototype for AI-assisted asset descriptions.

@@ -14,6 +14,7 @@
     mdiAccountOutline,
     mdiArchiveArrowDown,
     mdiArchiveArrowDownOutline,
+    mdiRobotOutline,
     mdiFolderOutline,
     mdiHeart,
     mdiHeartOutline,
@@ -97,6 +98,8 @@
   {/if}
 
   <NavbarItem title={$t('utilities')} href={Route.utilities()} icon={mdiToolboxOutline} activeIcon={mdiToolbox} />
+
+  <NavbarItem title="Assistant" href={Route.assistant()} icon={mdiRobotOutline} />
 
   <NavbarItem
     title={$t('archive')}
