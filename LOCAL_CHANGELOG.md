@@ -7,7 +7,7 @@ This file tracks local-only changes in this checkout that have not necessarily b
 - Added a first-pass authenticated Immich web assistant at `/assistant`.
   - Sidebar entry: `Assistant`.
   - UI behavior: full-library assessment panel plus chat-style interaction inside Immich.
-  - Current behavior is read-only; no albums, tags, assets, files, or metadata are changed automatically.
+  - Current behavior is review-first. It can create reversible review albums only through explicit assistant action cards; it does not move, delete, tag, or rewrite source files automatically.
 - Added `GET /assistant/assessment` on the server.
   - Requires `asset.read`.
   - Reads indexed metadata/statistics for large-library organization planning.
@@ -42,10 +42,15 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - Added checksum, original path, library ID, external-library flag, MIME type, file timestamps, upload/update timestamps, dimensions, duration, offline/edited state, EXIF file size, EXIF image dimensions, EXIF date fields, timezone, orientation, GPS coordinates, and camera/lens fields.
   - Added external-library summaries, source-path cohorts with examples, metadata coverage percentages, time buckets, camera/location suggestions, and sampled `mobile-app` asset metadata.
   - Tightened the prompt so the assistant says a field is "not visible in the assistant sample" instead of implying it is missing from the source file or Immich database.
+- Added server-side assistant search/identification audits that run before each chat response.
+  - Full-library audit summary: image/video/favorite/archive/edited/external counts, EXIF/GPS/file-size/dimension/camera/mobile-app metadata coverage, date span, total file size, and checksum-algorithm counts.
+  - Cohort identification: source folder, capture date, camera make/model, location, checksum algorithm, exact content-checksum duplicate candidates, matching file-trait duplicate candidates, video codec/format/pixel-format cohorts, and mobile original-upload metadata cohorts.
+  - External-library checksum semantics are now explicit: `sha1-path` is path identity, not byte-level file integrity; only `sha1` is content-checksum evidence.
 - Added a reversible assistant action path in the web UI:
   - Assistant action cards can create a review album only when the action contains explicit sampled asset IDs.
-  - Broad searches, metadata audits, original-file audits, and folder plans remain review/search proposals unless concrete asset IDs are present.
-  - The assistant prompt/schema now tells providers to leave `assetIds` empty for broad cohorts that need more review.
+  - Assistant action cards can also create a review album from a deterministic server cohort by sending `cohortType` and `cohortKey` to `POST /assistant/review-album`; the server performs the cohort lookup at click time.
+  - Broad searches, metadata audits, original-file audits, and folder plans remain review/search proposals unless concrete asset IDs or a deterministic cohort key are present.
+  - Cohort-backed album creation is capped at 5,000 assets per action and reports truncation for review safety.
 - Added OpenAPI schema entries for the assistant request/response DTOs.
 - The assistant prompt is intentionally review-first:
   - suggest searches, album plans, folder plans, metadata audits, original-file audits, and review sets;

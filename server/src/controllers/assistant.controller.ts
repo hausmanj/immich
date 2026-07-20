@@ -5,6 +5,8 @@ import {
   AssistantAssessmentResponseDto,
   AssistantChatRequestDto,
   AssistantChatResponseDto,
+  AssistantReviewAlbumRequestDto,
+  AssistantReviewAlbumResponseDto,
 } from 'src/dtos/assistant.dto';
 import { AuthDto } from 'src/dtos/auth.dto';
 import { Permission } from 'src/enum';
@@ -37,5 +39,20 @@ export class AssistantController {
   })
   assistantChat(@Auth() auth: AuthDto, @Body() dto: AssistantChatRequestDto): Promise<AssistantChatResponseDto> {
     return this.service.chat(auth, dto);
+  }
+
+  @Post('review-album')
+  @Authenticated({ permission: Permission.AlbumCreate })
+  @HttpCode(HttpStatus.OK)
+  @Endpoint({
+    summary: 'Create an assistant review album',
+    description: 'Create a reversible review album from explicit assistant asset IDs or a deterministic assistant cohort.',
+    history: HistoryBuilder.v3(),
+  })
+  createReviewAlbum(
+    @Auth() auth: AuthDto,
+    @Body() dto: AssistantReviewAlbumRequestDto,
+  ): Promise<AssistantReviewAlbumResponseDto> {
+    return this.service.createReviewAlbum(auth, dto);
   }
 }

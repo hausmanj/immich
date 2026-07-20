@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { spawn } from 'node:child_process';
 import { AlbumResponseDto } from 'src/dtos/album.dto';
 import { AssetResponseDto } from 'src/dtos/asset-response.dto';
@@ -7,6 +7,8 @@ import {
   AssistantAssessmentResponseDto,
   AssistantChatRequestDto,
   AssistantChatResponseDto,
+  AssistantReviewAlbumRequestDto,
+  AssistantReviewAlbumResponseDto,
 } from 'src/dtos/assistant.dto';
 import { AuthDto } from 'src/dtos/auth.dto';
 import { LibraryResponseDto } from 'src/dtos/library.dto';
@@ -82,13 +84,24 @@ const assistantOutputSchema = {
             description:
               'Concrete asset IDs for a reversible review album. Leave empty unless every listed asset is visible in the provided context and belongs in the proposed set.',
           },
+          cohortType: {
+            type: ['string', 'null'],
+            enum: ['source_path', 'date', 'camera', 'location', null],
+            description:
+              'Deterministic Immich cohort type for a reversible review album. Use only when the cohort appears in deterministicAudits.',
+          },
+          cohortKey: {
+            type: ['string', 'null'],
+            description:
+              'Exact deterministic cohort key from deterministicAudits. Use with cohortType to let Immich materialize the cohort at action time.',
+          },
           confidence: {
             type: 'number',
             minimum: 0,
             maximum: 1,
           },
         },
-        required: ['type', 'title', 'rationale', 'query', 'albumName', 'assetIds', 'confidence'],
+        required: ['type', 'title', 'rationale', 'query', 'albumName', 'assetIds', 'cohortType', 'cohortKey', 'confidence'],
       },
     },
   },
@@ -99,6 +112,9 @@ const assistantOutputSchema = {
 export class AssistantService extends BaseService {
   private readonly assetSampleSize = 75;
   private readonly assetMetadataSampleSize = 60;
+  private readonly auditBucketLimit = 80;
+  private readonly duplicateCandidateLimit = 40;
+  private readonly reviewAlbumCohortLimit = 5000;
 
   async assess(auth: AuthDto): Promise<AssistantAssessmentResponseDto> {
     const albumService = BaseService.create(AlbumService, this);
@@ -217,6 +233,59 @@ export class AssistantService extends BaseService {
     }
   }
 
+  async createReviewAlbum(
+    auth: AuthDto,
+    dto: AssistantReviewAlbumRequestDto,
+  ): Promise<AssistantReviewAlbumResponseDto> {
+    const albumService = BaseService.create(AlbumService, this);
+    const resolvedAssetIds = await this.getReviewAlbumAssetIds(auth, dto);
+    if (resolvedAssetIds.assetIds.length === 0) {
+      throw new BadRequestException('The assistant review album request did not resolve any assets');
+    }
+
+    const album = await albumService.create(auth, {
+      albumName: dto.albumName,
+      description: this.getReviewAlbumDescription(dto, resolvedAssetIds.truncated),
+      assetIds: resolvedAssetIds.assetIds,
+    });
+
+    return {
+      albumId: album.id,
+      albumName: album.albumName,
+      assetCount: resolvedAssetIds.assetIds.length,
+      truncated: resolvedAssetIds.truncated,
+    };
+  }
+
+  private async getReviewAlbumAssetIds(
+    auth: AuthDto,
+    dto: AssistantReviewAlbumRequestDto,
+  ): Promise<{ assetIds: string[]; truncated: boolean }> {
+    const explicitAssetIds = this.toUniqueStrings(dto.assetIds ?? []);
+    if (explicitAssetIds.length > 0) {
+      return { assetIds: explicitAssetIds.slice(0, this.reviewAlbumCohortLimit), truncated: explicitAssetIds.length > this.reviewAlbumCohortLimit };
+    }
+
+    if (!dto.cohortType || !dto.cohortKey) {
+      return { assetIds: [], truncated: false };
+    }
+
+    const assetIds = await this.assetRepository.getAssistantCohortAssetIds(
+      auth.user.id,
+      dto.cohortType,
+      dto.cohortKey,
+      this.reviewAlbumCohortLimit + 1,
+    );
+
+    return { assetIds: assetIds.slice(0, this.reviewAlbumCohortLimit), truncated: assetIds.length > this.reviewAlbumCohortLimit };
+  }
+
+  private getReviewAlbumDescription(dto: AssistantReviewAlbumRequestDto, truncated: boolean) {
+    const source = dto.cohortType && dto.cohortKey ? `cohort ${dto.cohortType}:${dto.cohortKey}` : 'explicit asset IDs';
+    const suffix = truncated ? ` Limited to first ${this.reviewAlbumCohortLimit} assets for review safety.` : '';
+    return `Created by Immich Assistant from ${source}.${suffix}`;
+  }
+
   private getLlmProvider(requested?: AssistantProvider): ProviderConfig | undefined {
     const { assistant, llm } = this.configRepository.getEnv();
     const requestedLocal = requested === 'claude-cli' || requested === 'codex-cli' ? requested : assistant.provider;
@@ -304,6 +373,16 @@ export class AssistantService extends BaseService {
       countries,
       cities,
       libraries,
+      libraryAuditSummary,
+      sourcePathCohorts,
+      dateCohorts,
+      cameraCohorts,
+      locationCohorts,
+      checksumAlgorithmCohorts,
+      exactDuplicateCandidates,
+      fileTraitDuplicateCandidates,
+      videoCohorts,
+      mobileAppMetadataCohorts,
     ] = await Promise.all([
       albumService.getAll(auth, { isOwned: true }),
       searchService.searchMetadata(auth, { size: this.assetSampleSize, withExif: true }),
@@ -321,6 +400,16 @@ export class AssistantService extends BaseService {
       searchService.getSearchSuggestions(auth, { type: SearchSuggestionType.COUNTRY }),
       searchService.getSearchSuggestions(auth, { type: SearchSuggestionType.CITY }),
       libraryService.getAll(),
+      this.assetRepository.getAssistantLibraryAuditSummary(auth.user.id),
+      this.assetRepository.getAssistantSourcePathCohorts(auth.user.id, this.auditBucketLimit),
+      this.assetRepository.getAssistantDateCohorts(auth.user.id, this.auditBucketLimit),
+      this.assetRepository.getAssistantCameraCohorts(auth.user.id, this.auditBucketLimit),
+      this.assetRepository.getAssistantLocationCohorts(auth.user.id, this.auditBucketLimit),
+      this.assetRepository.getAssistantChecksumAlgorithmCohorts(auth.user.id),
+      this.assetRepository.getAssistantExactDuplicateCandidates(auth.user.id, this.duplicateCandidateLimit),
+      this.assetRepository.getAssistantFileTraitDuplicateCandidates(auth.user.id, this.duplicateCandidateLimit),
+      this.assetRepository.getAssistantVideoCohorts(auth.user.id, this.auditBucketLimit),
+      this.assetRepository.getAssistantMobileAppMetadataCohorts(auth.user.id, this.auditBucketLimit),
     ]);
     const sampledAssets = this.toUniqueAssets([...recent.assets.items, ...unorganized.assets.items]);
     const assetMetadata = await this.getAssetMetadataContext(assetService, auth, sampledAssets);
@@ -334,6 +423,27 @@ export class AssistantService extends BaseService {
       unorganizedAssets: unorganized.assets.items.map((asset) => this.toAssetContext(asset, assetMetadata.get(asset.id))),
       sourcePathCohorts: this.toSourcePathCohorts(sampledAssets),
       metadataCoverage: this.toMetadataCoverage(sampledAssets),
+      deterministicAudits: {
+        checksumSemantics: {
+          sha1: 'file-content SHA1 checksum; usable as byte-level duplicate/original evidence',
+          'sha1-path':
+            'path-derived checksum used by external libraries; useful for source-path identity, not byte-level file integrity',
+        },
+        librarySummary: libraryAuditSummary,
+        sourcePathCohorts: this.toActionableCohorts('source_path', sourcePathCohorts),
+        dateCohorts: this.toActionableCohorts('date', dateCohorts),
+        cameraCohorts: this.toActionableCohorts('camera', cameraCohorts),
+        locationCohorts: this.toActionableCohorts('location', locationCohorts),
+        checksumAlgorithmCohorts,
+        duplicateCandidates: {
+          exactContentChecksum: exactDuplicateCandidates,
+          matchingFileTraits: fileTraitDuplicateCandidates,
+        },
+        videoCohorts,
+        mobileAppMetadataCohorts,
+        actionGuidance:
+          'For reversible review albums, use cohortType and cohortKey from these deterministic cohorts instead of enumerating large asset ID lists.',
+      },
       topYears,
       cameraMakes: this.toStringList(cameraMakes),
       cameraModels: this.toStringList(cameraModels),
@@ -363,6 +473,18 @@ export class AssistantService extends BaseService {
       unique.push(asset);
     }
     return unique;
+  }
+
+  private toUniqueStrings(values: string[]) {
+    return [...new Set(values)];
+  }
+
+  private toActionableCohorts(cohortType: 'source_path' | 'date' | 'camera' | 'location', cohorts: Array<{ key: string }>) {
+    return cohorts.map((cohort) => ({
+      ...cohort,
+      cohortType,
+      cohortKey: cohort.key,
+    }));
   }
 
   private async getAssetMetadataContext(
@@ -549,7 +671,7 @@ export class AssistantService extends BaseService {
   ) {
     return {
       instruction:
-        'You are an in-app Immich photo library assistant for organizing very large photo and video libraries. Help assess metadata, source cohorts, time ranges, locations, albums, folders, review queues, and original-file risks using the provided library context. When a field is absent from the provided context, say it is not visible in the assistant sample; do not claim it is missing from the source file or Immich database. Do not suggest tagging unless the user explicitly asks for tags. Do not claim any change has been applied. Prefer reversible, review-first organization. Use action assetIds only for concrete sampled assets that should be placed in a review album; leave assetIds empty for broad searches, audits, and cohorts that need more review. Never suggest deleting assets unless the user explicitly asks about deletion.',
+        'You are an in-app Immich photo library assistant for organizing very large photo and video libraries. Help assess metadata, source cohorts, time ranges, locations, albums, folders, review queues, duplicates, video metadata, and original-file risks using the provided library context. Prefer deterministicAudits over the sampled assets when discussing whole-library counts, cohorts, duplicate candidates, videos, mobile upload audit coverage, and review-album candidates. When proposing a reversible review album from deterministicAudits, set action.cohortType and action.cohortKey to the exact cohort fields and leave assetIds empty unless the action is based on explicit sampled assets. Treat checksumAlgorithm=sha1 as file-content evidence and checksumAlgorithm=sha1-path as external-library path identity, not byte-level integrity. When a field is absent from the provided context, say it is not visible in the assistant context; do not claim it is missing from the source file or Immich database. Do not suggest tagging unless the user explicitly asks for tags. Do not claim any change has been applied. Prefer reversible, review-first organization. Never suggest deleting assets unless the user explicitly asks about deletion.',
       userContent: JSON.stringify({
         libraryContext: context,
         conversation: dto.messages,
@@ -850,6 +972,8 @@ export class AssistantService extends BaseService {
         assetIds: Array.isArray(action.assetIds)
           ? action.assetIds.filter((assetId): assetId is string => typeof assetId === 'string')
           : [],
+        cohortType: this.toCohortType(action.cohortType),
+        cohortKey: typeof action.cohortKey === 'string' ? action.cohortKey : null,
         confidence: typeof action.confidence === 'number' ? action.confidence : 0.5,
       });
 
@@ -859,6 +983,10 @@ export class AssistantService extends BaseService {
     }
 
     return actions;
+  }
+
+  private toCohortType(value: unknown) {
+    return value === 'source_path' || value === 'date' || value === 'camera' || value === 'location' ? value : null;
   }
 
   private getErrorMessage(error: unknown): string {

@@ -1,7 +1,7 @@
 <script lang="ts">
   import UserPageLayout from '$lib/components/layouts/UserPageLayout.svelte';
   import { Route } from '$lib/route';
-  import { createAlbumAndRedirect } from '$lib/utils/album-utils';
+  import { goto } from '$app/navigation';
   import { Button, Icon, Textarea, toastManager } from '@immich/ui';
   import { mdiArrowRight, mdiMagnify, mdiPlusBoxOutline, mdiRobotOutline, mdiSend } from '@mdi/js';
   import type { PageData } from './$types';
@@ -15,6 +15,8 @@
     query: string | null;
     albumName: string | null;
     assetIds: string[];
+    cohortType?: 'source_path' | 'date' | 'camera' | 'location' | null;
+    cohortKey?: string | null;
     confidence: number;
   };
 
@@ -29,6 +31,13 @@
     answer: string;
     actions: AssistantAction[];
     error?: string;
+  };
+
+  type AssistantReviewAlbumResponse = {
+    albumId: string;
+    albumName: string;
+    assetCount: number;
+    truncated: boolean;
   };
 
   type AssessmentBucket = {
@@ -116,7 +125,15 @@
   };
 
   const canCreateReviewAlbum = (action: AssistantAction) => {
-    return action.assetIds.length > 0 && action.type !== 'search' && action.type !== 'folder_plan';
+    return (
+      action.type !== 'search' &&
+      action.type !== 'folder_plan' &&
+      (action.assetIds.length > 0 || !!(action.cohortType && action.cohortKey))
+    );
+  };
+
+  const getCreateReviewAlbumLabel = (action: AssistantAction) => {
+    return action.assetIds.length > 0 ? `Create review album (${formatNumber(action.assetIds.length)})` : 'Create review album';
   };
 
   const createReviewAlbum = async (action: AssistantAction, actionKey: string) => {
@@ -124,14 +141,37 @@
       return;
     }
 
-    if (action.assetIds.length === 0) {
-      toastManager.warning('This proposal does not include explicit asset IDs.');
+    if (action.assetIds.length === 0 && !(action.cohortType && action.cohortKey)) {
+      toastManager.warning('This proposal does not include explicit asset IDs or a server cohort.');
       return;
     }
 
     applyingActionKey = actionKey;
     try {
-      await createAlbumAndRedirect(getReviewAlbumName(action), action.assetIds);
+      const response = await fetch('/api/assistant/review-album', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          albumName: getReviewAlbumName(action),
+          assetIds: action.assetIds.length > 0 ? action.assetIds : undefined,
+          cohortType: action.cohortType,
+          cohortKey: action.cohortKey,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+
+      const result = (await response.json()) as AssistantReviewAlbumResponse;
+      if (result.truncated) {
+        toastManager.warning(`Created review album with first ${formatNumber(result.assetCount)} assets.`);
+      }
+      await goto(Route.viewAlbum({ id: result.albumId }));
+    } catch (error) {
+      toastManager.danger(error instanceof Error ? error.message : String(error));
     } finally {
       applyingActionKey = null;
     }
@@ -377,7 +417,7 @@
                           >
                             <div class="flex items-center gap-2">
                               <Icon icon={mdiPlusBoxOutline} size="16" />
-                              Create review album ({formatNumber(action.assetIds.length)})
+                              {getCreateReviewAlbumLabel(action)}
                             </div>
                           </Button>
                         {/if}

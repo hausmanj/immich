@@ -105,6 +105,98 @@ export interface TimeBucketItem {
   count: number;
 }
 
+export interface AssistantLibraryAuditSummary {
+  assetCount: number;
+  imageCount: number;
+  videoCount: number;
+  favoriteCount: number;
+  archivedCount: number;
+  editedCount: number;
+  externalCount: number;
+  gpsCount: number;
+  exifCount: number;
+  fileSizeCount: number;
+  dimensionsCount: number;
+  cameraCount: number;
+  contentChecksumCount: number;
+  pathChecksumCount: number;
+  mobileAppMetadataCount: number;
+  dateStart: string | null;
+  dateEnd: string | null;
+  totalFileSizeBytes: string | null;
+}
+
+export interface AssistantLibraryAuditBucket {
+  key: string;
+  assetCount: number;
+  imageCount: number;
+  videoCount: number;
+  favoriteCount: number;
+  archivedCount: number;
+  editedCount: number;
+  externalCount: number;
+  gpsCount: number;
+  exifCount: number;
+  fileSizeCount: number;
+  dimensionsCount: number;
+  cameraCount: number;
+  mobileAppMetadataCount: number;
+  dateStart: string | null;
+  dateEnd: string | null;
+  totalFileSizeBytes: string | null;
+  examples: string[];
+}
+
+export interface AssistantLocationAuditBucket extends AssistantLibraryAuditBucket {
+  country: string | null;
+  state: string | null;
+  city: string | null;
+  latitudeMin: number | null;
+  latitudeMax: number | null;
+  longitudeMin: number | null;
+  longitudeMax: number | null;
+}
+
+export interface AssistantChecksumAuditBucket {
+  checksumAlgorithm: string;
+  assetCount: number;
+  externalCount: number;
+  examples: string[];
+}
+
+export interface AssistantDuplicateAuditBucket {
+  key: string;
+  assetCount: number;
+  checksumAlgorithm: string | null;
+  fileSizeInByte: string | null;
+  width: number | null;
+  height: number | null;
+  dateTimeOriginal: string | null;
+  examples: string[];
+}
+
+export interface AssistantVideoAuditBucket {
+  key: string;
+  assetCount: number;
+  codecName: string | null;
+  formatName: string | null;
+  pixelFormat: string | null;
+  durationMin: number | null;
+  durationMax: number | null;
+  bitrateMin: number | null;
+  bitrateMax: number | null;
+  examples: string[];
+}
+
+export interface AssistantMobileAppMetadataAuditBucket {
+  key: string;
+  assetCount: number;
+  usedBaseOriginalCount: number;
+  usedFallbackCount: number;
+  hasAdjustmentsCount: number;
+  examples: string[];
+}
+
 export interface YearMonthDay {
   day: number;
   month: number;
@@ -382,6 +474,358 @@ export class AssetRepository {
       .select(['key', 'value', 'updatedAt'])
       .where('assetId', '=', assetId)
       .execute();
+  }
+
+  async getAssistantLibraryAuditSummary(ownerId: string): Promise<AssistantLibraryAuditSummary> {
+    const { rows } = await sql<AssistantLibraryAuditSummary>`
+      select
+        count(*)::int as "assetCount",
+        count(*) filter (where a.type = 'IMAGE')::int as "imageCount",
+        count(*) filter (where a.type = 'VIDEO')::int as "videoCount",
+        count(*) filter (where a."isFavorite")::int as "favoriteCount",
+        count(*) filter (where a.visibility = 'archive')::int as "archivedCount",
+        count(*) filter (where a."isEdited")::int as "editedCount",
+        count(*) filter (where a."isExternal")::int as "externalCount",
+        count(*) filter (where ae.latitude is not null and ae.longitude is not null)::int as "gpsCount",
+        count(ae."assetId")::int as "exifCount",
+        count(*) filter (where ae."fileSizeInByte" is not null)::int as "fileSizeCount",
+        count(*) filter (where a.width is not null and a.height is not null)::int as "dimensionsCount",
+        count(*) filter (where ae.make is not null or ae.model is not null)::int as "cameraCount",
+        count(*) filter (where a."checksumAlgorithm" = 'sha1')::int as "contentChecksumCount",
+        count(*) filter (where a."checksumAlgorithm" = 'sha1-path')::int as "pathChecksumCount",
+        count(am."assetId")::int as "mobileAppMetadataCount",
+        min(a."localDateTime")::text as "dateStart",
+        max(a."localDateTime")::text as "dateEnd",
+        coalesce(sum(ae."fileSizeInByte"), 0)::text as "totalFileSizeBytes"
+      from asset a
+      left join asset_exif ae on ae."assetId" = a.id
+      left join asset_metadata am on am."assetId" = a.id and am.key = 'mobile-app'
+      where a."ownerId" = ${asUuid(ownerId)}
+        and a."deletedAt" is null
+    `.execute(this.db);
+
+    return rows[0];
+  }
+
+  getAssistantSourcePathCohorts(ownerId: string, limit: number): Promise<AssistantLibraryAuditBucket[]> {
+    return this.getAssistantAuditBuckets(
+      ownerId,
+      limit,
+      sql<string>`
+        case
+          when a."originalPath" like '/external/%'
+            then regexp_replace(a."originalPath", '^(/external/[^/]+/[^/]+).*$', '\1')
+          else regexp_replace(a."originalPath", '/[^/]+$', '')
+        end
+      `,
+    );
+  }
+
+  getAssistantDateCohorts(ownerId: string, limit: number): Promise<AssistantLibraryAuditBucket[]> {
+    return this.getAssistantAuditBuckets(
+      ownerId,
+      limit,
+      sql<string>`(a."localDateTime" at time zone 'UTC')::date::text`,
+    );
+  }
+
+  getAssistantCameraCohorts(ownerId: string, limit: number): Promise<AssistantLibraryAuditBucket[]> {
+    return this.getAssistantAuditBuckets(
+      ownerId,
+      limit,
+      sql<string>`
+        concat_ws(
+          ' ',
+          coalesce(nullif(ae.make, ''), 'Unknown make'),
+          coalesce(nullif(ae.model, ''), 'Unknown model')
+        )
+      `,
+    );
+  }
+
+  async getAssistantLocationCohorts(ownerId: string, limit: number): Promise<AssistantLocationAuditBucket[]> {
+    const { rows } = await sql<AssistantLocationAuditBucket>`
+      select
+        case
+          when ae.country is null and ae.state is null and ae.city is null
+            and ae.latitude is not null and ae.longitude is not null then 'GPS without place labels'
+          when ae.country is null and ae.state is null and ae.city is null then 'No visible location'
+          else concat_ws(' / ', nullif(ae.country, ''), nullif(ae.state, ''), nullif(ae.city, ''))
+        end as key,
+        ae.country,
+        ae.state,
+        ae.city,
+        count(*)::int as "assetCount",
+        count(*) filter (where a.type = 'IMAGE')::int as "imageCount",
+        count(*) filter (where a.type = 'VIDEO')::int as "videoCount",
+        count(*) filter (where a."isFavorite")::int as "favoriteCount",
+        count(*) filter (where a.visibility = 'archive')::int as "archivedCount",
+        count(*) filter (where a."isEdited")::int as "editedCount",
+        count(*) filter (where a."isExternal")::int as "externalCount",
+        count(*) filter (where ae.latitude is not null and ae.longitude is not null)::int as "gpsCount",
+        count(ae."assetId")::int as "exifCount",
+        count(*) filter (where ae."fileSizeInByte" is not null)::int as "fileSizeCount",
+        count(*) filter (where a.width is not null and a.height is not null)::int as "dimensionsCount",
+        count(*) filter (where ae.make is not null or ae.model is not null)::int as "cameraCount",
+        count(am."assetId")::int as "mobileAppMetadataCount",
+        min(a."localDateTime")::text as "dateStart",
+        max(a."localDateTime")::text as "dateEnd",
+        coalesce(sum(ae."fileSizeInByte"), 0)::text as "totalFileSizeBytes",
+        min(ae.latitude) as "latitudeMin",
+        max(ae.latitude) as "latitudeMax",
+        min(ae.longitude) as "longitudeMin",
+        max(ae.longitude) as "longitudeMax",
+        array_remove((array_agg(a."originalPath" order by a."localDateTime" desc))[1:5], null) as examples
+      from asset a
+      left join asset_exif ae on ae."assetId" = a.id
+      left join asset_metadata am on am."assetId" = a.id and am.key = 'mobile-app'
+      where a."ownerId" = ${asUuid(ownerId)}
+        and a."deletedAt" is null
+      group by
+        case
+          when ae.country is null and ae.state is null and ae.city is null
+            and ae.latitude is not null and ae.longitude is not null then 'GPS without place labels'
+          when ae.country is null and ae.state is null and ae.city is null then 'No visible location'
+          else concat_ws(' / ', nullif(ae.country, ''), nullif(ae.state, ''), nullif(ae.city, ''))
+        end,
+        ae.country,
+        ae.state,
+        ae.city
+      order by count(*) desc, 1 asc
+      limit ${limit}
+    `.execute(this.db);
+
+    return rows;
+  }
+
+  async getAssistantChecksumAlgorithmCohorts(ownerId: string): Promise<AssistantChecksumAuditBucket[]> {
+    const { rows } = await sql<AssistantChecksumAuditBucket>`
+      select
+        a."checksumAlgorithm"::text as "checksumAlgorithm",
+        count(*)::int as "assetCount",
+        count(*) filter (where a."isExternal")::int as "externalCount",
+        array_remove((array_agg(a."originalPath" order by a."localDateTime" desc))[1:5], null) as examples
+      from asset a
+      where a."ownerId" = ${asUuid(ownerId)}
+        and a."deletedAt" is null
+      group by a."checksumAlgorithm"
+      order by count(*) desc
+    `.execute(this.db);
+
+    return rows;
+  }
+
+  async getAssistantExactDuplicateCandidates(ownerId: string, limit: number): Promise<AssistantDuplicateAuditBucket[]> {
+    const { rows } = await sql<AssistantDuplicateAuditBucket>`
+      select
+        encode(a.checksum, 'base64') as key,
+        count(*)::int as "assetCount",
+        a."checksumAlgorithm"::text as "checksumAlgorithm",
+        null::text as "fileSizeInByte",
+        null::int as width,
+        null::int as height,
+        null::text as "dateTimeOriginal",
+        array_remove((array_agg(a."originalPath" order by a."localDateTime" desc))[1:8], null) as examples
+      from asset a
+      where a."ownerId" = ${asUuid(ownerId)}
+        and a."deletedAt" is null
+        and a."checksumAlgorithm" = 'sha1'
+      group by a.checksum, a."checksumAlgorithm"
+      having count(*) > 1
+      order by count(*) desc
+      limit ${limit}
+    `.execute(this.db);
+
+    return rows;
+  }
+
+  async getAssistantFileTraitDuplicateCandidates(
+    ownerId: string,
+    limit: number,
+  ): Promise<AssistantDuplicateAuditBucket[]> {
+    const { rows } = await sql<AssistantDuplicateAuditBucket>`
+      select
+        concat_ws(
+          ' | ',
+          a."originalFileName",
+          coalesce(ae."fileSizeInByte"::text, '?'),
+          coalesce(a.width::text, '?') || 'x' || coalesce(a.height::text, '?'),
+          coalesce((ae."dateTimeOriginal" at time zone 'UTC')::text, '?')
+        ) as key,
+        count(*)::int as "assetCount",
+        null::text as "checksumAlgorithm",
+        ae."fileSizeInByte"::text as "fileSizeInByte",
+        a.width,
+        a.height,
+        (ae."dateTimeOriginal" at time zone 'UTC')::text as "dateTimeOriginal",
+        array_remove((array_agg(a."originalPath" order by a."localDateTime" desc))[1:8], null) as examples
+      from asset a
+      left join asset_exif ae on ae."assetId" = a.id
+      where a."ownerId" = ${asUuid(ownerId)}
+        and a."deletedAt" is null
+      group by a."originalFileName", ae."fileSizeInByte", a.width, a.height, ae."dateTimeOriginal"
+      having count(*) > 1
+      order by count(*) desc
+      limit ${limit}
+    `.execute(this.db);
+
+    return rows;
+  }
+
+  async getAssistantVideoCohorts(ownerId: string, limit: number): Promise<AssistantVideoAuditBucket[]> {
+    const { rows } = await sql<AssistantVideoAuditBucket>`
+      select
+        concat_ws(
+          ' | ',
+          coalesce(nullif(av."codecName", ''), 'Unknown codec'),
+          coalesce(nullif(av."formatName", ''), 'Unknown format'),
+          coalesce(nullif(av."pixelFormat", ''), 'Unknown pixel format')
+        ) as key,
+        count(*)::int as "assetCount",
+        av."codecName",
+        av."formatName",
+        av."pixelFormat",
+        min(a.duration) as "durationMin",
+        max(a.duration) as "durationMax",
+        min(av.bitrate) as "bitrateMin",
+        max(av.bitrate) as "bitrateMax",
+        array_remove((array_agg(a."originalPath" order by a."localDateTime" desc))[1:8], null) as examples
+      from asset a
+      left join asset_video av on av."assetId" = a.id
+      where a."ownerId" = ${asUuid(ownerId)}
+        and a."deletedAt" is null
+        and a.type = 'VIDEO'
+      group by av."codecName", av."formatName", av."pixelFormat"
+      order by count(*) desc
+      limit ${limit}
+    `.execute(this.db);
+
+    return rows;
+  }
+
+  async getAssistantMobileAppMetadataCohorts(
+    ownerId: string,
+    limit: number,
+  ): Promise<AssistantMobileAppMetadataAuditBucket[]> {
+    const { rows } = await sql<AssistantMobileAppMetadataAuditBucket>`
+      select
+        coalesce(am.value->>'originalUploadSource', 'mobile-app metadata without originalUploadSource') as key,
+        count(*)::int as "assetCount",
+        count(*) filter (where am.value->>'usedBaseOriginal' = 'true')::int as "usedBaseOriginalCount",
+        count(*) filter (where am.value->>'usedFallback' = 'true')::int as "usedFallbackCount",
+        count(*) filter (where am.value->>'hasAdjustments' = 'true')::int as "hasAdjustmentsCount",
+        array_remove((array_agg(a."originalPath" order by a."localDateTime" desc))[1:8], null) as examples
+      from asset a
+      inner join asset_metadata am on am."assetId" = a.id and am.key = 'mobile-app'
+      where a."ownerId" = ${asUuid(ownerId)}
+        and a."deletedAt" is null
+      group by coalesce(am.value->>'originalUploadSource', 'mobile-app metadata without originalUploadSource')
+      order by count(*) desc
+      limit ${limit}
+    `.execute(this.db);
+
+    return rows;
+  }
+
+  async getAssistantCohortAssetIds(ownerId: string, cohortType: string, cohortKey: string, limit: number) {
+    const cohortSql = this.getAssistantCohortSql(cohortType);
+    if (!cohortSql) {
+      return [];
+    }
+
+    const { rows } = await sql<{ id: string }>`
+      select a.id
+      from asset a
+      left join asset_exif ae on ae."assetId" = a.id
+      where a."ownerId" = ${asUuid(ownerId)}
+        and a."deletedAt" is null
+        and (${cohortSql}) = ${cohortKey}
+      order by a."localDateTime" asc, a."originalFileName" asc
+      limit ${limit}
+    `.execute(this.db);
+
+    return rows.map(({ id }) => id);
+  }
+
+  private async getAssistantAuditBuckets(
+    ownerId: string,
+    limit: number,
+    bucketSql: ReturnType<typeof sql<string>>,
+  ): Promise<AssistantLibraryAuditBucket[]> {
+    const { rows } = await sql<AssistantLibraryAuditBucket>`
+      select
+        (${bucketSql}) as key,
+        count(*)::int as "assetCount",
+        count(*) filter (where a.type = 'IMAGE')::int as "imageCount",
+        count(*) filter (where a.type = 'VIDEO')::int as "videoCount",
+        count(*) filter (where a."isFavorite")::int as "favoriteCount",
+        count(*) filter (where a.visibility = 'archive')::int as "archivedCount",
+        count(*) filter (where a."isEdited")::int as "editedCount",
+        count(*) filter (where a."isExternal")::int as "externalCount",
+        count(*) filter (where ae.latitude is not null and ae.longitude is not null)::int as "gpsCount",
+        count(ae."assetId")::int as "exifCount",
+        count(*) filter (where ae."fileSizeInByte" is not null)::int as "fileSizeCount",
+        count(*) filter (where a.width is not null and a.height is not null)::int as "dimensionsCount",
+        count(*) filter (where ae.make is not null or ae.model is not null)::int as "cameraCount",
+        count(am."assetId")::int as "mobileAppMetadataCount",
+        min(a."localDateTime")::text as "dateStart",
+        max(a."localDateTime")::text as "dateEnd",
+        coalesce(sum(ae."fileSizeInByte"), 0)::text as "totalFileSizeBytes",
+        array_remove((array_agg(a."originalPath" order by a."localDateTime" desc))[1:5], null) as examples
+      from asset a
+      left join asset_exif ae on ae."assetId" = a.id
+      left join asset_metadata am on am."assetId" = a.id and am.key = 'mobile-app'
+      where a."ownerId" = ${asUuid(ownerId)}
+        and a."deletedAt" is null
+      group by (${bucketSql})
+      order by count(*) desc, 1 asc
+      limit ${limit}
+    `.execute(this.db);
+
+    return rows;
+  }
+
+  private getAssistantCohortSql(cohortType: string): ReturnType<typeof sql<string>> | null {
+    switch (cohortType) {
+      case 'source_path': {
+        return sql<string>`
+          case
+            when a."originalPath" like '/external/%'
+              then regexp_replace(a."originalPath", '^(/external/[^/]+/[^/]+).*$', '\1')
+            else regexp_replace(a."originalPath", '/[^/]+$', '')
+          end
+        `;
+      }
+
+      case 'date': {
+        return sql<string>`(a."localDateTime" at time zone 'UTC')::date::text`;
+      }
+
+      case 'camera': {
+        return sql<string>`
+          concat_ws(
+            ' ',
+            coalesce(nullif(ae.make, ''), 'Unknown make'),
+            coalesce(nullif(ae.model, ''), 'Unknown model')
+          )
+        `;
+      }
+
+      case 'location': {
+        return sql<string>`
+          case
+            when ae.country is null and ae.state is null and ae.city is null
+              and ae.latitude is not null and ae.longitude is not null then 'GPS without place labels'
+            when ae.country is null and ae.state is null and ae.city is null then 'No visible location'
+            else concat_ws(' / ', nullif(ae.country, ''), nullif(ae.state, ''), nullif(ae.city, ''))
+          end
+        `;
+      }
+
+      default: {
+        return null;
+      }
+    }
   }
 
   upsertMetadata(id: string, items: Array<{ key: string; value: Record<string, unknown> }>) {
