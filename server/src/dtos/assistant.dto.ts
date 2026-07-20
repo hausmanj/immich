@@ -1,4 +1,5 @@
 import { createZodDto } from 'nestjs-zod';
+import { AssetVisibilitySchema } from 'src/enum';
 import { isoDatetimeToDate } from 'src/validation';
 import z from 'zod';
 
@@ -116,13 +117,99 @@ const AssistantUndoRequestSchema = z
 const AssistantUndoResponseSchema = z
   .object({
     status: z.enum(['undone']),
-    actionType: z.literal('assistant_review_album_create'),
+    actionType: z.string(),
     changeLogFilePath: z.string(),
-    undoneAlbumId: z.uuidv4(),
-    undoneAlbumName: z.string(),
+    undoneTargetId: z.string(),
+    undoneTargetName: z.string().nullable(),
     message: z.string(),
   })
   .meta({ id: 'AssistantUndoResponseDto' });
+
+const AssistantMutationActionTypeSchema = z.enum([
+  'metadata_edit',
+  'archive_favorite',
+  'stack_change',
+  'folder_move',
+  'duplicate_resolution',
+]);
+
+const AssistantMutationSchema = z
+  .object({
+    actionType: AssistantMutationActionTypeSchema,
+    mode: z.enum(['plan', 'apply']).default('plan').optional(),
+    assetIds: z.array(z.uuidv4()).optional(),
+    metadata: z
+      .object({
+        description: z.string().nullable().optional(),
+        dateTimeOriginal: z.string().nullable().optional(),
+        latitude: z.number().nullable().optional(),
+        longitude: z.number().nullable().optional(),
+        rating: z.number().nullable().optional(),
+      })
+      .optional(),
+    assetUpdates: z
+      .object({
+        isFavorite: z.boolean().optional(),
+        visibility: AssetVisibilitySchema.optional(),
+      })
+      .optional(),
+    stack: z
+      .object({
+        operation: z.enum(['create', 'delete', 'set_primary']),
+        stackId: z.uuidv4().optional(),
+        assetIds: z.array(z.uuidv4()).optional(),
+        primaryAssetId: z.uuidv4().optional(),
+      })
+      .optional(),
+    folderMove: z
+      .object({
+        assetIds: z.array(z.uuidv4()),
+        destinationPath: z.string().trim().min(1).max(1000),
+      })
+      .optional(),
+    duplicateResolution: z
+      .object({
+        groups: z.array(
+          z.object({
+            duplicateId: z.uuidv4(),
+            keepAssetIds: z.array(z.uuidv4()),
+            trashAssetIds: z.array(z.uuidv4()),
+          }),
+        ),
+      })
+      .optional(),
+  })
+  .meta({ id: 'AssistantMutationRequestDto' });
+
+const AssistantMutationResponseSchema = z
+  .object({
+    status: z.enum(['planned', 'applied', 'blocked']),
+    actionType: AssistantMutationActionTypeSchema,
+    changeLogFilePath: z.string(),
+    applySupported: z.boolean(),
+    undoAvailable: z.boolean(),
+    targetCount: z.number(),
+    message: z.string(),
+  })
+  .meta({ id: 'AssistantMutationResponseDto' });
+
+const AssistantMutationCapabilitySchema = z
+  .object({
+    actionType: AssistantMutationActionTypeSchema,
+    label: z.string(),
+    applySupported: z.boolean(),
+    undoSupported: z.boolean(),
+    journalRequired: z.boolean(),
+    notes: z.string(),
+  })
+  .meta({ id: 'AssistantMutationCapabilityDto' });
+
+const AssistantMutationCapabilitiesResponseSchema = z
+  .object({
+    changeJournalDirectory: z.string(),
+    capabilities: z.array(AssistantMutationCapabilitySchema),
+  })
+  .meta({ id: 'AssistantMutationCapabilitiesResponseDto' });
 
 const AssistantChatResponseSchema = z
   .object({
@@ -148,6 +235,11 @@ export class AssistantToolRequestDto extends createZodDto(AssistantToolRequestSc
 export class AssistantToolResponseDto extends createZodDto(AssistantToolResponseSchema) {}
 export class AssistantUndoRequestDto extends createZodDto(AssistantUndoRequestSchema) {}
 export class AssistantUndoResponseDto extends createZodDto(AssistantUndoResponseSchema) {}
+export class AssistantMutationRequestDto extends createZodDto(AssistantMutationSchema) {}
+export class AssistantMutationResponseDto extends createZodDto(AssistantMutationResponseSchema) {}
+export class AssistantMutationCapabilitiesResponseDto extends createZodDto(
+  AssistantMutationCapabilitiesResponseSchema,
+) {}
 
 const AssistantAssessmentBucketSchema = z
   .object({

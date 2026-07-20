@@ -35,8 +35,12 @@
   - Assistant action cards in the web UI may create review albums from explicit sampled `assetIds` or deterministic `cohortType`/`cohortKey` pairs. Broad cohort/folder/search ideas should stay as proposals or search links until reviewed.
   - `POST /assistant/review-album` materializes cohort-backed review albums server-side.
   - Any assistant mutation must have a persisted pre-change journal before it runs. The current journal directory is `/data/assistant-audits/change-journal`, which maps through the existing Docker/Synology `/data` volume.
-  - The change journal format is intentionally generic: `actionType`, `status`, `request`, `before`, `after`, `undo`, target IDs, and any error/undo result. Extend this before adding more impactful operations such as metadata edits, archive/favorite changes, folder moves, stack changes, or duplicate resolution.
-  - `POST /assistant/undo` currently supports undoing assistant-created review albums by reading the change journal and deleting only the created album. Source assets are not deleted.
+  - The change journal format is intentionally generic: `actionType`, `status`, `request`, `before`, `after`, `undo`, target IDs, and any error/undo result.
+  - `GET /assistant/mutation-capabilities` lists assistant mutation categories and whether apply/undo is supported.
+  - `POST /assistant/mutation` can plan every requested capability and writes a journal before any apply attempt.
+  - Apply + typed undo are currently enabled for `metadata_edit`, `archive_favorite`, and `stack_change`.
+  - `folder_move` and `duplicate_resolution` are registered as capabilities but apply-blocked until typed undo is implemented for filesystem/database path rollback and duplicate trash/metadata/album/tag merge rollback.
+  - `POST /assistant/undo` supports assistant-created review albums plus journaled metadata/favorite/archive/stack changes. Source assets are not deleted by these undo paths.
   - Runtime fix applied after initial assistant chat failure: assistant cohort SQL expressions must be inserted with trusted internal `sql.raw(...)` strings, while user-provided `cohortKey` values remain parameterized. The prior `RawBuilder` interpolation generated `(undefined) as key` at runtime.
   - `POST /assistant/tool` runs read-only deterministic assistant tools:
     - `metadata_search`: owner-scoped SQL search with path/name/extension/type/date/camera/location/GPS/mobile/checksum filters.
@@ -98,6 +102,11 @@
 - After assistant undo-safety update:
   - Review-album creation writes a pre-change journal before creating the album, then updates it with the created album ID and undo strategy.
   - Verified probe: created `Codex undo smoke test album` with one asset, wrote `/data/assistant-audits/change-journal/2026-07-20T11-56-32-703Z-assistant_review_album_create-3d7a919a-f1e2-40d6-bf5f-5a56b0dae95b.json`, then `POST /assistant/undo` deleted the album and updated the journal to `status=undone`.
+- After mutation capability update:
+  - Verified `GET /assistant/mutation-capabilities` returns `metadata_edit`, `archive_favorite`, `stack_change`, `folder_move`, and `duplicate_resolution`.
+  - Verified duplicate-resolution apply is blocked and journaled while undo is unavailable.
+  - Verified `archive_favorite` apply on asset `9f6e56f5-a1a9-40ce-ac87-8fa3aa3d2515` changed favorite state, then `POST /assistant/undo` restored `isFavorite=false` and `visibility=timeline` from the journal.
+  - Verified `stack_change` create with assets `cf47e24a-a465-4315-a95b-dc9de04bf1c3` and `af88efde-f81d-4862-9991-7b29cef66c1f`, then `POST /assistant/undo` deleted the created stack and restored both assets to `stackId=null`.
 - Temporary local Codex assistant smoke-test API keys were created only for probing and deleted afterward.
 - Mobile validation is still pending because `flutter` and `dart` were not on PATH in this shell. Do not claim the mobile upload patch is device-verified until it has run on iPhone or iOS Simulator.
 - Next practical test after import: ask the in-app Codex assistant to audit `/external/desktop-icloud-originals` for original-file evidence, then compare sampled external-library assets against the Desktop export by filename, size, dimensions, EXIF dates/GPS/camera fields, and checksum.

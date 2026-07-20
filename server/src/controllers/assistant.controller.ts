@@ -5,6 +5,9 @@ import {
   AssistantAssessmentResponseDto,
   AssistantChatRequestDto,
   AssistantChatResponseDto,
+  AssistantMutationCapabilitiesResponseDto,
+  AssistantMutationRequestDto,
+  AssistantMutationResponseDto,
   AssistantReviewAlbumRequestDto,
   AssistantReviewAlbumResponseDto,
   AssistantToolRequestDto,
@@ -70,6 +73,33 @@ export class AssistantController {
     @Body() dto: AssistantReviewAlbumRequestDto,
   ): Promise<AssistantReviewAlbumResponseDto> {
     return this.service.createReviewAlbum(auth, dto);
+  }
+
+  @Get('mutation-capabilities')
+  @Authenticated({ permission: Permission.AssetRead })
+  @Endpoint({
+    summary: 'List assistant mutation capabilities',
+    description: 'List impactful assistant change types and whether apply/undo support is currently available.',
+    history: HistoryBuilder.v3(),
+  })
+  getMutationCapabilities(): AssistantMutationCapabilitiesResponseDto {
+    return this.service.getMutationCapabilities();
+  }
+
+  @Post('mutation')
+  @Authenticated({ permission: Permission.AssetUpdate })
+  @HttpCode(HttpStatus.OK)
+  @Endpoint({
+    summary: 'Plan or apply an assistant mutation',
+    description:
+      'Plan or apply a supported assistant library mutation. Every request writes a persisted change journal before applying changes.',
+    history: HistoryBuilder.v3(),
+  })
+  runAssistantMutation(
+    @Auth() auth: AuthDto,
+    @Body() dto: AssistantMutationRequestDto,
+  ): Promise<AssistantMutationResponseDto> {
+    return this.service.runAssistantMutation(auth, dto);
   }
 
   @Post('undo')
