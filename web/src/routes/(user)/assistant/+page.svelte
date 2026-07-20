@@ -97,8 +97,6 @@
     { value: 'auto', label: 'Auto' },
     { value: 'claude-cli', label: 'Claude' },
     { value: 'codex-cli', label: 'Codex' },
-    { value: 'openai', label: 'OpenAI' },
-    { value: 'anthropic', label: 'Anthropic' },
   ];
 
   const getSearchHref = (action: AssistantAction) => {

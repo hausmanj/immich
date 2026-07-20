@@ -36,7 +36,8 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - Reason: host-installed `claude` and `codex` are macOS binaries and cannot run directly inside the Linux Immich server container.
   - Bridge endpoints: `/claude`, `/codex`, and `/health` on port `3737`.
   - Local `docker/.env` now points Claude and Codex assistant providers at `host.docker.internal:3737`.
-- Added an assistant provider selector in the web UI so chat can explicitly use Auto, Claude CLI, Codex CLI, OpenAI, or Anthropic.
+- Added an assistant provider selector in the web UI so chat can explicitly use Auto, Claude CLI, or Codex CLI.
+  - Direct OpenAI and Anthropic API paths remain backend fallback plumbing, but are hidden from the Assistant UI to keep the tool focused on local Claude/Codex access.
 - Added OpenAPI schema entries for the assistant request/response DTOs.
 - The assistant prompt is intentionally review-first:
   - suggest searches, album plans, folder plans, metadata audits, original-file audits, and review sets;
