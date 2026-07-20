@@ -28,9 +28,12 @@
   - Background upload duration should be preserved instead of hard-coded to `0`.
 - Current in-progress assistant context enhancement:
   - The in-app assistant is expected to see enough sampled asset context to reason about original-file integrity: checksum, source/original path, library ID, external-library flag, MIME type, file timestamps, upload/update timestamps, dimensions, duration, offline/edited state, EXIF file size, EXIF dates, timezone, orientation, GPS, camera/lens fields, and `mobile-app` asset metadata.
+  - The assistant also gets deterministic full-library audits from `AssetRepository`: source-folder cohorts, capture-date cohorts, camera cohorts, location cohorts, checksum-algorithm cohorts, content-checksum duplicate candidates, matching file-trait duplicate candidates, video metadata cohorts, and mobile original-upload metadata cohorts.
+  - External-library assets currently use `checksumAlgorithm=sha1-path`; treat those checksums as source-path identity, not byte-level original-file integrity. Only `checksumAlgorithm=sha1` is content-checksum evidence.
   - When a field is absent from the assistant context, call it "not visible in the assistant sample" rather than missing from the source file or database.
   - Prefer metadata audits and review plans over irreversible library reorganization.
-  - Assistant action cards in the web UI may create review albums only from explicit sampled `assetIds`. Broad cohort/folder/search ideas should stay as proposals or search links until reviewed.
+  - Assistant action cards in the web UI may create review albums from explicit sampled `assetIds` or deterministic `cohortType`/`cohortKey` pairs. Broad cohort/folder/search ideas should stay as proposals or search links until reviewed.
+  - `POST /assistant/review-album` materializes cohort-backed review albums server-side and caps each action at 5,000 assets.
 - Relevant notes:
   - `mobile/ios/unedited-original-upload-investigation.md`
   - `mobile/ios/open-pr-triage-2026-07-19.md`
@@ -68,7 +71,7 @@
   - `git diff --check`
 - Mobile validation is still pending because `flutter` and `dart` were not on PATH in this shell. Do not claim the mobile upload patch is device-verified until it has run on iPhone or iOS Simulator.
 - Next practical test after import: ask the in-app Codex assistant to audit `/external/desktop-icloud-originals` for original-file evidence, then compare sampled external-library assets against the Desktop export by filename, size, dimensions, EXIF dates/GPS/camera fields, and checksum.
-- If the assistant returns an album/review action with concrete `assetIds`, the web UI should show a `Create review album` button. This is the only current in-app organization mutation path and should remain reversible.
+- If the assistant returns an album/review action with concrete `assetIds` or `cohortType`/`cohortKey`, the web UI should show a `Create review album` button. This is the only current in-app organization mutation path and should remain reversible.
 
 ## Repo Hygiene
 

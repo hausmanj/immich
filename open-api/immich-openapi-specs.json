@@ -5199,6 +5199,57 @@
         "x-immich-permission": "asset.read"
       }
     },
+    "/assistant/review-album": {
+      "post": {
+        "description": "Create a reversible review album from explicit assistant asset IDs or a deterministic assistant cohort.",
+        "operationId": "createReviewAlbum",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssistantReviewAlbumRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssistantReviewAlbumResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Create an assistant review album",
+        "tags": [
+          "Assistant"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          }
+        ],
+        "x-immich-permission": "album.create"
+      }
+    },
     "/auth/admin-sign-up": {
       "post": {
         "description": "Create the first admin user in the system.",
@@ -18264,6 +18315,21 @@
             },
             "type": "array"
           },
+          "cohortKey": {
+            "nullable": true,
+            "type": "string"
+          },
+          "cohortType": {
+            "enum": [
+              "source_path",
+              "date",
+              "camera",
+              "location",
+              null
+            ],
+            "nullable": true,
+            "type": "string"
+          },
           "confidence": {
             "maximum": 1,
             "minimum": 0,
@@ -18560,6 +18626,67 @@
           "answer",
           "context",
           "status"
+        ],
+        "type": "object"
+      },
+      "AssistantReviewAlbumRequestDto": {
+        "properties": {
+          "albumName": {
+            "maxLength": 250,
+            "minLength": 1,
+            "type": "string"
+          },
+          "assetIds": {
+            "items": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "cohortKey": {
+            "nullable": true,
+            "type": "string"
+          },
+          "cohortType": {
+            "enum": [
+              "source_path",
+              "date",
+              "camera",
+              "location",
+              null
+            ],
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "albumName"
+        ],
+        "type": "object"
+      },
+      "AssistantReviewAlbumResponseDto": {
+        "properties": {
+          "albumId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+            "type": "string"
+          },
+          "albumName": {
+            "type": "string"
+          },
+          "assetCount": {
+            "type": "number"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "albumId",
+          "albumName",
+          "assetCount",
+          "truncated"
         ],
         "type": "object"
       },

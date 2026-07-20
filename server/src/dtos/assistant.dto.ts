@@ -23,9 +23,29 @@ const AssistantActionSchema = z
     query: z.string().nullable(),
     albumName: z.string().nullable(),
     assetIds: z.array(z.uuidv4()),
+    cohortType: z.enum(['source_path', 'date', 'camera', 'location']).nullable().optional(),
+    cohortKey: z.string().nullable().optional(),
     confidence: z.number().min(0).max(1),
   })
   .meta({ id: 'AssistantActionDto' });
+
+const AssistantReviewAlbumRequestSchema = z
+  .object({
+    albumName: z.string().trim().min(1).max(250),
+    assetIds: z.array(z.uuidv4()).optional(),
+    cohortType: z.enum(['source_path', 'date', 'camera', 'location']).nullable().optional(),
+    cohortKey: z.string().nullable().optional(),
+  })
+  .meta({ id: 'AssistantReviewAlbumRequestDto' });
+
+const AssistantReviewAlbumResponseSchema = z
+  .object({
+    albumId: z.uuidv4(),
+    albumName: z.string(),
+    assetCount: z.number(),
+    truncated: z.boolean(),
+  })
+  .meta({ id: 'AssistantReviewAlbumResponseDto' });
 
 const AssistantChatResponseSchema = z
   .object({
@@ -45,6 +65,8 @@ const AssistantChatResponseSchema = z
 
 export class AssistantChatRequestDto extends createZodDto(AssistantChatRequestSchema) {}
 export class AssistantChatResponseDto extends createZodDto(AssistantChatResponseSchema) {}
+export class AssistantReviewAlbumRequestDto extends createZodDto(AssistantReviewAlbumRequestSchema) {}
+export class AssistantReviewAlbumResponseDto extends createZodDto(AssistantReviewAlbumResponseSchema) {}
 
 const AssistantAssessmentBucketSchema = z
   .object({
