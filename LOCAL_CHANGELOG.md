@@ -137,6 +137,7 @@ This file tracks local-only changes in this checkout that have not necessarily b
 - Whole-library sparse-GPS organization follow-up:
   - Added `deterministicAudits.organizationCoveragePlan` so the assistant has a complete reversible organization backbone instead of focusing only on GPS-backed assets.
   - The coverage plan selects non-overlapping GPS/place-anchored event review cohorts first, then covers every remaining preserved source folder with source-path review cohorts.
+  - Follow-up fix: event cohort `sourceDirectories` now contains all materialized review folders, including no-location support folders, so a folder like Oct 16, 2012 is not both inside the French Polynesia trip review album and proposed again as a remaining source-folder album.
   - The assistant prompt now says sparse GPS is an anchor/name signal for older libraries, while source folder, capture date, and camera cohorts are the primary coverage backbone.
   - The assistant must not recommend leaving the `No visible location` majority unaddressed when asked to organize the entire library.
   - Auto assistant provider selection now tries configured providers in order, so a failing default Codex CLI path can fall through to Claude or another configured provider. Explicit provider selections still report their own provider error.

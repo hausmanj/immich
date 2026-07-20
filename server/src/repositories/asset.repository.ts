@@ -792,6 +792,7 @@ export class AssetRepository {
           review_assets."activeDayCount" as "reviewActiveDayCount",
           review_assets."noLocationAssetCount",
           review_assets."sourceFolderAssetCount",
+          review_assets."sourceDirectories" as "reviewSourceDirectories",
           review_assets.examples as "reviewExamples"
         from candidates
         cross join lateral (
@@ -814,6 +815,7 @@ export class AssetRepository {
             count(distinct review_asset."localDate")::int as "activeDayCount",
             count(*) filter (where review_asset.country is null and review_asset.state is null and review_asset.city is null)::int as "noLocationAssetCount",
             count(*) filter (where review_asset."sourceDirectory" = any(candidates."sourceDirectories"))::int as "sourceFolderAssetCount",
+            array_remove(array_agg(distinct review_asset."sourceDirectory"), null) as "sourceDirectories",
             array_remove((array_agg(review_asset."originalPath" order by review_asset."localDateTime" desc))[1:5], null) as examples
           from base review_asset
           where (
@@ -866,7 +868,7 @@ export class AssetRepository {
         country,
         state,
         city,
-        "sourceDirectories",
+        "reviewSourceDirectories" as "sourceDirectories",
         "reviewAssetCount" as "assetCount",
         "reviewImageCount" as "imageCount",
         "reviewVideoCount" as "videoCount",
