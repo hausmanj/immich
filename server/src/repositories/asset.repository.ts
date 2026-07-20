@@ -164,6 +164,7 @@ export interface AssistantEventAuditBucket extends AssistantLibraryAuditBucket {
   country: string | null;
   state: string | null;
   city: string | null;
+  sourceDirectories: string[];
   dateSpanDays: number;
   activeDayCount: number;
   locationAssetCount: number;
@@ -865,6 +866,7 @@ export class AssetRepository {
         country,
         state,
         city,
+        "sourceDirectories",
         "reviewAssetCount" as "assetCount",
         "reviewImageCount" as "imageCount",
         "reviewVideoCount" as "videoCount",

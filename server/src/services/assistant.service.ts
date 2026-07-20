@@ -23,7 +23,13 @@ import { AuthDto } from 'src/dtos/auth.dto';
 import { LibraryResponseDto } from 'src/dtos/library.dto';
 import { SearchSuggestionType } from 'src/dtos/search.dto';
 import { AssetOrder, AssetOrderBy, AssetType, AssetVisibility, JobName, Permission } from 'src/enum';
-import type { AssistantAuditAsset, AssistantAuditAssetSearch, AssistantEventAuditBucket } from 'src/repositories/asset.repository';
+import type {
+  AssistantAuditAsset,
+  AssistantAuditAssetSearch,
+  AssistantEventAuditBucket,
+  AssistantLibraryAuditBucket,
+  AssistantLibraryAuditSummary,
+} from 'src/repositories/asset.repository';
 import type { EnvData } from 'src/repositories/config.repository';
 import { AlbumService } from 'src/services/album.service';
 import { AssetService } from 'src/services/asset.service';
@@ -60,6 +66,18 @@ type ProviderConfig = RemoteProviderConfig | LocalCliProviderConfig;
 type AssistantModelOutput = {
   answer?: unknown;
   actions?: unknown;
+};
+
+type AssistantOrganizationCoverageItem = {
+  stage: 'event' | 'source_path';
+  title: string;
+  rationale: string;
+  cohortType: 'event' | 'source_path';
+  cohortKey: string;
+  assetCount: number;
+  confidence: number;
+  gpsAnchorCount?: number;
+  noLocationSupportCount?: number;
 };
 
 type AssistantMutationActionType =
@@ -295,9 +313,9 @@ export class AssistantService extends BaseService {
 
   async chat(auth: AuthDto, dto: AssistantChatRequestDto): Promise<AssistantChatResponseDto> {
     const context = await this.getLibraryContext(auth, dto);
-    const providerConfig = this.getLlmProvider(dto.provider);
+    const providerConfigs = this.getLlmProviders(dto.provider);
 
-    if (!providerConfig) {
+    if (providerConfigs.length === 0) {
       return {
         status: 'disabled',
         answer:
@@ -307,34 +325,41 @@ export class AssistantService extends BaseService {
       };
     }
 
-    try {
-      const output = this.isLocalCliProvider(providerConfig)
-        ? await this.callLocalAssistant(providerConfig, dto, context)
-        : providerConfig.provider === 'openai'
-          ? await this.callOpenAi(providerConfig, dto, context)
-          : await this.callAnthropic(providerConfig, dto, context);
+    let lastProviderConfig: ProviderConfig | undefined;
+    let lastError: string | undefined;
+    for (const providerConfig of providerConfigs) {
+      lastProviderConfig = providerConfig;
 
-      return {
-        status: 'success',
-        provider: providerConfig.provider,
-        model: providerConfig.model,
-        answer: this.toAnswer(output),
-        actions: this.toActions(output),
-        context: context.summary,
-      };
-    } catch (error: unknown) {
-      const message = this.getErrorMessage(error);
-      this.logger.warn(`Assistant chat failed: ${message}`);
-      return {
-        status: 'error',
-        provider: providerConfig.provider,
-        model: providerConfig.model,
-        answer: 'The assistant request failed. No library changes were made.',
-        actions: [],
-        error: message,
-        context: context.summary,
-      };
+      try {
+        const output = this.isLocalCliProvider(providerConfig)
+          ? await this.callLocalAssistant(providerConfig, dto, context)
+          : providerConfig.provider === 'openai'
+            ? await this.callOpenAi(providerConfig, dto, context)
+            : await this.callAnthropic(providerConfig, dto, context);
+
+        return {
+          status: 'success',
+          provider: providerConfig.provider,
+          model: providerConfig.model,
+          answer: this.toAnswer(output),
+          actions: this.toActions(output),
+          context: context.summary,
+        };
+      } catch (error: unknown) {
+        lastError = this.getErrorMessage(error);
+        this.logger.warn(`Assistant chat failed for ${providerConfig.provider}: ${lastError}`);
+      }
     }
+
+    return {
+      status: 'error',
+      provider: lastProviderConfig?.provider,
+      model: lastProviderConfig?.model,
+      answer: 'The assistant request failed. No library changes were made.',
+      actions: [],
+      error: lastError,
+      context: context.summary,
+    };
   }
 
   async createReviewAlbum(
@@ -1177,39 +1202,56 @@ export class AssistantService extends BaseService {
     return `Created by Immich Assistant from ${source}.`;
   }
 
-  private getLlmProvider(requested?: AssistantProvider): ProviderConfig | undefined {
+  private getLlmProviders(requested?: AssistantProvider): ProviderConfig[] {
     const { assistant, llm } = this.configRepository.getEnv();
-    const requestedLocal = requested === 'claude-cli' || requested === 'codex-cli' ? requested : assistant.provider;
-    if (requestedLocal === 'claude-cli' && (assistant.claude.url || assistant.claude.command)) {
-      return this.toLocalCliProvider('claude-cli', assistant.claude);
+    const providers: ProviderConfig[] = [];
+    const pushProvider = (provider: ProviderConfig | undefined) => {
+      if (!provider) {
+        return;
+      }
+
+      const key = `${provider.provider}:${provider.model}`;
+      if (!providers.some((item) => `${item.provider}:${item.model}` === key)) {
+        providers.push(provider);
+      }
+    };
+
+    if (requested) {
+      pushProvider(this.toProviderConfig(requested, assistant, llm));
+      return providers;
     }
 
-    if (requestedLocal === 'codex-cli' && (assistant.codex.url || assistant.codex.command)) {
-      return this.toLocalCliProvider('codex-cli', assistant.codex);
-    }
-
-    if (requested === 'openai' || requested === 'anthropic') {
-      return this.toRemoteProvider(requested, llm);
-    }
-
-    if (assistant.provider === 'openai' || assistant.provider === 'anthropic') {
-      return this.toRemoteProvider(assistant.provider, llm);
-    }
-
-    if (assistant.claude.url || assistant.claude.command) {
-      return this.toLocalCliProvider('claude-cli', assistant.claude);
-    }
-
-    if (assistant.codex.url || assistant.codex.command) {
-      return this.toLocalCliProvider('codex-cli', assistant.codex);
-    }
-
-    if (assistant.local.url || assistant.local.command) {
-      return this.toLocalCliProvider('local-cli', assistant.local);
-    }
+    pushProvider(this.toProviderConfig(assistant.provider, assistant, llm));
+    pushProvider(this.toLocalCliProvider('claude-cli', assistant.claude));
+    pushProvider(this.toLocalCliProvider('codex-cli', assistant.codex));
+    pushProvider(this.toLocalCliProvider('local-cli', assistant.local));
 
     const provider = llm.provider ?? (llm.openai.apiKey ? 'openai' : llm.anthropic.apiKey ? 'anthropic' : undefined);
-    return provider ? this.toRemoteProvider(provider, llm) : undefined;
+    pushProvider(provider ? this.toRemoteProvider(provider, llm) : undefined);
+
+    return providers;
+  }
+
+  private toProviderConfig(
+    provider: AssistantProvider | undefined,
+    assistant: EnvData['assistant'],
+    llm: EnvData['llm'],
+  ): ProviderConfig | undefined {
+    switch (provider) {
+      case 'claude-cli': {
+        return this.toLocalCliProvider('claude-cli', assistant.claude);
+      }
+      case 'codex-cli': {
+        return this.toLocalCliProvider('codex-cli', assistant.codex);
+      }
+      case 'openai':
+      case 'anthropic': {
+        return this.toRemoteProvider(provider, llm);
+      }
+      default: {
+        return undefined;
+      }
+    }
   }
 
   private toRemoteProvider(
@@ -1308,6 +1350,11 @@ export class AssistantService extends BaseService {
     const assetMetadata = await this.getAssetMetadataContext(assetService, auth, sampledAssets);
     const externalLibraries = await this.toLibraryContexts(libraryService, libraries);
     const topYears = this.toTopYears(timeBuckets);
+    const organizationCoveragePlan = this.toOrganizationCoveragePlan(
+      libraryAuditSummary,
+      sourcePathCohorts,
+      eventCohorts,
+    );
 
     const requestedToolResults = dto ? await this.getAutomaticToolResults(auth, dto) : [];
 
@@ -1337,9 +1384,10 @@ export class AssistantService extends BaseService {
         },
         videoCohorts,
         mobileAppMetadataCohorts,
+        organizationCoveragePlan,
         requestedToolResults,
         actionGuidance:
-          'For reversible review albums, prefer eventCohorts for multi-day trips and same-location travel before falling back to single-day dateCohorts. Event cohort assetCount is the materialized review size and includes compatible no-location/date/source-folder support assets; locationAssetCount is only the GPS/place-labeled anchor count. Use cohortType and cohortKey from deterministic cohorts instead of enumerating large asset ID lists. For deeper evidence, propose a read-only tool action with toolType/toolInput so Immich can run content_hash_audit, sidecar_pair_audit, metadata_search, or mobile_original_compare.',
+          'For reversible review albums, use organizationCoveragePlan to account for the whole library. Prefer eventCohorts for GPS/place-anchored multi-day trips, then cover the older no-GPS majority with sourcePathCohorts/dateCohorts and camera audits. Never treat No visible location as a reason to leave assets unaddressed. Event cohort assetCount is the materialized review size and includes compatible no-location/date/source-folder support assets; locationAssetCount is only the GPS/place-labeled anchor count. Use cohortType and cohortKey from deterministic cohorts instead of enumerating large asset ID lists. For deeper evidence, propose a read-only tool action with toolType/toolInput so Immich can run content_hash_audit, sidecar_pair_audit, metadata_search, or mobile_original_compare.',
       },
       mutationCapabilities: this.getMutationCapabilities(),
       topYears,
@@ -1394,6 +1442,76 @@ export class AssistantService extends BaseService {
       rationale:
         `${cohort.activeDayCount} active days across ${cohort.dateSpanDays} calendar days with ${cohort.assetCount} review assets, anchored by ${cohort.locationAssetCount} location-backed assets and including ${cohort.noLocationAssetCount} no-location support assets. Prefer this over daily albums when organizing a multi-day trip or repeated same-location event.`,
     }));
+  }
+
+  private toOrganizationCoveragePlan(
+    summary: AssistantLibraryAuditSummary,
+    sourcePathCohorts: AssistantLibraryAuditBucket[],
+    eventCohorts: AssistantEventAuditBucket[],
+  ) {
+    const selectedEvents: AssistantOrganizationCoverageItem[] = [];
+    const coveredSourcePaths = new Set<string>();
+
+    for (const cohort of eventCohorts) {
+      const sourceDirectories = cohort.sourceDirectories ?? [];
+      const newSourceDirectories = sourceDirectories.filter((sourceDirectory) => !coveredSourcePaths.has(sourceDirectory));
+      if (sourceDirectories.length === 0 || newSourceDirectories.length === 0) {
+        continue;
+      }
+
+      selectedEvents.push({
+        stage: 'event',
+        title: `${cohort.label} (${this.toDateLabel(cohort.dateStart)} to ${this.toDateLabel(cohort.dateEnd)})`,
+        rationale:
+          `Trip/event review cohort anchored by ${cohort.locationAssetCount} GPS/place assets and expanded to include ${cohort.noLocationAssetCount} no-location support assets from the same date/source context.`,
+        cohortType: 'event',
+        cohortKey: cohort.key,
+        assetCount: cohort.assetCount,
+        confidence: cohort.confidence,
+        gpsAnchorCount: cohort.locationAssetCount,
+        noLocationSupportCount: cohort.noLocationAssetCount,
+      });
+
+      for (const sourceDirectory of sourceDirectories) {
+        coveredSourcePaths.add(sourceDirectory);
+      }
+    }
+
+    const remainingSourcePathReviewCohorts: AssistantOrganizationCoverageItem[] = sourcePathCohorts
+      .filter((cohort) => !coveredSourcePaths.has(cohort.key))
+      .map((cohort) => ({
+        stage: 'source_path',
+        title: cohort.key.replace(/^\/external\/[^/]+\//, ''),
+        rationale:
+          'Older/no-GPS coverage cohort based on the preserved source folder. Use this before inventing location labels.',
+        cohortType: 'source_path',
+        cohortKey: cohort.key,
+        assetCount: cohort.assetCount,
+        confidence: 0.72,
+      }));
+
+    const plannedAssetCount =
+      selectedEvents.reduce((sum, item) => sum + item.assetCount, 0) +
+      remainingSourcePathReviewCohorts.reduce((sum, item) => sum + item.assetCount, 0);
+    const totalAssets = summary.assetCount ?? plannedAssetCount;
+
+    return {
+      strategy:
+        'Full reversible coverage: GPS/place is an anchor for trips, but source folder/date/camera are the primary backbone for older sparse-GPS libraries.',
+      totalAssets,
+      gpsAssetCount: summary.gpsCount,
+      noGpsOrNoVisibleLocationAssetCount: Math.max(0, totalAssets - summary.gpsCount),
+      plannedAssetCount,
+      unplannedAssetCount: Math.max(0, totalAssets - plannedAssetCount),
+      selectedEventReviewCohorts: selectedEvents,
+      remainingSourcePathReviewCohorts,
+      selectionRules: [
+        'Select non-overlapping event cohorts first when GPS/place evidence identifies a multi-day trip.',
+        'Remove source folders already covered by selected event cohorts.',
+        'Cover every remaining preserved source folder as its own reversible review cohort.',
+        'Use camera cohorts as audit overlays for clock-offset and mixed-camera checks, not as the only organization structure.',
+      ],
+    };
   }
 
   private toDateLabel(value: string | null) {
@@ -1929,7 +2047,7 @@ export class AssistantService extends BaseService {
   ) {
     return {
       instruction:
-        'You are an in-app Immich photo library assistant for organizing very large photo and video libraries. Help assess metadata, source cohorts, time ranges, locations, albums, folders, review queues, duplicates, video metadata, and original-file risks using the provided library context. Prefer deterministicAudits over the sampled assets when discussing whole-library counts, cohorts, duplicate candidates, videos, mobile upload audit coverage, and review-album candidates. Prefer deterministicAudits.eventCohorts for multi-day trips, same-location travel, and event-style organization; do not split a trip into daily albums when a higher-confidence event cohort covers the same date/location span. Event cohort assetCount is the materialized review-album size, which includes compatible no-location assets in the event date span plus assets from source folders anchored by GPS/place evidence; locationAssetCount is only the GPS/place anchor count. When the user asks whether nearby days should be included, compare eventCohorts with dateCohorts/sourcePathCohorts/requestedToolResults and explicitly call out adjacent no-location days as review candidates rather than ignoring them. Daily dateCohorts are fallback review units, not the default trip boundary. When deterministicAudits.requestedToolResults is present, treat it as server-run evidence from the current user request; it contains the full tool summary, result count, error count, and logFilePath when large row-level output was written to disk. Full row-level results remain available through a tool action and, when present, the JSON audit log. When proposing a reversible review album from deterministicAudits, set action.cohortType and action.cohortKey to the exact cohort fields and leave assetIds empty unless the action is based on explicit sampled assets. When more evidence is needed, include action.toolType and action.toolInput for one of the read-only Immich tools: content_hash_audit, sidecar_pair_audit, metadata_search, or mobile_original_compare. Treat impactful organization changes as requiring read-only evidence first plus a persisted assistant change journal and undo path before the change is considered safe. Use mutationCapabilities to distinguish executable journaled mutations from plan-only blocked mutations: metadata_edit, archive_favorite, and stack_change are currently applyable with typed undo; folder_move and duplicate_resolution are registered but apply-blocked until a reliable typed undo exists. Treat checksumAlgorithm=sha1 as file-content evidence and checksumAlgorithm=sha1-path as external-library path identity, not byte-level integrity. When a field is absent from the provided context, say it is not visible in the assistant context; do not claim it is missing from the source file or Immich database. Do not suggest tagging unless the user explicitly asks for tags. Do not claim any change has been applied. Prefer reversible, review-first organization. Never suggest deleting assets unless the user explicitly asks about deletion.',
+        'You are an in-app Immich photo library assistant for organizing very large photo and video libraries. Help assess metadata, source cohorts, time ranges, locations, albums, folders, review queues, duplicates, video metadata, and original-file risks using the provided library context. Prefer deterministicAudits over the sampled assets when discussing whole-library counts, cohorts, duplicate candidates, videos, mobile upload audit coverage, and review-album candidates. Use deterministicAudits.organizationCoveragePlan as the first source for whole-library organization because it is designed to account for every asset. For older libraries with sparse GPS, GPS is only an anchor signal; source folders, capture dates, and camera cohorts are the primary organization backbone. Never recommend leaving the no-GPS or No visible location majority unaddressed when the user asks to organize the entire library. Prefer deterministicAudits.eventCohorts for multi-day trips, same-location travel, and event-style organization; do not split a trip into daily albums when a higher-confidence event cohort covers the same date/location span. Event cohort assetCount is the materialized review-album size, which includes compatible no-location assets in the event date span plus assets from source folders anchored by GPS/place evidence; locationAssetCount is only the GPS/place anchor count. When the user asks whether nearby days should be included, compare eventCohorts with dateCohorts/sourcePathCohorts/requestedToolResults and explicitly call out adjacent no-location days as review candidates rather than ignoring them. Daily dateCohorts/sourcePathCohorts are fallback coverage units after event cohorts, not discarded leftovers. When deterministicAudits.requestedToolResults is present, treat it as server-run evidence from the current user request; it contains the full tool summary, result count, error count, and logFilePath when large row-level output was written to disk. Full row-level results remain available through a tool action and, when present, the JSON audit log. When proposing a reversible review album from deterministicAudits, set action.cohortType and action.cohortKey to the exact cohort fields and leave assetIds empty unless the action is based on explicit sampled assets. When more evidence is needed, include action.toolType and action.toolInput for one of the read-only Immich tools: content_hash_audit, sidecar_pair_audit, metadata_search, or mobile_original_compare. Treat impactful organization changes as requiring read-only evidence first plus a persisted assistant change journal and undo path before the change is considered safe. Use mutationCapabilities to distinguish executable journaled mutations from plan-only blocked mutations: metadata_edit, archive_favorite, and stack_change are currently applyable with typed undo; folder_move and duplicate_resolution are registered but apply-blocked until a reliable typed undo exists. Treat checksumAlgorithm=sha1 as file-content evidence and checksumAlgorithm=sha1-path as external-library path identity, not byte-level integrity. When a field is absent from the provided context, say it is not visible in the assistant context; do not claim it is missing from the source file or Immich database. Do not suggest tagging unless the user explicitly asks for tags. Do not claim any change has been applied. Prefer reversible, review-first organization. Never suggest deleting assets unless the user explicitly asks about deletion.',
       userContent: JSON.stringify({
         libraryContext: context,
         conversation: dto.messages,

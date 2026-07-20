@@ -134,6 +134,12 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - Direct database verification for `French Polynesia / Leeward Islands` produced a 551-asset review cohort: 164 GPS/place anchors, 387 no-location support assets, source folders from Oct 15, Oct 16, Oct 17, Oct 18, and Oct 19, and source-folder date carryover through 2012-10-20.
   - Adjacent 2012-10-21 has 11 no-location assets in its own source folder; keep it as a separate review candidate unless later evidence ties it into the trip.
   - Assistant UI action buttons now become stale after a newer user message, preventing old action cards from creating unrelated albums after the user has shifted context.
+- Whole-library sparse-GPS organization follow-up:
+  - Added `deterministicAudits.organizationCoveragePlan` so the assistant has a complete reversible organization backbone instead of focusing only on GPS-backed assets.
+  - The coverage plan selects non-overlapping GPS/place-anchored event review cohorts first, then covers every remaining preserved source folder with source-path review cohorts.
+  - The assistant prompt now says sparse GPS is an anchor/name signal for older libraries, while source folder, capture date, and camera cohorts are the primary coverage backbone.
+  - The assistant must not recommend leaving the `No visible location` majority unaddressed when asked to organize the entire library.
+  - Auto assistant provider selection now tries configured providers in order, so a failing default Codex CLI path can fall through to Claude or another configured provider. Explicit provider selections still report their own provider error.
 - Full `sidecar_pair_audit` over `/external/desktop-icloud-originals` completed:
   - `directoriesScanned=56`;
   - `sidecarFileCount=0`;
