@@ -29,7 +29,7 @@ const AssistantActionSchema = z
 const AssistantChatResponseSchema = z
   .object({
     status: z.enum(['success', 'disabled', 'error']),
-    provider: z.enum(['openai', 'anthropic']).optional(),
+    provider: z.enum(['openai', 'anthropic', 'local-cli']).optional(),
     model: z.string().optional(),
     answer: z.string(),
     actions: z.array(AssistantActionSchema),

@@ -17,6 +17,9 @@ const resetEnv = () => {
     'IMMICH_API_METRICS_PORT',
     'IMMICH_MEDIA_LOCATION',
     'IMMICH_MICROSERVICES_METRICS_PORT',
+    'IMMICH_ASSISTANT_LOCAL_COMMAND',
+    'IMMICH_ASSISTANT_LOCAL_ARGS',
+    'IMMICH_ASSISTANT_LOCAL_TIMEOUT_SECONDS',
     'IMMICH_LLM_PROVIDER',
     'IMMICH_LLM_OPENAI_API_KEY',
     'IMMICH_LLM_OPENAI_MODEL',
@@ -288,6 +291,32 @@ describe('getEnv', () => {
   });
 
   describe('llm', () => {
+    it('should use default assistant local command settings', () => {
+      const { assistant } = getEnv();
+      expect(assistant).toEqual({
+        local: {
+          command: undefined,
+          args: [],
+          timeoutSeconds: 120,
+        },
+      });
+    });
+
+    it('should parse assistant local command settings', () => {
+      process.env.IMMICH_ASSISTANT_LOCAL_COMMAND = 'claude';
+      process.env.IMMICH_ASSISTANT_LOCAL_ARGS = '--print,--output-format,json';
+      process.env.IMMICH_ASSISTANT_LOCAL_TIMEOUT_SECONDS = '240';
+
+      const { assistant } = getEnv();
+      expect(assistant).toEqual({
+        local: {
+          command: 'claude',
+          args: ['--print', '--output-format', 'json'],
+          timeoutSeconds: 240,
+        },
+      });
+    });
+
     it('should use defaults without API keys', () => {
       const { llm } = getEnv();
       expect(llm).toEqual({

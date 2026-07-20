@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { spawn } from 'node:child_process';
 import { AlbumResponseDto } from 'src/dtos/album.dto';
 import { AssetResponseDto } from 'src/dtos/asset-response.dto';
 import {
@@ -13,13 +14,23 @@ import { AlbumService } from 'src/services/album.service';
 import { BaseService } from 'src/services/base.service';
 import { SearchService } from 'src/services/search.service';
 
-type LlmProvider = 'openai' | 'anthropic';
+type LlmProvider = 'openai' | 'anthropic' | 'local-cli';
 
-type ProviderConfig = {
-  provider: LlmProvider;
+type RemoteProviderConfig = {
+  provider: Exclude<LlmProvider, 'local-cli'>;
   apiKey: string;
   model: string;
 };
+
+type LocalCliProviderConfig = {
+  provider: 'local-cli';
+  command: string;
+  args: string[];
+  timeoutSeconds: number;
+  model: string;
+};
+
+type ProviderConfig = RemoteProviderConfig | LocalCliProviderConfig;
 
 type AssistantModelOutput = {
   answer?: unknown;
@@ -157,7 +168,8 @@ export class AssistantService extends BaseService {
     if (!providerConfig) {
       return {
         status: 'disabled',
-        answer: 'The assistant is not configured. Set IMMICH_LLM_PROVIDER and the matching provider API key.',
+        answer:
+          'The assistant is not configured. Set IMMICH_ASSISTANT_LOCAL_COMMAND for a local CLI, or set IMMICH_LLM_PROVIDER with the matching provider API key.',
         actions: [],
         context: context.summary,
       };
@@ -165,9 +177,11 @@ export class AssistantService extends BaseService {
 
     try {
       const output =
-        providerConfig.provider === 'openai'
-          ? await this.callOpenAi(providerConfig, dto, context)
-          : await this.callAnthropic(providerConfig, dto, context);
+        providerConfig.provider === 'local-cli'
+          ? await this.callLocalCli(providerConfig, dto, context)
+          : providerConfig.provider === 'openai'
+            ? await this.callOpenAi(providerConfig, dto, context)
+            : await this.callAnthropic(providerConfig, dto, context);
 
       return {
         status: 'success',
@@ -193,7 +207,17 @@ export class AssistantService extends BaseService {
   }
 
   private getLlmProvider(): ProviderConfig | undefined {
-    const { llm } = this.configRepository.getEnv();
+    const { assistant, llm } = this.configRepository.getEnv();
+    if (assistant.local.command) {
+      return {
+        provider: 'local-cli',
+        command: assistant.local.command,
+        args: assistant.local.args,
+        timeoutSeconds: assistant.local.timeoutSeconds,
+        model: assistant.local.command,
+      };
+    }
+
     const provider = llm.provider ?? (llm.openai.apiKey ? 'openai' : llm.anthropic.apiKey ? 'anthropic' : undefined);
     if (!provider || (provider !== 'openai' && provider !== 'anthropic')) {
       return;
@@ -296,7 +320,7 @@ export class AssistantService extends BaseService {
   }
 
   private async callOpenAi(
-    { apiKey, model }: ProviderConfig,
+    { apiKey, model }: RemoteProviderConfig,
     dto: AssistantChatRequestDto,
     context: Awaited<ReturnType<AssistantService['getLibraryContext']>>,
   ): Promise<AssistantModelOutput> {
@@ -327,7 +351,7 @@ export class AssistantService extends BaseService {
   }
 
   private async callAnthropic(
-    { apiKey, model }: ProviderConfig,
+    { apiKey, model }: RemoteProviderConfig,
     dto: AssistantChatRequestDto,
     context: Awaited<ReturnType<AssistantService['getLibraryContext']>>,
   ): Promise<AssistantModelOutput> {
@@ -376,6 +400,57 @@ export class AssistantService extends BaseService {
             .join('\n')
         : '';
     return this.parseJsonOrText(text) as AssistantModelOutput;
+  }
+
+  private async callLocalCli(
+    { command, args, timeoutSeconds }: LocalCliProviderConfig,
+    dto: AssistantChatRequestDto,
+    context: Awaited<ReturnType<AssistantService['getLibraryContext']>>,
+  ): Promise<AssistantModelOutput> {
+    const prompt = this.buildPrompt(dto, context);
+    const stdin = [
+      prompt.instruction,
+      '',
+      'Return only JSON matching this schema:',
+      JSON.stringify(assistantOutputSchema),
+      '',
+      'Library context and conversation:',
+      prompt.userContent,
+    ].join('\n');
+
+    return await new Promise((resolve, reject) => {
+      const child = spawn(command, args, {
+        env: process.env,
+        shell: false,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      const stdout: Buffer[] = [];
+      const stderr: Buffer[] = [];
+      const timer = setTimeout(() => {
+        child.kill('SIGTERM');
+        reject(new Error(`Local assistant command timed out after ${timeoutSeconds} seconds`));
+      }, timeoutSeconds * 1000);
+
+      child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
+      child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+      child.on('error', (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        const output = Buffer.concat(stdout).toString('utf8').trim();
+        const errorOutput = Buffer.concat(stderr).toString('utf8').trim();
+        if (code !== 0) {
+          reject(new Error(`Local assistant command exited with ${code}: ${errorOutput || output}`));
+          return;
+        }
+
+        resolve(this.parseJsonOrText(output) as AssistantModelOutput);
+      });
+
+      child.stdin.end(stdin);
+    });
   }
 
   private async readLlmResponse(response: Response): Promise<unknown> {

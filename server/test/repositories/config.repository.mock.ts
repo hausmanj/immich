@@ -51,6 +51,13 @@ export const envData: EnvData = {
     trustedProxies: [],
   },
 
+  assistant: {
+    local: {
+      args: [],
+      timeoutSeconds: 120,
+    },
+  },
+
   llm: {
     openai: {
       model: 'gpt-5.6-luna',

@@ -25,6 +25,12 @@ import {
 import { VectorExtension } from 'src/types';
 import { setDifference } from 'src/utils/set';
 
+const parseCsv = (value?: string) =>
+  value
+    ?.split(',')
+    .map((item) => item.trim())
+    .filter(Boolean) ?? [];
+
 export interface EnvData {
   host?: string;
   port: number;
@@ -79,6 +85,14 @@ export interface EnvData {
 
   network: {
     trustedProxies: string[];
+  };
+
+  assistant: {
+    local: {
+      command?: string;
+      args: string[];
+      timeoutSeconds: number;
+    };
   };
 
   llm: {
@@ -338,6 +352,14 @@ const getEnv = (): EnvData => {
 
     network: {
       trustedProxies: dto.IMMICH_TRUSTED_PROXIES ?? ['linklocal', 'uniquelocal'],
+    },
+
+    assistant: {
+      local: {
+        command: dto.IMMICH_ASSISTANT_LOCAL_COMMAND,
+        args: parseCsv(dto.IMMICH_ASSISTANT_LOCAL_ARGS),
+        timeoutSeconds: dto.IMMICH_ASSISTANT_LOCAL_TIMEOUT_SECONDS ?? 120,
+      },
     },
 
     llm: {

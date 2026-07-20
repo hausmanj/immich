@@ -18529,7 +18529,8 @@
           "provider": {
             "enum": [
               "openai",
-              "anthropic"
+              "anthropic",
+              "local-cli"
             ],
             "type": "string"
           },
