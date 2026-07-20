@@ -26,8 +26,9 @@ type RemoteProviderConfig = {
 
 type LocalCliProviderConfig = {
   provider: 'claude-cli' | 'codex-cli' | 'local-cli';
-  command: string;
+  command?: string;
   args: string[];
+  url?: string;
   timeoutSeconds: number;
   model: string;
 };
@@ -179,7 +180,7 @@ export class AssistantService extends BaseService {
 
     try {
       const output = this.isLocalCliProvider(providerConfig)
-        ? await this.callLocalCli(providerConfig, dto, context)
+        ? await this.callLocalAssistant(providerConfig, dto, context)
         : providerConfig.provider === 'openai'
           ? await this.callOpenAi(providerConfig, dto, context)
           : await this.callAnthropic(providerConfig, dto, context);
@@ -210,11 +211,11 @@ export class AssistantService extends BaseService {
   private getLlmProvider(requested?: AssistantProvider): ProviderConfig | undefined {
     const { assistant, llm } = this.configRepository.getEnv();
     const requestedLocal = requested === 'claude-cli' || requested === 'codex-cli' ? requested : assistant.provider;
-    if (requestedLocal === 'claude-cli' && assistant.claude.command) {
+    if (requestedLocal === 'claude-cli' && (assistant.claude.url || assistant.claude.command)) {
       return this.toLocalCliProvider('claude-cli', assistant.claude);
     }
 
-    if (requestedLocal === 'codex-cli' && assistant.codex.command) {
+    if (requestedLocal === 'codex-cli' && (assistant.codex.url || assistant.codex.command)) {
       return this.toLocalCliProvider('codex-cli', assistant.codex);
     }
 
@@ -226,15 +227,15 @@ export class AssistantService extends BaseService {
       return this.toRemoteProvider(assistant.provider, llm);
     }
 
-    if (assistant.claude.command) {
+    if (assistant.claude.url || assistant.claude.command) {
       return this.toLocalCliProvider('claude-cli', assistant.claude);
     }
 
-    if (assistant.codex.command) {
+    if (assistant.codex.url || assistant.codex.command) {
       return this.toLocalCliProvider('codex-cli', assistant.codex);
     }
 
-    if (assistant.local.command) {
+    if (assistant.local.url || assistant.local.command) {
       return this.toLocalCliProvider('local-cli', assistant.local);
     }
 
@@ -260,9 +261,9 @@ export class AssistantService extends BaseService {
 
   private toLocalCliProvider(
     provider: LocalCliProviderConfig['provider'],
-    local: { command?: string; args: string[]; timeoutSeconds: number },
+    local: { command?: string; args: string[]; url?: string; timeoutSeconds: number },
   ): ProviderConfig | undefined {
-    if (!local.command) {
+    if (!local.command && !local.url) {
       return;
     }
 
@@ -270,8 +271,9 @@ export class AssistantService extends BaseService {
       provider,
       command: local.command,
       args: local.args,
+      url: local.url,
       timeoutSeconds: local.timeoutSeconds,
-      model: local.command,
+      model: local.url ?? local.command ?? provider,
     };
   }
 
@@ -443,16 +445,15 @@ export class AssistantService extends BaseService {
             .map((item) => (this.isRecord(item) && typeof item.text === 'string' ? item.text : ''))
             .join('\n')
         : '';
-    return this.parseJsonOrText(text) as AssistantModelOutput;
+    return this.parseJsonOrText(text);
   }
 
-  private async callLocalCli(
-    { command, args, timeoutSeconds }: LocalCliProviderConfig,
+  private buildLocalAssistantInput(
     dto: AssistantChatRequestDto,
     context: Awaited<ReturnType<AssistantService['getLibraryContext']>>,
-  ): Promise<AssistantModelOutput> {
+  ) {
     const prompt = this.buildPrompt(dto, context);
-    const stdin = [
+    return [
       prompt.instruction,
       '',
       'Return only JSON matching this schema:',
@@ -461,6 +462,42 @@ export class AssistantService extends BaseService {
       'Library context and conversation:',
       prompt.userContent,
     ].join('\n');
+  }
+
+  private async callLocalAssistant(
+    config: LocalCliProviderConfig,
+    dto: AssistantChatRequestDto,
+    context: Awaited<ReturnType<AssistantService['getLibraryContext']>>,
+  ): Promise<AssistantModelOutput> {
+    const input = this.buildLocalAssistantInput(dto, context);
+    return config.url ? await this.callLocalBridge(config, input) : await this.callLocalCli(config, input);
+  }
+
+  private async callLocalBridge(
+    { url, timeoutSeconds }: LocalCliProviderConfig,
+    input: string,
+  ): Promise<AssistantModelOutput> {
+    if (!url) {
+      throw new Error('Local assistant bridge URL is not configured');
+    }
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ input, timeoutSeconds }),
+      signal: AbortSignal.timeout(timeoutSeconds * 1000),
+    });
+    const payload = await this.readLlmResponse(response);
+    return this.normalizeAssistantOutput(payload);
+  }
+
+  private async callLocalCli(
+    { command, args, timeoutSeconds }: LocalCliProviderConfig,
+    input: string,
+  ): Promise<AssistantModelOutput> {
+    if (!command) {
+      throw new Error('Local assistant command is not configured');
+    }
 
     return await new Promise((resolve, reject) => {
       const child = spawn(command, args, {
@@ -490,10 +527,10 @@ export class AssistantService extends BaseService {
           return;
         }
 
-        resolve(this.parseJsonOrText(output) as AssistantModelOutput);
+        resolve(this.parseJsonOrText(output));
       });
 
-      child.stdin.end(stdin);
+      child.stdin.end(input);
     });
   }
 
@@ -541,12 +578,35 @@ export class AssistantService extends BaseService {
     return chunks.join('\n');
   }
 
-  private parseJsonOrText(text: string): unknown {
+  private parseJsonOrText(text: string): AssistantModelOutput {
     try {
-      return JSON.parse(text);
+      return this.normalizeAssistantOutput(JSON.parse(text));
     } catch {
       return { answer: text, actions: [] };
     }
+  }
+
+  private normalizeAssistantOutput(output: unknown): AssistantModelOutput {
+    if (typeof output === 'string') {
+      return this.parseJsonOrText(output);
+    }
+
+    if (!this.isRecord(output)) {
+      return { answer: String(output), actions: [] };
+    }
+
+    if ('answer' in output || 'actions' in output) {
+      return output as AssistantModelOutput;
+    }
+
+    for (const key of ['stdout', 'result', 'output', 'output_text', 'text', 'message']) {
+      const value = output[key];
+      if (typeof value === 'string') {
+        return this.parseJsonOrText(value);
+      }
+    }
+
+    return { answer: JSON.stringify(output), actions: [] };
   }
 
   private toAnswer(output: AssistantModelOutput): string {
