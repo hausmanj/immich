@@ -15,8 +15,14 @@ This file tracks local-only changes in this checkout that have not necessarily b
 - Added `POST /assistant/chat` on the server.
   - Requires `asset.read`.
   - Samples owned albums, recent assets, unorganized assets, and search statistics.
-  - Uses the existing local LLM env config from the workflow plugin prototype.
+  - Uses a local assistant CLI command when `IMMICH_ASSISTANT_LOCAL_COMMAND` is configured, otherwise uses the existing LLM env config from the workflow plugin prototype.
+  - The local command path executes without a shell, passes the prompt/context over stdin, and expects JSON or plain text on stdout.
   - Supports OpenAI Responses API and Anthropic Messages API.
+- Added local assistant CLI env settings:
+  - `IMMICH_ASSISTANT_LOCAL_COMMAND`
+  - `IMMICH_ASSISTANT_LOCAL_ARGS`
+  - `IMMICH_ASSISTANT_LOCAL_TIMEOUT_SECONDS`
+  - Docker constraint: the command must be available to the Immich server process/container.
 - Added OpenAPI schema entries for the assistant request/response DTOs.
 - The assistant prompt is intentionally review-first:
   - suggest searches, album plans, folder plans, metadata audits, original-file audits, and review sets;
