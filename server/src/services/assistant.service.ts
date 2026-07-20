@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { spawn } from 'node:child_process';
 import { readdir } from 'node:fs/promises';
-import { basename, dirname, extname, join } from 'node:path';
+import { basename, dirname, extname, join, normalize } from 'node:path';
 import { AlbumResponseDto } from 'src/dtos/album.dto';
 import { AssetResponseDto } from 'src/dtos/asset-response.dto';
 import { AssetMetadataResponseDto } from 'src/dtos/asset.dto';
@@ -13,6 +13,8 @@ import {
   AssistantReviewAlbumResponseDto,
   AssistantToolRequestDto,
   AssistantToolResponseDto,
+  AssistantUndoRequestDto,
+  AssistantUndoResponseDto,
 } from 'src/dtos/assistant.dto';
 import { AuthDto } from 'src/dtos/auth.dto';
 import { LibraryResponseDto } from 'src/dtos/library.dto';
@@ -54,6 +56,27 @@ type ProviderConfig = RemoteProviderConfig | LocalCliProviderConfig;
 type AssistantModelOutput = {
   answer?: unknown;
   actions?: unknown;
+};
+
+type AssistantChangeJournal = {
+  version: 1;
+  actionType: 'assistant_review_album_create';
+  status: 'planned' | 'applied' | 'failed' | 'undone' | 'undo_failed';
+  generatedAt: string;
+  updatedAt: string;
+  ownerId: string;
+  changeLogFilePath: string;
+  request: Record<string, unknown>;
+  before: Record<string, unknown>;
+  after: Record<string, unknown> | null;
+  undo: {
+    strategy: 'delete_created_review_album';
+    available: boolean;
+    albumId: string | null;
+    albumName: string | null;
+  };
+  error?: string;
+  undoResult?: Record<string, unknown>;
 };
 
 const assistantActionTypes = [
@@ -173,6 +196,7 @@ export class AssistantService extends BaseService {
   private readonly duplicateCandidateLimit = 40;
   private readonly assistantToolInlineResultThreshold = 100;
   private readonly assistantToolLogDirectory = '/data/assistant-audits';
+  private readonly assistantChangeJournalDirectory = '/data/assistant-audits/change-journal';
 
   async assess(auth: AuthDto): Promise<AssistantAssessmentResponseDto> {
     const albumService = BaseService.create(AlbumService, this);
@@ -301,18 +325,101 @@ export class AssistantService extends BaseService {
       throw new BadRequestException('The assistant review album request did not resolve any assets');
     }
 
-    const album = await albumService.create(auth, {
-      albumName: dto.albumName,
-      description: this.getReviewAlbumDescription(dto),
-      assetIds,
-    });
+    const journal = await this.createAssistantReviewAlbumJournal(auth, dto, assetIds);
 
-    return {
-      albumId: album.id,
-      albumName: album.albumName,
-      assetCount: assetIds.length,
-      truncated: false,
-    };
+    try {
+      const album = await albumService.create(auth, {
+        albumName: dto.albumName,
+        description: this.getReviewAlbumDescription(dto),
+        assetIds,
+      });
+
+      journal.status = 'applied';
+      journal.updatedAt = new Date().toISOString();
+      journal.after = {
+        createdAlbum: this.toAlbumJournalSummary(album),
+        assetIds,
+      };
+      journal.undo = {
+        strategy: 'delete_created_review_album',
+        available: true,
+        albumId: album.id,
+        albumName: album.albumName,
+      };
+      await this.writeAssistantChangeJournal(journal);
+
+      return {
+        albumId: album.id,
+        albumName: album.albumName,
+        assetCount: assetIds.length,
+        truncated: false,
+        changeLogFilePath: journal.changeLogFilePath,
+        undoAvailable: true,
+        undoAction: 'delete_created_review_album',
+      };
+    } catch (error: unknown) {
+      journal.status = 'failed';
+      journal.updatedAt = new Date().toISOString();
+      journal.error = this.getErrorMessage(error);
+      await this.writeAssistantChangeJournal(journal);
+      throw error;
+    }
+  }
+
+  async undoAssistantChange(auth: AuthDto, dto: AssistantUndoRequestDto): Promise<AssistantUndoResponseDto> {
+    const albumService = BaseService.create(AlbumService, this);
+    const journal = await this.readAssistantChangeJournal(dto.changeLogFilePath);
+
+    if (journal.ownerId !== auth.user.id) {
+      throw new BadRequestException('Assistant change journal does not belong to this user');
+    }
+
+    if (journal.actionType !== 'assistant_review_album_create') {
+      throw new BadRequestException(`Unsupported assistant undo action: ${journal.actionType}`);
+    }
+
+    if (!journal.undo.available || !journal.undo.albumId || !journal.undo.albumName) {
+      throw new BadRequestException('Assistant change journal does not have an available undo action');
+    }
+
+    if (journal.status === 'undone') {
+      return {
+        status: 'undone',
+        actionType: journal.actionType,
+        changeLogFilePath: journal.changeLogFilePath,
+        undoneAlbumId: journal.undo.albumId,
+        undoneAlbumName: journal.undo.albumName,
+        message: 'Assistant change was already undone.',
+      };
+    }
+
+    try {
+      const albumBeforeUndo = await albumService.get(auth, journal.undo.albumId);
+      await albumService.delete(auth, journal.undo.albumId);
+      journal.status = 'undone';
+      journal.updatedAt = new Date().toISOString();
+      journal.undoResult = {
+        undoneAt: journal.updatedAt,
+        deletedAlbum: this.toAlbumJournalSummary(albumBeforeUndo),
+      };
+      journal.undo.available = false;
+      await this.writeAssistantChangeJournal(journal);
+
+      return {
+        status: 'undone',
+        actionType: journal.actionType,
+        changeLogFilePath: journal.changeLogFilePath,
+        undoneAlbumId: albumBeforeUndo.id,
+        undoneAlbumName: albumBeforeUndo.albumName,
+        message: 'Assistant-created review album was deleted. Source assets were not deleted.',
+      };
+    } catch (error: unknown) {
+      journal.status = 'undo_failed';
+      journal.updatedAt = new Date().toISOString();
+      journal.error = this.getErrorMessage(error);
+      await this.writeAssistantChangeJournal(journal);
+      throw error;
+    }
   }
 
   async runTool(auth: AuthDto, dto: AssistantToolRequestDto): Promise<AssistantToolResponseDto> {
@@ -406,6 +513,96 @@ export class AssistantService extends BaseService {
 
     await this.storageRepository.createOrOverwriteFile(logFilePath, Buffer.from(JSON.stringify(payload)));
     return logFilePath;
+  }
+
+  private async createAssistantReviewAlbumJournal(
+    auth: AuthDto,
+    dto: AssistantReviewAlbumRequestDto,
+    assetIds: string[],
+  ): Promise<AssistantChangeJournal> {
+    const generatedAt = new Date().toISOString();
+    const changeLogFilePath = this.toAssistantChangeJournalPath(generatedAt, 'assistant_review_album_create');
+    const before = await this.getAssistantReviewAlbumBeforeState(auth, dto.albumName);
+    const journal: AssistantChangeJournal = {
+      version: 1,
+      actionType: 'assistant_review_album_create',
+      status: 'planned',
+      generatedAt,
+      updatedAt: generatedAt,
+      ownerId: auth.user.id,
+      changeLogFilePath,
+      request: {
+        albumName: dto.albumName,
+        assetCount: assetIds.length,
+        assetIds,
+        cohortType: dto.cohortType ?? null,
+        cohortKey: dto.cohortKey ?? null,
+        explicitAssetIds: dto.assetIds ?? [],
+      },
+      before,
+      after: null,
+      undo: {
+        strategy: 'delete_created_review_album',
+        available: false,
+        albumId: null,
+        albumName: null,
+      },
+    };
+
+    await this.writeAssistantChangeJournal(journal);
+    return journal;
+  }
+
+  private async getAssistantReviewAlbumBeforeState(auth: AuthDto, albumName: string): Promise<Record<string, unknown>> {
+    const albumService = BaseService.create(AlbumService, this);
+    const ownedAlbums = await albumService.getAll(auth, { isOwned: true });
+    const matchingAlbums = ownedAlbums.filter((album) => album.albumName === albumName);
+
+    return {
+      capturedAt: new Date().toISOString(),
+      ownedAlbumCount: ownedAlbums.length,
+      matchingAlbumNameCount: matchingAlbums.length,
+      matchingAlbums: matchingAlbums.map((album) => this.toAlbumJournalSummary(album)),
+    };
+  }
+
+  private toAlbumJournalSummary(album: AlbumResponseDto): Record<string, unknown> {
+    return {
+      id: album.id,
+      albumName: album.albumName,
+      description: album.description,
+      createdAt: album.createdAt,
+      updatedAt: album.updatedAt,
+      assetCount: album.assetCount,
+      startDate: album.startDate,
+      endDate: album.endDate,
+      shared: album.shared,
+      hasSharedLink: album.hasSharedLink,
+    };
+  }
+
+  private toAssistantChangeJournalPath(generatedAt: string, actionType: AssistantChangeJournal['actionType']) {
+    this.storageRepository.mkdirSync(this.assistantChangeJournalDirectory);
+    const timestamp = generatedAt.replaceAll(':', '-').replaceAll('.', '-');
+    return join(this.assistantChangeJournalDirectory, `${timestamp}-${actionType}-${this.cryptoRepository.randomUUID()}.json`);
+  }
+
+  private async writeAssistantChangeJournal(journal: AssistantChangeJournal) {
+    this.storageRepository.mkdirSync(this.assistantChangeJournalDirectory);
+    await this.storageRepository.createOrOverwriteFile(
+      journal.changeLogFilePath,
+      Buffer.from(JSON.stringify(journal)),
+    );
+  }
+
+  private async readAssistantChangeJournal(changeLogFilePath: string): Promise<AssistantChangeJournal> {
+    const normalizedDirectory = normalize(this.assistantChangeJournalDirectory);
+    const normalizedPath = normalize(changeLogFilePath);
+    if (!normalizedPath.startsWith(`${normalizedDirectory}/`) || !normalizedPath.endsWith('.json')) {
+      throw new BadRequestException('Assistant change journal path is outside the assistant change-journal directory');
+    }
+
+    return await this.storageRepository.readJsonFile<AssistantChangeJournal>(normalizedPath);
   }
 
   private async getReviewAlbumAssetIds(
@@ -1162,7 +1359,7 @@ export class AssistantService extends BaseService {
   ) {
     return {
       instruction:
-        'You are an in-app Immich photo library assistant for organizing very large photo and video libraries. Help assess metadata, source cohorts, time ranges, locations, albums, folders, review queues, duplicates, video metadata, and original-file risks using the provided library context. Prefer deterministicAudits over the sampled assets when discussing whole-library counts, cohorts, duplicate candidates, videos, mobile upload audit coverage, and review-album candidates. When deterministicAudits.requestedToolResults is present, treat it as server-run evidence from the current user request; it contains the full tool summary, result count, error count, and logFilePath when large row-level output was written to disk. Full row-level results remain available through a tool action and, when present, the JSON audit log. When proposing a reversible review album from deterministicAudits, set action.cohortType and action.cohortKey to the exact cohort fields and leave assetIds empty unless the action is based on explicit sampled assets. When more evidence is needed, include action.toolType and action.toolInput for one of the read-only Immich tools: content_hash_audit, sidecar_pair_audit, metadata_search, or mobile_original_compare. Treat checksumAlgorithm=sha1 as file-content evidence and checksumAlgorithm=sha1-path as external-library path identity, not byte-level integrity. When a field is absent from the provided context, say it is not visible in the assistant context; do not claim it is missing from the source file or Immich database. Do not suggest tagging unless the user explicitly asks for tags. Do not claim any change has been applied. Prefer reversible, review-first organization. Never suggest deleting assets unless the user explicitly asks about deletion.',
+        'You are an in-app Immich photo library assistant for organizing very large photo and video libraries. Help assess metadata, source cohorts, time ranges, locations, albums, folders, review queues, duplicates, video metadata, and original-file risks using the provided library context. Prefer deterministicAudits over the sampled assets when discussing whole-library counts, cohorts, duplicate candidates, videos, mobile upload audit coverage, and review-album candidates. When deterministicAudits.requestedToolResults is present, treat it as server-run evidence from the current user request; it contains the full tool summary, result count, error count, and logFilePath when large row-level output was written to disk. Full row-level results remain available through a tool action and, when present, the JSON audit log. When proposing a reversible review album from deterministicAudits, set action.cohortType and action.cohortKey to the exact cohort fields and leave assetIds empty unless the action is based on explicit sampled assets. When more evidence is needed, include action.toolType and action.toolInput for one of the read-only Immich tools: content_hash_audit, sidecar_pair_audit, metadata_search, or mobile_original_compare. Treat impactful organization changes as requiring read-only evidence first plus a persisted assistant change journal and undo path before the change is considered safe. Treat checksumAlgorithm=sha1 as file-content evidence and checksumAlgorithm=sha1-path as external-library path identity, not byte-level integrity. When a field is absent from the provided context, say it is not visible in the assistant context; do not claim it is missing from the source file or Immich database. Do not suggest tagging unless the user explicitly asks for tags. Do not claim any change has been applied. Prefer reversible, review-first organization. Never suggest deleting assets unless the user explicitly asks about deletion.',
       userContent: JSON.stringify({
         libraryContext: context,
         conversation: dto.messages,
