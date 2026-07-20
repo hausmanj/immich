@@ -53,6 +53,9 @@ export const Route = {
   viewAlbumAsset: ({ albumId, assetId }: { albumId: string; assetId: string }) =>
     `/albums/${albumId}/photos/${assetId}`,
 
+  // assistant
+  assistant: () => '/assistant',
+
   // buy
   buy: () => '/buy',
 

@@ -145,7 +145,7 @@ export class WorkflowExecutionService extends BaseService {
       this.analyzeAssetWithLlm(authDto, args[0]),
     );
     const writeWorkflowAuditLog = this.wrap<[dto: WorkflowAuditLogRequest]>((authDto, ctx, args) =>
-      this.writeWorkflowAuditLog(authDto, args[0]),
+      Promise.resolve(this.writeWorkflowAuditLog(authDto, args[0])),
     );
     const httpRequest = this.wrap<
       [
@@ -623,7 +623,7 @@ export class WorkflowExecutionService extends BaseService {
     }
   }
 
-  private async writeWorkflowAuditLog(auth: AuthDto, entry: WorkflowAuditLogRequest) {
+  private writeWorkflowAuditLog(auth: AuthDto, entry: WorkflowAuditLogRequest) {
     this.logger.log(
       `Workflow plugin audit userId=${auth.user.id} message=${entry.message} data=${JSON.stringify(entry.data ?? {})}`,
     );

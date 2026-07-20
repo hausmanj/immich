@@ -2,6 +2,7 @@ import { ActivityController } from 'src/controllers/activity.controller';
 import { AlbumController } from 'src/controllers/album.controller';
 import { ApiKeyController } from 'src/controllers/api-key.controller';
 import { AppController } from 'src/controllers/app.controller';
+import { AssistantController } from 'src/controllers/assistant.controller';
 import { AssetMediaController } from 'src/controllers/asset-media.controller';
 import { AssetController } from 'src/controllers/asset.controller';
 import { AuthAdminController } from 'src/controllers/auth-admin.controller';
@@ -45,6 +46,7 @@ export const controllers = [
   ActivityController,
   AlbumController,
   AppController,
+  AssistantController,
   AssetController,
   AssetMediaController,
   AuthController,
