@@ -5200,6 +5200,98 @@
         "x-immich-permission": "asset.read"
       }
     },
+    "/assistant/mutation": {
+      "post": {
+        "description": "Plan or apply a supported assistant library mutation. Every request writes a persisted change journal before applying changes.",
+        "operationId": "runAssistantMutation",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssistantMutationRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssistantMutationResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Plan or apply an assistant mutation",
+        "tags": [
+          "Assistant"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          }
+        ],
+        "x-immich-permission": "asset.update"
+      }
+    },
+    "/assistant/mutation-capabilities": {
+      "get": {
+        "description": "List impactful assistant change types and whether apply/undo support is currently available.",
+        "operationId": "getMutationCapabilities",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssistantMutationCapabilitiesResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "List assistant mutation capabilities",
+        "tags": [
+          "Assistant"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          }
+        ],
+        "x-immich-permission": "asset.read"
+      }
+    },
     "/assistant/review-album": {
       "post": {
         "description": "Create a reversible review album from explicit assistant asset IDs or a deterministic assistant cohort.",
@@ -18860,6 +18952,277 @@
         ],
         "type": "object"
       },
+      "AssistantMutationCapabilitiesResponseDto": {
+        "properties": {
+          "capabilities": {
+            "items": {
+              "$ref": "#/components/schemas/AssistantMutationCapabilityDto"
+            },
+            "type": "array"
+          },
+          "changeJournalDirectory": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "capabilities",
+          "changeJournalDirectory"
+        ],
+        "type": "object"
+      },
+      "AssistantMutationCapabilityDto": {
+        "properties": {
+          "actionType": {
+            "enum": [
+              "metadata_edit",
+              "archive_favorite",
+              "stack_change",
+              "folder_move",
+              "duplicate_resolution"
+            ],
+            "type": "string"
+          },
+          "applySupported": {
+            "type": "boolean"
+          },
+          "journalRequired": {
+            "type": "boolean"
+          },
+          "label": {
+            "type": "string"
+          },
+          "notes": {
+            "type": "string"
+          },
+          "undoSupported": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "actionType",
+          "applySupported",
+          "journalRequired",
+          "label",
+          "notes",
+          "undoSupported"
+        ],
+        "type": "object"
+      },
+      "AssistantMutationRequestDto": {
+        "properties": {
+          "actionType": {
+            "enum": [
+              "metadata_edit",
+              "archive_favorite",
+              "stack_change",
+              "folder_move",
+              "duplicate_resolution"
+            ],
+            "type": "string"
+          },
+          "assetIds": {
+            "items": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "assetUpdates": {
+            "properties": {
+              "isFavorite": {
+                "type": "boolean"
+              },
+              "visibility": {
+                "$ref": "#/components/schemas/AssetVisibility"
+              }
+            },
+            "type": "object"
+          },
+          "duplicateResolution": {
+            "properties": {
+              "groups": {
+                "items": {
+                  "properties": {
+                    "duplicateId": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+                      "type": "string"
+                    },
+                    "keepAssetIds": {
+                      "items": {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "trashAssetIds": {
+                      "items": {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+                        "type": "string"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "duplicateId",
+                    "keepAssetIds",
+                    "trashAssetIds"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "groups"
+            ],
+            "type": "object"
+          },
+          "folderMove": {
+            "properties": {
+              "assetIds": {
+                "items": {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "destinationPath": {
+                "maxLength": 1000,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "assetIds",
+              "destinationPath"
+            ],
+            "type": "object"
+          },
+          "metadata": {
+            "properties": {
+              "dateTimeOriginal": {
+                "nullable": true,
+                "type": "string"
+              },
+              "description": {
+                "nullable": true,
+                "type": "string"
+              },
+              "latitude": {
+                "nullable": true,
+                "type": "number"
+              },
+              "longitude": {
+                "nullable": true,
+                "type": "number"
+              },
+              "rating": {
+                "nullable": true,
+                "type": "number"
+              }
+            },
+            "type": "object"
+          },
+          "mode": {
+            "default": "plan",
+            "enum": [
+              "plan",
+              "apply"
+            ],
+            "type": "string"
+          },
+          "stack": {
+            "properties": {
+              "assetIds": {
+                "items": {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "operation": {
+                "enum": [
+                  "create",
+                  "delete",
+                  "set_primary"
+                ],
+                "type": "string"
+              },
+              "primaryAssetId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+                "type": "string"
+              },
+              "stackId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "actionType"
+        ],
+        "type": "object"
+      },
+      "AssistantMutationResponseDto": {
+        "properties": {
+          "actionType": {
+            "enum": [
+              "metadata_edit",
+              "archive_favorite",
+              "stack_change",
+              "folder_move",
+              "duplicate_resolution"
+            ],
+            "type": "string"
+          },
+          "applySupported": {
+            "type": "boolean"
+          },
+          "changeLogFilePath": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "planned",
+              "applied",
+              "blocked"
+            ],
+            "type": "string"
+          },
+          "targetCount": {
+            "type": "number"
+          },
+          "undoAvailable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "actionType",
+          "applySupported",
+          "changeLogFilePath",
+          "message",
+          "status",
+          "targetCount",
+          "undoAvailable"
+        ],
+        "type": "object"
+      },
       "AssistantReviewAlbumRequestDto": {
         "properties": {
           "albumName": {
@@ -19150,9 +19513,6 @@
       "AssistantUndoResponseDto": {
         "properties": {
           "actionType": {
-            "enum": [
-              "assistant_review_album_create"
-            ],
             "type": "string"
           },
           "changeLogFilePath": {
@@ -19167,12 +19527,11 @@
             ],
             "type": "string"
           },
-          "undoneAlbumId": {
-            "format": "uuid",
-            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+          "undoneTargetId": {
             "type": "string"
           },
-          "undoneAlbumName": {
+          "undoneTargetName": {
+            "nullable": true,
             "type": "string"
           }
         },
@@ -19181,8 +19540,8 @@
           "changeLogFilePath",
           "message",
           "status",
-          "undoneAlbumId",
-          "undoneAlbumName"
+          "undoneTargetId",
+          "undoneTargetName"
         ],
         "type": "object"
       },

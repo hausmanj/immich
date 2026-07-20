@@ -9,6 +9,9 @@ import {
   AssistantAssessmentResponseDto,
   AssistantChatRequestDto,
   AssistantChatResponseDto,
+  AssistantMutationCapabilitiesResponseDto,
+  AssistantMutationRequestDto,
+  AssistantMutationResponseDto,
   AssistantReviewAlbumRequestDto,
   AssistantReviewAlbumResponseDto,
   AssistantToolRequestDto,
@@ -19,7 +22,7 @@ import {
 import { AuthDto } from 'src/dtos/auth.dto';
 import { LibraryResponseDto } from 'src/dtos/library.dto';
 import { SearchSuggestionType } from 'src/dtos/search.dto';
-import { AssetOrder, AssetOrderBy, AssetType, AssetVisibility } from 'src/enum';
+import { AssetOrder, AssetOrderBy, AssetType, AssetVisibility, JobName, Permission } from 'src/enum';
 import type { AssistantAuditAsset, AssistantAuditAssetSearch } from 'src/repositories/asset.repository';
 import type { EnvData } from 'src/repositories/config.repository';
 import { AlbumService } from 'src/services/album.service';
@@ -27,6 +30,7 @@ import { AssetService } from 'src/services/asset.service';
 import { BaseService } from 'src/services/base.service';
 import { LibraryService } from 'src/services/library.service';
 import { SearchService } from 'src/services/search.service';
+import { StackService } from 'src/services/stack.service';
 
 type AssistantProvider = 'openai' | 'anthropic' | 'claude-cli' | 'codex-cli';
 type LlmProvider = AssistantProvider | 'local-cli';
@@ -58,10 +62,18 @@ type AssistantModelOutput = {
   actions?: unknown;
 };
 
+type AssistantMutationActionType =
+  | 'assistant_review_album_create'
+  | 'metadata_edit'
+  | 'archive_favorite'
+  | 'stack_change'
+  | 'folder_move'
+  | 'duplicate_resolution';
+
 type AssistantChangeJournal = {
   version: 1;
-  actionType: 'assistant_review_album_create';
-  status: 'planned' | 'applied' | 'failed' | 'undone' | 'undo_failed';
+  actionType: AssistantMutationActionType;
+  status: 'planned' | 'applied' | 'blocked' | 'failed' | 'undone' | 'undo_failed';
   generatedAt: string;
   updatedAt: string;
   ownerId: string;
@@ -70,10 +82,20 @@ type AssistantChangeJournal = {
   before: Record<string, unknown>;
   after: Record<string, unknown> | null;
   undo: {
-    strategy: 'delete_created_review_album';
+    strategy:
+      | 'delete_created_review_album'
+      | 'restore_asset_fields'
+      | 'delete_created_stack'
+      | 'recreate_deleted_stack'
+      | 'restore_stack_primary'
+      | 'not_available';
     available: boolean;
     albumId: string | null;
     albumName: string | null;
+    assetIds?: string[];
+    stackId?: string | null;
+    stackAssetIds?: string[];
+    primaryAssetId?: string | null;
   };
   error?: string;
   undoResult?: Record<string, unknown>;
@@ -367,18 +389,13 @@ export class AssistantService extends BaseService {
   }
 
   async undoAssistantChange(auth: AuthDto, dto: AssistantUndoRequestDto): Promise<AssistantUndoResponseDto> {
-    const albumService = BaseService.create(AlbumService, this);
     const journal = await this.readAssistantChangeJournal(dto.changeLogFilePath);
 
     if (journal.ownerId !== auth.user.id) {
       throw new BadRequestException('Assistant change journal does not belong to this user');
     }
 
-    if (journal.actionType !== 'assistant_review_album_create') {
-      throw new BadRequestException(`Unsupported assistant undo action: ${journal.actionType}`);
-    }
-
-    if (!journal.undo.available || !journal.undo.albumId || !journal.undo.albumName) {
+    if (!journal.undo.available) {
       throw new BadRequestException('Assistant change journal does not have an available undo action');
     }
 
@@ -387,20 +404,19 @@ export class AssistantService extends BaseService {
         status: 'undone',
         actionType: journal.actionType,
         changeLogFilePath: journal.changeLogFilePath,
-        undoneAlbumId: journal.undo.albumId,
-        undoneAlbumName: journal.undo.albumName,
+        undoneTargetId: journal.undo.albumId ?? journal.undo.stackId ?? journal.undo.assetIds?.[0] ?? journal.actionType,
+        undoneTargetName: journal.undo.albumName ?? null,
         message: 'Assistant change was already undone.',
       };
     }
 
     try {
-      const albumBeforeUndo = await albumService.get(auth, journal.undo.albumId);
-      await albumService.delete(auth, journal.undo.albumId);
+      const undoResult = await this.applyAssistantUndo(auth, journal);
       journal.status = 'undone';
       journal.updatedAt = new Date().toISOString();
       journal.undoResult = {
         undoneAt: journal.updatedAt,
-        deletedAlbum: this.toAlbumJournalSummary(albumBeforeUndo),
+        ...undoResult,
       };
       journal.undo.available = false;
       await this.writeAssistantChangeJournal(journal);
@@ -409,12 +425,121 @@ export class AssistantService extends BaseService {
         status: 'undone',
         actionType: journal.actionType,
         changeLogFilePath: journal.changeLogFilePath,
-        undoneAlbumId: albumBeforeUndo.id,
-        undoneAlbumName: albumBeforeUndo.albumName,
-        message: 'Assistant-created review album was deleted. Source assets were not deleted.',
+        undoneTargetId: undoResult.targetId,
+        undoneTargetName: undoResult.targetName,
+        message: undoResult.message,
       };
     } catch (error: unknown) {
       journal.status = 'undo_failed';
+      journal.updatedAt = new Date().toISOString();
+      journal.error = this.getErrorMessage(error);
+      await this.writeAssistantChangeJournal(journal);
+      throw error;
+    }
+  }
+
+  getMutationCapabilities(): AssistantMutationCapabilitiesResponseDto {
+    return {
+      changeJournalDirectory: this.assistantChangeJournalDirectory,
+      capabilities: [
+        {
+          actionType: 'metadata_edit',
+          label: 'Metadata edits',
+          applySupported: true,
+          undoSupported: true,
+          journalRequired: true,
+          notes: 'Supports description, date, GPS, and rating updates with per-asset before-state restore.',
+        },
+        {
+          actionType: 'archive_favorite',
+          label: 'Archive and favorite changes',
+          applySupported: true,
+          undoSupported: true,
+          journalRequired: true,
+          notes: 'Supports favorite and visibility changes with per-asset before-state restore.',
+        },
+        {
+          actionType: 'stack_change',
+          label: 'Stack changes',
+          applySupported: true,
+          undoSupported: true,
+          journalRequired: true,
+          notes: 'Supports stack create, delete, and primary-asset changes. Deleted stacks are restored as a new stack with the same assets.',
+        },
+        {
+          actionType: 'folder_move',
+          label: 'Folder moves',
+          applySupported: false,
+          undoSupported: false,
+          journalRequired: true,
+          notes: 'Registered as a planned capability only. Apply is blocked until filesystem and database path rollback is implemented.',
+        },
+        {
+          actionType: 'duplicate_resolution',
+          label: 'Duplicate resolution',
+          applySupported: false,
+          undoSupported: false,
+          journalRequired: true,
+          notes: 'Registered as a planned capability only. Apply is blocked until trash/metadata/album/tag merge rollback is implemented.',
+        },
+      ],
+    };
+  }
+
+  async runAssistantMutation(
+    auth: AuthDto,
+    dto: AssistantMutationRequestDto,
+  ): Promise<AssistantMutationResponseDto> {
+    const mode = dto.mode ?? 'plan';
+    const targetCount = this.getAssistantMutationTargetCount(dto);
+    const journal = await this.createAssistantMutationJournal(auth, dto, targetCount);
+
+    if (mode === 'plan') {
+      return {
+        status: 'planned',
+        actionType: dto.actionType,
+        changeLogFilePath: journal.changeLogFilePath,
+        applySupported: this.isAssistantMutationApplySupported(dto),
+        undoAvailable: false,
+        targetCount,
+        message: 'Assistant mutation plan journal was written. No library changes were made.',
+      };
+    }
+
+    if (!this.isAssistantMutationApplySupported(dto)) {
+      journal.status = 'blocked';
+      journal.updatedAt = new Date().toISOString();
+      journal.error = 'Apply is blocked until a typed undo implementation exists for this action.';
+      await this.writeAssistantChangeJournal(journal);
+      return {
+        status: 'blocked',
+        actionType: dto.actionType,
+        changeLogFilePath: journal.changeLogFilePath,
+        applySupported: false,
+        undoAvailable: false,
+        targetCount,
+        message: journal.error,
+      };
+    }
+
+    try {
+      const applyResult = await this.applyAssistantMutation(auth, dto);
+      journal.status = 'applied';
+      journal.updatedAt = new Date().toISOString();
+      journal.after = applyResult.after;
+      journal.undo = applyResult.undo;
+      await this.writeAssistantChangeJournal(journal);
+      return {
+        status: 'applied',
+        actionType: dto.actionType,
+        changeLogFilePath: journal.changeLogFilePath,
+        applySupported: true,
+        undoAvailable: applyResult.undo.available,
+        targetCount,
+        message: applyResult.message,
+      };
+    } catch (error: unknown) {
+      journal.status = 'failed';
       journal.updatedAt = new Date().toISOString();
       journal.error = this.getErrorMessage(error);
       await this.writeAssistantChangeJournal(journal);
@@ -513,6 +638,432 @@ export class AssistantService extends BaseService {
 
     await this.storageRepository.createOrOverwriteFile(logFilePath, Buffer.from(JSON.stringify(payload)));
     return logFilePath;
+  }
+
+  private async createAssistantMutationJournal(
+    auth: AuthDto,
+    dto: AssistantMutationRequestDto,
+    targetCount: number,
+  ): Promise<AssistantChangeJournal> {
+    const generatedAt = new Date().toISOString();
+    const changeLogFilePath = this.toAssistantChangeJournalPath(generatedAt, dto.actionType);
+    const journal: AssistantChangeJournal = {
+      version: 1,
+      actionType: dto.actionType,
+      status: 'planned',
+      generatedAt,
+      updatedAt: generatedAt,
+      ownerId: auth.user.id,
+      changeLogFilePath,
+      request: {
+        ...dto,
+        mode: dto.mode ?? 'plan',
+        targetCount,
+      },
+      before: await this.getAssistantMutationBeforeState(auth, dto),
+      after: null,
+      undo: {
+        strategy: 'not_available',
+        available: false,
+        albumId: null,
+        albumName: null,
+      },
+    };
+
+    await this.writeAssistantChangeJournal(journal);
+    return journal;
+  }
+
+  private async getAssistantMutationBeforeState(
+    auth: AuthDto,
+    dto: AssistantMutationRequestDto,
+  ): Promise<Record<string, unknown>> {
+    switch (dto.actionType) {
+      case 'metadata_edit':
+      case 'archive_favorite': {
+        return { assets: await this.getAssistantAssetSnapshots(auth, this.requireMutationAssetIds(dto)) };
+      }
+
+      case 'stack_change': {
+        if (dto.stack?.operation === 'create') {
+          return { assets: await this.getAssistantAssetSnapshots(auth, this.requireMutationStackAssetIds(dto)) };
+        }
+
+        if (!dto.stack?.stackId) {
+          throw new BadRequestException('stack.stackId is required for this stack operation');
+        }
+
+        return { stack: this.toStackJournalSummary(await BaseService.create(StackService, this).get(auth, dto.stack.stackId)) };
+      }
+
+      case 'folder_move': {
+        const assetIds = dto.folderMove?.assetIds ?? [];
+        return { assets: await this.getAssistantAssetSnapshots(auth, assetIds), destinationPath: dto.folderMove?.destinationPath };
+      }
+
+      case 'duplicate_resolution': {
+        return { duplicateResolution: dto.duplicateResolution ?? null };
+      }
+    }
+  }
+
+  private async applyAssistantMutation(auth: AuthDto, dto: AssistantMutationRequestDto): Promise<{
+    after: Record<string, unknown>;
+    undo: AssistantChangeJournal['undo'];
+    message: string;
+  }> {
+    switch (dto.actionType) {
+      case 'metadata_edit': {
+        const assetIds = this.requireMutationAssetIds(dto);
+        await this.applyAssistantMetadataEdit(auth, assetIds, dto.metadata ?? {});
+        return {
+          after: { assets: await this.getAssistantAssetSnapshots(auth, assetIds) },
+          undo: {
+            strategy: 'restore_asset_fields',
+            available: true,
+            albumId: null,
+            albumName: null,
+            assetIds,
+          },
+          message: `Applied metadata edits to ${assetIds.length} assets.`,
+        };
+      }
+
+      case 'archive_favorite': {
+        const assetIds = this.requireMutationAssetIds(dto);
+        await this.applyAssistantAssetUpdates(auth, assetIds, dto.assetUpdates ?? {});
+        return {
+          after: { assets: await this.getAssistantAssetSnapshots(auth, assetIds) },
+          undo: {
+            strategy: 'restore_asset_fields',
+            available: true,
+            albumId: null,
+            albumName: null,
+            assetIds,
+          },
+          message: `Applied archive/favorite updates to ${assetIds.length} assets.`,
+        };
+      }
+
+      case 'stack_change': {
+        return await this.applyAssistantStackChange(auth, dto);
+      }
+
+      case 'folder_move':
+      case 'duplicate_resolution': {
+        throw new BadRequestException('Apply is blocked until a typed undo implementation exists for this action.');
+      }
+    }
+  }
+
+  private async applyAssistantUndo(
+    auth: AuthDto,
+    journal: AssistantChangeJournal,
+  ): Promise<{ targetId: string; targetName: string | null; message: string; [key: string]: unknown }> {
+    switch (journal.undo.strategy) {
+      case 'delete_created_review_album': {
+        if (!journal.undo.albumId || !journal.undo.albumName) {
+          throw new BadRequestException('Assistant review album undo is missing album details');
+        }
+        const albumService = BaseService.create(AlbumService, this);
+        const albumBeforeUndo = await albumService.get(auth, journal.undo.albumId);
+        await albumService.delete(auth, journal.undo.albumId);
+        return {
+          targetId: albumBeforeUndo.id,
+          targetName: albumBeforeUndo.albumName,
+          message: 'Assistant-created review album was deleted. Source assets were not deleted.',
+          deletedAlbum: this.toAlbumJournalSummary(albumBeforeUndo),
+        };
+      }
+
+      case 'restore_asset_fields': {
+        const beforeAssets = this.getJournalRecordArray(journal.before, 'assets');
+        await this.restoreAssistantAssetSnapshots(auth, beforeAssets);
+        return {
+          targetId: journal.undo.assetIds?.[0] ?? journal.actionType,
+          targetName: null,
+          message: `Restored ${beforeAssets.length} assets to their journaled before-state fields.`,
+          restoredAssetCount: beforeAssets.length,
+        };
+      }
+
+      case 'delete_created_stack': {
+        if (!journal.undo.stackId) {
+          throw new BadRequestException('Assistant stack undo is missing stack ID');
+        }
+        await BaseService.create(StackService, this).delete(auth, journal.undo.stackId);
+        return {
+          targetId: journal.undo.stackId,
+          targetName: null,
+          message: 'Assistant-created stack was deleted. Source assets were not deleted.',
+        };
+      }
+
+      case 'recreate_deleted_stack': {
+        const assetIds = journal.undo.stackAssetIds ?? [];
+        if (assetIds.length < 2) {
+          throw new BadRequestException('Assistant stack undo is missing stack asset IDs');
+        }
+        const stack = await BaseService.create(StackService, this).create(auth, { assetIds });
+        return {
+          targetId: stack.id,
+          targetName: null,
+          message: 'Deleted stack membership was restored in a new stack.',
+          recreatedStack: this.toStackJournalSummary(stack),
+        };
+      }
+
+      case 'restore_stack_primary': {
+        if (!journal.undo.stackId || !journal.undo.primaryAssetId) {
+          throw new BadRequestException('Assistant stack primary undo is missing stack details');
+        }
+        const stack = await BaseService.create(StackService, this).update(auth, journal.undo.stackId, {
+          primaryAssetId: journal.undo.primaryAssetId,
+        });
+        return {
+          targetId: stack.id,
+          targetName: null,
+          message: 'Stack primary asset was restored from the assistant change journal.',
+          restoredStack: this.toStackJournalSummary(stack),
+        };
+      }
+
+      case 'not_available': {
+        throw new BadRequestException('Assistant change journal does not have an available undo action');
+      }
+    }
+  }
+
+  private async applyAssistantMetadataEdit(
+    auth: AuthDto,
+    assetIds: string[],
+    metadata: NonNullable<AssistantMutationRequestDto['metadata']>,
+  ) {
+    await this.requireAccess({ auth, permission: Permission.AssetUpdate, ids: assetIds });
+    const exifWrites = this.toDefinedRecord({
+      description: metadata.description === null ? '' : metadata.description,
+      dateTimeOriginal: metadata.dateTimeOriginal,
+      latitude: metadata.latitude,
+      longitude: metadata.longitude,
+      rating: metadata.rating,
+    });
+
+    if (Object.keys(exifWrites).length === 0) {
+      throw new BadRequestException('metadata_edit requires at least one metadata field');
+    }
+
+    if (
+      (Object.hasOwn(exifWrites, 'latitude') && !Object.hasOwn(exifWrites, 'longitude')) ||
+      (Object.hasOwn(exifWrites, 'longitude') && !Object.hasOwn(exifWrites, 'latitude'))
+    ) {
+      throw new BadRequestException('Latitude and longitude must be provided together');
+    }
+
+    await this.assetRepository.updateAllExif(assetIds, exifWrites);
+    await this.jobRepository.queueAll(assetIds.map((id) => ({ name: JobName.SidecarWrite, data: { id } })));
+  }
+
+  private async applyAssistantAssetUpdates(
+    auth: AuthDto,
+    assetIds: string[],
+    updates: NonNullable<AssistantMutationRequestDto['assetUpdates']>,
+  ) {
+    const assetWrites = this.toDefinedRecord({
+      isFavorite: updates.isFavorite,
+      visibility: updates.visibility,
+    });
+
+    if (Object.keys(assetWrites).length === 0) {
+      throw new BadRequestException('archive_favorite requires isFavorite or visibility');
+    }
+
+    await BaseService.create(AssetService, this).updateAll(auth, { ids: assetIds, ...assetWrites });
+  }
+
+  private async applyAssistantStackChange(
+    auth: AuthDto,
+    dto: AssistantMutationRequestDto,
+  ): Promise<{ after: Record<string, unknown>; undo: AssistantChangeJournal['undo']; message: string }> {
+    const stackService = BaseService.create(StackService, this);
+    const operation = dto.stack?.operation;
+
+    switch (operation) {
+      case 'create': {
+        const assetIds = this.requireMutationStackAssetIds(dto);
+        const stack = await stackService.create(auth, { assetIds });
+        return {
+          after: { stack: this.toStackJournalSummary(stack) },
+          undo: {
+            strategy: 'delete_created_stack',
+            available: true,
+            albumId: null,
+            albumName: null,
+            stackId: stack.id,
+          },
+          message: `Created stack with ${assetIds.length} assets.`,
+        };
+      }
+
+      case 'delete': {
+        if (!dto.stack?.stackId) {
+          throw new BadRequestException('stack.stackId is required for delete');
+        }
+        const stack = await stackService.get(auth, dto.stack.stackId);
+        const stackAssetIds = this.toStackAssetIds(stack);
+        await stackService.delete(auth, dto.stack.stackId);
+        return {
+          after: { deletedStack: this.toStackJournalSummary(stack) },
+          undo: {
+            strategy: 'recreate_deleted_stack',
+            available: true,
+            albumId: null,
+            albumName: null,
+            stackId: dto.stack.stackId,
+            stackAssetIds,
+          },
+          message: `Deleted stack ${dto.stack.stackId}.`,
+        };
+      }
+
+      case 'set_primary': {
+        if (!dto.stack?.stackId || !dto.stack.primaryAssetId) {
+          throw new BadRequestException('stack.stackId and stack.primaryAssetId are required for set_primary');
+        }
+        const before = await stackService.get(auth, dto.stack.stackId);
+        const stack = await stackService.update(auth, dto.stack.stackId, { primaryAssetId: dto.stack.primaryAssetId });
+        return {
+          after: { stack: this.toStackJournalSummary(stack) },
+          undo: {
+            strategy: 'restore_stack_primary',
+            available: true,
+            albumId: null,
+            albumName: null,
+            stackId: stack.id,
+            primaryAssetId: before.primaryAssetId,
+          },
+          message: `Updated primary asset for stack ${stack.id}.`,
+        };
+      }
+
+      default: {
+        throw new BadRequestException('stack.operation is required');
+      }
+    }
+  }
+
+  private async getAssistantAssetSnapshots(auth: AuthDto, assetIds: string[]) {
+    return await Promise.all(
+      assetIds.map(async (id) => this.toAssetJournalSummary((await BaseService.create(AssetService, this).get(auth, id)) as AssetResponseDto)),
+    );
+  }
+
+  private async restoreAssistantAssetSnapshots(auth: AuthDto, assets: Array<Record<string, unknown>>) {
+    const assetIds = assets.map((asset) => this.requireString(asset, 'id'));
+    await this.requireAccess({ auth, permission: Permission.AssetUpdate, ids: assetIds });
+
+    for (const asset of assets) {
+      const id = this.requireString(asset, 'id');
+      await this.assetRepository.updateAll([id], {
+        isFavorite: asset.isFavorite as boolean,
+        visibility: asset.visibility as AssetVisibility,
+      });
+      await this.assetRepository.updateAllExif([id], {
+        description: (asset.description as string | null) ?? '',
+        dateTimeOriginal: (asset.dateTimeOriginal as string | null) ?? null,
+        latitude: (asset.latitude as number | null) ?? null,
+        longitude: (asset.longitude as number | null) ?? null,
+        rating: (asset.rating as number | null) ?? null,
+      });
+    }
+
+    await this.jobRepository.queueAll(assetIds.map((id) => ({ name: JobName.SidecarWrite, data: { id } })));
+  }
+
+  private toAssetJournalSummary(asset: AssetResponseDto): Record<string, unknown> {
+    return {
+      id: asset.id,
+      originalPath: asset.originalPath,
+      originalFileName: asset.originalFileName,
+      isFavorite: asset.isFavorite,
+      visibility: asset.visibility,
+      stackId: asset.stack?.id ?? null,
+      description: asset.exifInfo?.description ?? '',
+      dateTimeOriginal: asset.exifInfo?.dateTimeOriginal ?? null,
+      latitude: asset.exifInfo?.latitude ?? null,
+      longitude: asset.exifInfo?.longitude ?? null,
+      rating: asset.exifInfo?.rating ?? null,
+    };
+  }
+
+  private toStackJournalSummary(stack: Awaited<ReturnType<StackService['get']>>): Record<string, unknown> {
+    return {
+      id: stack.id,
+      primaryAssetId: stack.primaryAssetId,
+      assetIds: this.toStackAssetIds(stack),
+      assets: stack.assets.map((asset) => this.toAssetJournalSummary(asset)),
+    };
+  }
+
+  private toStackAssetIds(stack: Awaited<ReturnType<StackService['get']>>) {
+    return stack.assets.map((asset) => asset.id);
+  }
+
+  private requireMutationAssetIds(dto: AssistantMutationRequestDto) {
+    if (!dto.assetIds || dto.assetIds.length === 0) {
+      throw new BadRequestException(`${dto.actionType} requires assetIds`);
+    }
+
+    return this.toUniqueStrings(dto.assetIds);
+  }
+
+  private requireMutationStackAssetIds(dto: AssistantMutationRequestDto) {
+    const assetIds = dto.stack?.assetIds ?? dto.assetIds ?? [];
+    const unique = this.toUniqueStrings(assetIds);
+    if (unique.length < 2) {
+      throw new BadRequestException('stack create requires at least two asset IDs');
+    }
+
+    return unique;
+  }
+
+  private getAssistantMutationTargetCount(dto: AssistantMutationRequestDto) {
+    switch (dto.actionType) {
+      case 'metadata_edit':
+      case 'archive_favorite': {
+        return dto.assetIds?.length ?? 0;
+      }
+      case 'stack_change': {
+        return dto.stack?.assetIds?.length ?? dto.assetIds?.length ?? (dto.stack?.stackId ? 1 : 0);
+      }
+      case 'folder_move': {
+        return dto.folderMove?.assetIds.length ?? 0;
+      }
+      case 'duplicate_resolution': {
+        return dto.duplicateResolution?.groups.length ?? 0;
+      }
+    }
+  }
+
+  private isAssistantMutationApplySupported(dto: AssistantMutationRequestDto) {
+    return dto.actionType === 'metadata_edit' || dto.actionType === 'archive_favorite' || dto.actionType === 'stack_change';
+  }
+
+  private toDefinedRecord<T extends Record<string, unknown>>(record: T) {
+    return Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined)) as T;
+  }
+
+  private getJournalRecordArray(record: Record<string, unknown>, key: string) {
+    const value = record[key];
+    return Array.isArray(value) ? value.filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null) : [];
+  }
+
+  private requireString(record: Record<string, unknown>, key: string) {
+    const value = record[key];
+    if (typeof value !== 'string') {
+      throw new BadRequestException(`Assistant change journal is missing ${key}`);
+    }
+
+    return value;
   }
 
   private async createAssistantReviewAlbumJournal(
@@ -787,6 +1338,7 @@ export class AssistantService extends BaseService {
         actionGuidance:
           'For reversible review albums, use cohortType and cohortKey from these deterministic cohorts instead of enumerating large asset ID lists. For deeper evidence, propose a read-only tool action with toolType/toolInput so Immich can run content_hash_audit, sidecar_pair_audit, metadata_search, or mobile_original_compare.',
       },
+      mutationCapabilities: this.getMutationCapabilities(),
       topYears,
       cameraMakes: this.toStringList(cameraMakes),
       cameraModels: this.toStringList(cameraModels),
@@ -1359,7 +1911,7 @@ export class AssistantService extends BaseService {
   ) {
     return {
       instruction:
-        'You are an in-app Immich photo library assistant for organizing very large photo and video libraries. Help assess metadata, source cohorts, time ranges, locations, albums, folders, review queues, duplicates, video metadata, and original-file risks using the provided library context. Prefer deterministicAudits over the sampled assets when discussing whole-library counts, cohorts, duplicate candidates, videos, mobile upload audit coverage, and review-album candidates. When deterministicAudits.requestedToolResults is present, treat it as server-run evidence from the current user request; it contains the full tool summary, result count, error count, and logFilePath when large row-level output was written to disk. Full row-level results remain available through a tool action and, when present, the JSON audit log. When proposing a reversible review album from deterministicAudits, set action.cohortType and action.cohortKey to the exact cohort fields and leave assetIds empty unless the action is based on explicit sampled assets. When more evidence is needed, include action.toolType and action.toolInput for one of the read-only Immich tools: content_hash_audit, sidecar_pair_audit, metadata_search, or mobile_original_compare. Treat impactful organization changes as requiring read-only evidence first plus a persisted assistant change journal and undo path before the change is considered safe. Treat checksumAlgorithm=sha1 as file-content evidence and checksumAlgorithm=sha1-path as external-library path identity, not byte-level integrity. When a field is absent from the provided context, say it is not visible in the assistant context; do not claim it is missing from the source file or Immich database. Do not suggest tagging unless the user explicitly asks for tags. Do not claim any change has been applied. Prefer reversible, review-first organization. Never suggest deleting assets unless the user explicitly asks about deletion.',
+        'You are an in-app Immich photo library assistant for organizing very large photo and video libraries. Help assess metadata, source cohorts, time ranges, locations, albums, folders, review queues, duplicates, video metadata, and original-file risks using the provided library context. Prefer deterministicAudits over the sampled assets when discussing whole-library counts, cohorts, duplicate candidates, videos, mobile upload audit coverage, and review-album candidates. When deterministicAudits.requestedToolResults is present, treat it as server-run evidence from the current user request; it contains the full tool summary, result count, error count, and logFilePath when large row-level output was written to disk. Full row-level results remain available through a tool action and, when present, the JSON audit log. When proposing a reversible review album from deterministicAudits, set action.cohortType and action.cohortKey to the exact cohort fields and leave assetIds empty unless the action is based on explicit sampled assets. When more evidence is needed, include action.toolType and action.toolInput for one of the read-only Immich tools: content_hash_audit, sidecar_pair_audit, metadata_search, or mobile_original_compare. Treat impactful organization changes as requiring read-only evidence first plus a persisted assistant change journal and undo path before the change is considered safe. Use mutationCapabilities to distinguish executable journaled mutations from plan-only blocked mutations: metadata_edit, archive_favorite, and stack_change are currently applyable with typed undo; folder_move and duplicate_resolution are registered but apply-blocked until a reliable typed undo exists. Treat checksumAlgorithm=sha1 as file-content evidence and checksumAlgorithm=sha1-path as external-library path identity, not byte-level integrity. When a field is absent from the provided context, say it is not visible in the assistant context; do not claim it is missing from the source file or Immich database. Do not suggest tagging unless the user explicitly asks for tags. Do not claim any change has been applied. Prefer reversible, review-first organization. Never suggest deleting assets unless the user explicitly asks about deletion.',
       userContent: JSON.stringify({
         libraryContext: context,
         conversation: dto.messages,

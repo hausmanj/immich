@@ -75,8 +75,11 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - `POST /assistant/review-album` now writes a pre-change journal before creating the album.
   - Journals are stored under `/data/assistant-audits/change-journal`, so Docker/Synology deployments keep them inside the existing host folder mapped to container `/data`.
   - Each journal records action type, status, request, full target asset IDs, before-state album context, after-state created album context, undo strategy, and errors/undo results when present.
-  - Added `POST /assistant/undo` for supported assistant changes. It currently undoes assistant-created review albums by deleting only the created album; source assets are not deleted.
-  - The journal shape is intended as the safety contract for future higher-impact assistant operations, including metadata edits, archive/favorite changes, folder moves, stack changes, and duplicate-resolution actions.
+  - Added `GET /assistant/mutation-capabilities` to advertise mutation capability status.
+  - Added `POST /assistant/mutation` to plan or apply assistant mutations. It always writes a journal before applying.
+  - Apply + typed undo are currently enabled for `metadata_edit`, `archive_favorite`, and `stack_change`.
+  - `folder_move` and `duplicate_resolution` are registered capabilities but apply-blocked until typed undo exists for filesystem/database path rollback and duplicate trash/metadata/album/tag merge rollback.
+  - Added `POST /assistant/undo` for supported assistant changes. It currently undoes assistant-created review albums plus journaled metadata/favorite/archive/stack changes. Source assets are not deleted by these undo paths.
 - Added OpenAPI schema entries for the assistant request/response DTOs.
 - The assistant prompt is intentionally review-first:
   - suggest searches, album plans, folder plans, metadata audits, original-file audits, and review sets;
@@ -108,6 +111,13 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - verified the pre-change journal at `/data/assistant-audits/change-journal/2026-07-20T11-56-32-703Z-assistant_review_album_create-3d7a919a-f1e2-40d6-bf5f-5a56b0dae95b.json`;
   - called `POST /assistant/undo`, which deleted the created album without deleting the source asset and updated the journal to `status=undone`;
   - verified the test album no longer exists in the database.
+- Mutation capability runtime probe:
+  - `GET /assistant/mutation-capabilities` returned all requested categories: `metadata_edit`, `archive_favorite`, `stack_change`, `folder_move`, and `duplicate_resolution`;
+  - `duplicate_resolution` apply returned `status=blocked` and wrote `/data/assistant-audits/change-journal/2026-07-20T12-17-02-688Z-duplicate_resolution-b83f4c3d-a86a-4166-95d9-91bf16e7081c.json`;
+  - `archive_favorite` apply changed one test asset and wrote `/data/assistant-audits/change-journal/2026-07-20T12-17-02-693Z-archive_favorite-49c598f9-ff0a-40b8-90d2-04a61fa7ea05.json`;
+  - `POST /assistant/undo` restored the test asset to `isFavorite=false` and `visibility=timeline` and updated the journal to `status=undone`.
+  - `stack_change` create stacked two test assets and wrote `/data/assistant-audits/change-journal/2026-07-20T12-18-10-100Z-stack_change-750bc028-9ef2-4f11-9d93-62050d62f333.json`;
+  - `POST /assistant/undo` deleted the created stack and verified both test assets were restored to `stackId=null`.
 - Full `sidecar_pair_audit` over `/external/desktop-icloud-originals` completed:
   - `directoriesScanned=56`;
   - `sidecarFileCount=0`;
@@ -116,7 +126,7 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - `probableRenderedPairCount=8`.
 - The 8 probable variant groups are all under `/external/desktop-icloud-originals/Feb 16, 2011` and use names like `IMG_4596.JPG` plus `IMG_4596(1).JPG`. They differ in size and orientation/dimensions and should be treated as review candidates, not automatically skipped duplicates.
 - `mobile_original_compare` returned zero mobile cohorts for the current external import, which is expected until iPhone/mobile uploads with `mobile-app` metadata exist.
-- Temporary local API keys named `Codex local assistant smoke test`, `Codex local assistant tool smoke test`, `Codex local assistant no-limit smoke test`, `Codex local assistant log smoke test`, and `Codex local assistant undo smoke test` were deleted after probing.
+- Temporary local API keys named `Codex local assistant smoke test`, `Codex local assistant tool smoke test`, `Codex local assistant no-limit smoke test`, `Codex local assistant log smoke test`, `Codex local assistant undo smoke test`, `Codex local assistant mutation smoke test`, and `Codex local assistant stack mutation smoke test` were deleted after probing.
 
 ### Verification
 
