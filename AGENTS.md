@@ -121,6 +121,11 @@
     - Direct database verification for French Polynesia / Leeward Islands showed the corrected materialized review cohort is 551 assets: 164 GPS/place anchors, 387 no-location support assets, and source-folder carryover through 2012-10-20.
     - Adjacent 2012-10-21 has 11 no-location assets in its own source folder and should be called out as a separate review candidate unless more evidence ties it to the same trip.
     - Assistant action cards become stale after a newer user message; old create/run buttons should not stay executable for a different user request.
+  - Whole-library organization follow-up:
+    - For older libraries, sparse GPS must not cause the assistant to ignore or "leave as-is" most assets.
+    - `deterministicAudits.organizationCoveragePlan` is the first-choice whole-library plan. It selects non-overlapping GPS/place-anchored event review cohorts, then covers every remaining preserved source folder as reversible source-path review cohorts.
+    - Treat GPS as an anchor/name signal for older content; use source folder, capture date, and camera cohorts as the primary backbone for no-GPS assets.
+    - Auto provider selection now tries configured providers in order and can fall through from a failing default provider to another configured provider. Explicit provider selections remain strict.
 - Temporary local Codex assistant smoke-test API keys were created only for probing and deleted afterward.
 - Mobile validation is still pending because `flutter` and `dart` were not on PATH in this shell. Do not claim the mobile upload patch is device-verified until it has run on iPhone or iOS Simulator.
 - Next practical test after import: ask the in-app Codex assistant to audit `/external/desktop-icloud-originals` for original-file evidence, then compare sampled external-library assets against the Desktop export by filename, size, dimensions, EXIF dates/GPS/camera fields, and checksum.
