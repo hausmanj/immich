@@ -110,11 +110,17 @@
   - Verified duplicate-resolution apply is blocked and journaled while undo is unavailable.
   - Verified `archive_favorite` apply on asset `9f6e56f5-a1a9-40ce-ac87-8fa3aa3d2515` changed favorite state, then `POST /assistant/undo` restored `isFavorite=false` and `visibility=timeline` from the journal.
   - Verified `stack_change` create with assets `cf47e24a-a465-4315-a95b-dc9de04bf1c3` and `af88efde-f81d-4862-9991-7b29cef66c1f`, then `POST /assistant/undo` deleted the created stack and restored both assets to `stackId=null`.
-- After event/trip cohort update:
-  - `deterministicAudits.eventCohorts` identifies multi-day exact-place, region, and country trip candidates with date span, active-day count, location-backed asset count, confidence, and `cohortType='event'`.
-  - The assistant prompt now explicitly avoids daily album splits when a higher-confidence event cohort covers the same trip/location span.
-  - Verified runtime behavior: the assistant identified `French Polynesia / Leeward Islands` from 2012-10-15 through 2012-10-19 as one event cohort with 164 assets and returned an actionable `cohortType='event'`.
-  - Verified event cohort materialization: created a temporary 164-asset review album from that event key, then `POST /assistant/undo` deleted the album without deleting source assets.
+  - After event/trip cohort update:
+    - `deterministicAudits.eventCohorts` identifies multi-day exact-place, region, and country trip candidates with date span, active-day count, location-backed asset count, confidence, and `cohortType='event'`.
+    - The assistant prompt now explicitly avoids daily album splits when a higher-confidence event cohort covers the same trip/location span.
+    - Verified runtime behavior: the assistant identified `French Polynesia / Leeward Islands` from 2012-10-15 through 2012-10-19 as one event cohort with 164 assets and returned an actionable `cohortType='event'`.
+    - Verified event cohort materialization: created a temporary 164-asset review album from that event key, then `POST /assistant/undo` deleted the album without deleting source assets.
+  - Event/trip cohort follow-up after Bora Bora review issue:
+    - The original event materialization was too GPS/place-literal and created a 164-asset French Polynesia review album that excluded no-location same-trip photos.
+    - Event cohorts are now GPS/place-anchored but materialize compatible no-location assets in the event date span plus assets in source folders anchored by the place evidence.
+    - Direct database verification for French Polynesia / Leeward Islands showed the corrected materialized review cohort is 551 assets: 164 GPS/place anchors, 387 no-location support assets, and source-folder carryover through 2012-10-20.
+    - Adjacent 2012-10-21 has 11 no-location assets in its own source folder and should be called out as a separate review candidate unless more evidence ties it to the same trip.
+    - Assistant action cards become stale after a newer user message; old create/run buttons should not stay executable for a different user request.
 - Temporary local Codex assistant smoke-test API keys were created only for probing and deleted afterward.
 - Mobile validation is still pending because `flutter` and `dart` were not on PATH in this shell. Do not claim the mobile upload patch is device-verified until it has run on iPhone or iOS Simulator.
 - Next practical test after import: ask the in-app Codex assistant to audit `/external/desktop-icloud-originals` for original-file evidence, then compare sampled external-library assets against the Desktop export by filename, size, dimensions, EXIF dates/GPS/camera fields, and checksum.
