@@ -267,8 +267,8 @@
       result.inlineResultsOmitted && result.logFilePath
         ? `Inline rows omitted from chat. The log contains ${formatNumber(resultCount)} result rows and ${formatNumber(errorCount)} error rows.`
         : '';
-    const examples = result.results.map((item) => JSON.stringify(item)).join('\n');
-    const errors = result.errors.map((item) => JSON.stringify(item)).join('\n');
+    const results = formatToolResultRows(result);
+    const errors = formatToolErrorRows(result.errors);
 
     return [
       `${getToolTitle(result.toolType)} completed at ${new Date(result.generatedAt).toLocaleString()}.`,
@@ -276,11 +276,162 @@
       summary,
       logLine,
       omittedLine,
-      examples ? `\nResults:\n${examples}` : '',
+      results ? `\nResults:\n${results}` : '',
       errors ? `\nErrors:\n${errors}` : '',
     ]
       .filter(Boolean)
       .join('\n');
+  };
+
+  const formatToolResultRows = (result: AssistantToolResponse) => {
+    switch (result.toolType) {
+      case 'sidecar_pair_audit': {
+        return formatSidecarPairRows(result.results);
+      }
+      case 'content_hash_audit': {
+        return formatContentHashRows(result.results);
+      }
+      case 'metadata_search': {
+        return formatAssetRows(result.results);
+      }
+      case 'mobile_original_compare': {
+        return formatMobileCompareRows(result.results);
+      }
+    }
+  };
+
+  const formatSidecarPairRows = (results: Array<Record<string, unknown>>) => {
+    return results
+      .map((item, index) => {
+        const directory = getString(item, 'directory');
+        const normalizedBase = getString(item, 'normalizedBase');
+        const sidecarName = getString(item, 'sidecarName');
+        const sidecarType = getString(item, 'sidecarType');
+        const assets = getRecordArray(item, sidecarName ? 'matchedAssets' : 'assets');
+
+        if (assets.length === 0) {
+          return JSON.stringify(item);
+        }
+
+        const title = sidecarName
+          ? `Group ${index + 1}: ${sidecarName} (${sidecarType || 'sidecar'})`
+          : `Group ${index + 1}: ${normalizedBase || 'variant group'} (${assets.length} assets)`;
+
+        return [
+          title,
+          directory ? `Directory: ${directory}` : '',
+          ...assets.map((asset) => `- ${formatAssetOneLine(asset)}\n  ${getString(asset, 'originalPath') || 'path unavailable'}`),
+        ]
+          .filter(Boolean)
+          .join('\n');
+      })
+      .join('\n\n');
+  };
+
+  const formatContentHashRows = (results: Array<Record<string, unknown>>) => {
+    return results
+      .map((item, index) => {
+        const duplicateAssets = getRecordArray(item, 'assets');
+        if (duplicateAssets.length > 0) {
+          return [
+            `Duplicate group ${index + 1}: ${formatNumber(getNumber(item, 'assetCount') ?? duplicateAssets.length)} assets`,
+            `SHA1: ${getString(item, 'actualSha1') || 'unavailable'}`,
+            ...duplicateAssets.map((asset) => `- ${formatAssetOneLine(asset)}\n  ${getString(asset, 'originalPath') || 'path unavailable'}`),
+          ].join('\n');
+        }
+
+        return `- ${formatAssetOneLine(item)} | SHA1 ${getString(item, 'actualSha1') || 'unavailable'}\n  ${getString(item, 'originalPath') || 'path unavailable'}`;
+      })
+      .join('\n');
+  };
+
+  const formatAssetRows = (results: Array<Record<string, unknown>>) => {
+    return results.map((item) => `- ${formatAssetOneLine(item)}\n  ${getString(item, 'originalPath') || 'path unavailable'}`).join('\n');
+  };
+
+  const formatMobileCompareRows = (results: Array<Record<string, unknown>>) => {
+    return results
+      .map((item, index) =>
+        [
+          `Group ${index + 1}: ${getString(item, 'originalFileName') || getString(item, 'fileName') || 'mobile cohort'}`,
+          `Mobile assets: ${formatToolValue(item.mobileAssetCount)} | Reference assets: ${formatToolValue(item.referenceAssetCount)}`,
+          `Exact trait matches: ${formatToolValue(item.exactTraitMatchCount)} | Size mismatches: ${formatToolValue(item.sizeMismatchCount)} | Dimension mismatches: ${formatToolValue(item.dimensionsMismatchCount)}`,
+          `Date mismatches: ${formatToolValue(item.dateMismatchCount)} | Camera mismatches: ${formatToolValue(item.cameraMismatchCount)}`,
+        ].join('\n'),
+      )
+      .join('\n\n');
+  };
+
+  const formatToolErrorRows = (errors: Array<Record<string, unknown>>) => {
+    return errors
+      .map((item) => `- ${getString(item, 'originalPath') || getString(item, 'directory') || getString(item, 'assetId') || 'unknown target'}: ${getString(item, 'reason') || JSON.stringify(item)}`)
+      .join('\n');
+  };
+
+  const formatAssetOneLine = (asset: Record<string, unknown>) => {
+    const fileName = getString(asset, 'originalFileName') || getString(asset, 'fileName') || getString(asset, 'assetId') || 'unknown asset';
+    const size = formatBytes(asset.fileSizeInByte);
+    const dimensions = formatDimensions(asset.width, asset.height);
+    const taken = getString(asset, 'dateTimeOriginal') || getString(asset, 'takenAt');
+    const camera = [getString(asset, 'make'), getString(asset, 'model')].filter(Boolean).join(' ');
+    const edited = typeof asset.isEdited === 'boolean' ? `edited=${asset.isEdited}` : '';
+
+    return [fileName, size, dimensions, taken ? `taken ${taken}` : '', camera, edited].filter(Boolean).join(' | ');
+  };
+
+  const getRecordArray = (item: Record<string, unknown>, key: string) => {
+    const value = item[key];
+    return Array.isArray(value) ? value.filter(isRecord) : [];
+  };
+
+  const isRecord = (value: unknown): value is Record<string, unknown> => {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+  };
+
+  const getString = (item: Record<string, unknown>, key: string) => {
+    const value = item[key];
+    return typeof value === 'string' ? value : null;
+  };
+
+  const getNumber = (item: Record<string, unknown>, key: string) => {
+    const value = item[key];
+    if (typeof value === 'number') {
+      return value;
+    }
+
+    if (typeof value === 'string') {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    return null;
+  };
+
+  const formatBytes = (value: unknown) => {
+    const bytes = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : null;
+    if (bytes === null || !Number.isFinite(bytes)) {
+      return '';
+    }
+
+    if (bytes >= 1024 * 1024 * 1024) {
+      return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+    }
+
+    if (bytes >= 1024 * 1024) {
+      return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+    }
+
+    if (bytes >= 1024) {
+      return `${(bytes / 1024).toFixed(1)} KB`;
+    }
+
+    return `${bytes} B`;
+  };
+
+  const formatDimensions = (width: unknown, height: unknown) => {
+    const numericWidth = typeof width === 'number' ? width : typeof width === 'string' ? Number(width) : null;
+    const numericHeight = typeof height === 'number' ? height : typeof height === 'string' ? Number(height) : null;
+    return numericWidth && numericHeight ? `${numericWidth}x${numericHeight}` : '';
   };
 
   const getToolTitle = (toolType: AssistantToolResponse['toolType']) => {

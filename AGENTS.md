@@ -44,6 +44,7 @@
   - Large assistant tool outputs are written as full JSON audit logs under `/data/assistant-audits` inside the Immich server container. On Docker/Synology this is expected to live under the existing host folder mapped to container `/data`, for example `/volume1/docker/immich/library/assistant-audits` when `/volume1/docker/immich/library:/data` is the compose mount.
   - The web/chat payload may omit inline row-level results when the audit log is written, but the log file must contain the complete result/error arrays and the response must report the full `resultCount`, `errorCount`, and `logFilePath`.
   - Assistant action cards can now include `toolType`/`toolInput`; the web UI shows a read-only audit/search button and appends tool results back into the chat.
+  - Inline assistant tool results should stay human-readable. The web formatter groups sidecar/variant results and summarizes asset rows by filename, size, dimensions, timestamp, camera/edited flags, and source path instead of dumping raw JSON.
 - Relevant notes:
   - `mobile/ios/unedited-original-upload-investigation.md`
   - `mobile/ios/open-pr-triage-2026-07-19.md`
