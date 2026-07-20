@@ -81,6 +81,18 @@ export interface EnvData {
     trustedProxies: string[];
   };
 
+  llm: {
+    provider?: 'openai' | 'anthropic';
+    openai: {
+      apiKey?: string;
+      model: string;
+    };
+    anthropic: {
+      apiKey?: string;
+      model: string;
+    };
+  };
+
   otel: OpenTelemetryModuleOptions;
 
   resourcePaths: {
@@ -97,6 +109,7 @@ export interface EnvData {
       indexHtml: string;
     };
     corePlugin: string;
+    corePlugins?: string[];
   };
 
   redis: RedisOptions;
@@ -327,6 +340,18 @@ const getEnv = (): EnvData => {
       trustedProxies: dto.IMMICH_TRUSTED_PROXIES ?? ['linklocal', 'uniquelocal'],
     },
 
+    llm: {
+      provider: dto.IMMICH_LLM_PROVIDER,
+      openai: {
+        apiKey: dto.IMMICH_LLM_OPENAI_API_KEY,
+        model: dto.IMMICH_LLM_OPENAI_MODEL || 'gpt-5.6-luna',
+      },
+      anthropic: {
+        apiKey: dto.IMMICH_LLM_ANTHROPIC_API_KEY,
+        model: dto.IMMICH_LLM_ANTHROPIC_MODEL || 'claude-sonnet-5',
+      },
+    },
+
     otel: {
       metrics: {
         hostMetrics: telemetries.has(ImmichTelemetry.Host),
@@ -349,6 +374,10 @@ const getEnv = (): EnvData => {
         indexHtml: join(folders.web, 'index.html'),
       },
       corePlugin: join(buildFolder, 'plugins', 'immich-plugin-core'),
+      corePlugins: [
+        join(buildFolder, 'plugins', 'immich-plugin-core'),
+        join(buildFolder, 'plugins', 'immich-plugin-llm'),
+      ],
     },
 
     setup: {

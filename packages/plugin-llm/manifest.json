@@ -1,0 +1,90 @@
+{
+  "author": "Immich Team",
+  "description": "LLM-assisted workflow capabilities for Immich",
+  "methods": [
+    {
+      "description": "Use the configured LLM provider to generate a concise asset description and tag suggestions",
+      "hostFunctions": true,
+      "name": "assetSuggestDescription",
+      "schema": {
+        "properties": {
+          "dryRun": {
+            "default": true,
+            "description": "Record the provider response in workflow data without applying changes",
+            "title": "Dry run",
+            "type": "boolean"
+          },
+          "maxBytes": {
+            "default": 5242880,
+            "description": "Reject provider calls when generated media is larger than this",
+            "title": "Max media bytes",
+            "type": "number"
+          },
+          "maxOutputTokens": {
+            "default": 1024,
+            "description": "Maximum provider output tokens",
+            "title": "Max output tokens",
+            "type": "number"
+          },
+          "model": {
+            "description": "Model override",
+            "title": "Model",
+            "type": "string"
+          },
+          "onlyIfEmptyDescription": {
+            "default": true,
+            "description": "Do not overwrite existing asset descriptions",
+            "title": "Only if description is empty",
+            "type": "boolean"
+          },
+          "prompt": {
+            "default": "Describe this personal photo or video frame in one natural sentence. Return JSON with description, tags, and confidence. Avoid identifying unknown people. Use concrete visible details only. Metadata: {{metadata}}",
+            "description": "Prompt template. Use {{metadata}} for selected asset metadata.",
+            "title": "Prompt",
+            "type": "string"
+          },
+          "provider": {
+            "description": "LLM provider override",
+            "enum": ["openai", "anthropic"],
+            "title": "Provider",
+            "type": "string"
+          },
+          "variant": {
+            "default": "preview",
+            "description": "Generated media variant sent to the provider",
+            "enum": ["preview", "thumbnail"],
+            "title": "Media variant",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "title": "Suggest description with LLM",
+      "types": ["AssetV1"],
+      "uiHints": ["Action", "Llm"]
+    }
+  ],
+  "name": "immich-plugin-llm",
+  "templates": [
+    {
+      "description": "Analyze new assets with the configured LLM provider and optionally fill missing descriptions",
+      "name": "suggest-descriptions",
+      "steps": [
+        {
+          "config": {
+            "dryRun": true,
+            "onlyIfEmptyDescription": true,
+            "variant": "preview"
+          },
+          "method": "immich-plugin-llm#assetSuggestDescription"
+        }
+      ],
+      "title": "Suggest asset descriptions",
+      "trigger": "AssetMetadataExtraction",
+      "uiHints": ["Llm", "Review"]
+    }
+  ],
+  "title": "Immich LLM Plugin",
+  "version": "0.0.1",
+  "wasmPath": "dist/plugin.wasm"
+}

@@ -27,8 +27,7 @@ type HostFunctionErrorResult = {
   message: string;
 };
 type HostFunctionResult<T> =
-  | HostFunctionSuccessResult<T>
-  | HostFunctionErrorResult;
+  HostFunctionSuccessResult<T> | HostFunctionErrorResult;
 
 type QueryParams<T extends (...args: any) => any> = Parameters<T>[0];
 type AlbumSearchDto = QueryParams<typeof getAllAlbums>;
@@ -42,12 +41,58 @@ type HttpResponse = {
   status: number;
   body: string;
 };
+type AssetMediaVariant = 'thumbnail' | 'preview';
+type GetAssetPreviewDataUrlRequest = {
+  assetId: string;
+  variant?: AssetMediaVariant;
+  edited?: boolean;
+  maxBytes?: number;
+};
+type GetAssetPreviewDataUrlResponse = {
+  assetId: string;
+  variant: AssetMediaVariant;
+  mimeType: string;
+  bytes: number;
+  dataUrl: string;
+};
+type AnalyzeAssetWithLlmRequest = {
+  assetId: string;
+  provider?: 'openai' | 'anthropic';
+  model?: string;
+  prompt: string;
+  schema?: Record<string, unknown>;
+  variant?: AssetMediaVariant;
+  edited?: boolean;
+  maxBytes?: number;
+  maxOutputTokens?: number;
+  store?: boolean;
+};
+type AnalyzeAssetWithLlmResponse = {
+  status: 'success' | 'disabled' | 'error';
+  provider?: 'openai' | 'anthropic';
+  model?: string;
+  output?: unknown;
+  rawText?: string;
+  error?: string;
+  media?: {
+    variant: AssetMediaVariant;
+    mimeType: string;
+    bytes: number;
+  };
+};
+type WorkflowAuditLogRequest = {
+  message: string;
+  data?: Record<string, unknown>;
+};
 
 export const availableFunctions = [
   'searchAlbums',
   'createAlbum',
   'addAssetsToAlbum',
   'addAssetsToAlbums',
+  'getAssetPreviewDataUrl',
+  'analyzeAssetWithLlm',
+  'writeWorkflowAuditLog',
   'httpRequest',
   'bulkTagAssets',
 ] as const;
@@ -93,6 +138,24 @@ export const hostFunctions = (authToken: string) => {
       ),
     addAssetsToAlbums: ({ assetIds, albumIds }: AlbumsToAssets) =>
       call('addAssetsToAlbums', authToken, [{ albumIds, assetIds }]),
+    getAssetPreviewDataUrl: (dto: GetAssetPreviewDataUrlRequest) =>
+      call<[GetAssetPreviewDataUrlRequest], GetAssetPreviewDataUrlResponse>(
+        'getAssetPreviewDataUrl',
+        authToken,
+        [dto],
+      ),
+    analyzeAssetWithLlm: (dto: AnalyzeAssetWithLlmRequest) =>
+      call<[AnalyzeAssetWithLlmRequest], AnalyzeAssetWithLlmResponse>(
+        'analyzeAssetWithLlm',
+        authToken,
+        [dto],
+      ),
+    writeWorkflowAuditLog: (dto: WorkflowAuditLogRequest) =>
+      call<[WorkflowAuditLogRequest], { ok: true }>(
+        'writeWorkflowAuditLog',
+        authToken,
+        [dto],
+      ),
     httpRequest: (url: string, options?: HttpRequestOptions) =>
       call<[string, HttpRequestOptions | undefined], HttpResponse>(
         'httpRequest',

@@ -335,6 +335,24 @@ importers:
         specifier: ^7.0.0
         version: 7.0.2
 
+  packages/plugin-llm:
+    devDependencies:
+      '@extism/js-pdk':
+        specifier: ^1.0.1
+        version: 1.1.1
+      '@immich/plugin-sdk':
+        specifier: workspace:*
+        version: link:../plugin-sdk
+      '@immich/sdk':
+        specifier: workspace:*
+        version: link:../sdk
+      esbuild:
+        specifier: ^0.28.0
+        version: 0.28.1
+      typescript:
+        specifier: ^6.0.0
+        version: 6.0.3
+
   packages/plugin-sdk:
     dependencies:
       commander:

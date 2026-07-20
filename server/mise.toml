@@ -70,6 +70,7 @@ run = [
   { task = ":install" },
   { task = "//:plugins" },
   { task = "//packages/plugin-core:build" },
+  { task = "//packages/plugin-llm:build" },
   { task = ":test-medium --run" },
 ]
 

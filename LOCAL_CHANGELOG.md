@@ -2,6 +2,45 @@
 
 This file tracks local-only changes in this checkout that have not necessarily been pulled from upstream Immich.
 
+## 2026-07-19 - LLM Workflow Plugin Prototype
+
+- Added `packages/plugin-llm`, a built-in workflow plugin prototype for AI-assisted asset descriptions.
+  - Template: `suggest-descriptions`.
+  - Method: `assetSuggestDescription`.
+  - Trigger: `AssetMetadataExtraction`.
+  - Default behavior: dry run, only process assets with empty descriptions, and log every skip/suggestion/error.
+- Added server-managed LLM environment config:
+  - `IMMICH_LLM_PROVIDER=openai|anthropic`
+  - `IMMICH_LLM_OPENAI_API_KEY`
+  - `IMMICH_LLM_OPENAI_MODEL` default `gpt-5.6-luna`
+  - `IMMICH_LLM_ANTHROPIC_API_KEY`
+  - `IMMICH_LLM_ANTHROPIC_MODEL` default `claude-sonnet-5`
+- Extended workflow plugin host functions:
+  - `getAssetPreviewDataUrl`
+  - `analyzeAssetWithLlm`
+  - `writeWorkflowAuditLog`
+- Added server-side OpenAI Responses API and Anthropic Messages API calls behind the `analyzeAssetWithLlm` host function.
+- Wired `packages/plugin-llm` into local dev compose mounts and the plugin build task.
+- Added config repository tests for LLM env defaults, overrides, and invalid provider handling.
+- Updated `docs/local-llm-plugin-investigation-2026-07-19.md` with the implemented prototype details.
+- Checked upstream `immich-app/immich` `main` for agent guidance files.
+  - No upstream `AGENTS.md` was present.
+  - No obvious `CLAUDE`, `Codex`, Copilot, Cursor, or instruction file was present.
+  - The only upstream `agent` filename match was `mobile/lib/utils/user_agent.dart`.
+
+### Verification
+
+- Installed workspace dependencies with `pnpm install --frozen-lockfile`.
+- Installed and trusted the repo's pinned `mise` toolchain so `extism-js` is available.
+- `@immich/sdk` build passed.
+- `@immich/plugin-sdk` build passed.
+- `@immich/plugin-core` WASM build passed.
+- `@immich/plugin-llm` WASM build passed.
+- Server TypeScript check passed with `tsc --noEmit`.
+- Focused config repository test passed: `src/repositories/config.repository.spec.ts` (36 tests).
+- `git diff --check` passed.
+- A broad server test attempt was not usable in the sandbox because controller specs tried to bind `0.0.0.0` and failed with `listen EPERM`.
+
 ## 2026-07-19 - LLM Plugin Architecture Investigation
 
 - Added `docs/local-llm-plugin-investigation-2026-07-19.md`.
