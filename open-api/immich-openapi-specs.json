@@ -5301,6 +5301,57 @@
         "x-immich-permission": "asset.read"
       }
     },
+    "/assistant/undo": {
+      "post": {
+        "description": "Undo a supported assistant-created change from its persisted change journal.",
+        "operationId": "undoAssistantChange",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssistantUndoRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssistantUndoResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Undo an assistant change",
+        "tags": [
+          "Assistant"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          }
+        ],
+        "x-immich-permission": "album.delete"
+      }
+    },
     "/auth/admin-sign-up": {
       "post": {
         "description": "Create the first admin user in the system.",
@@ -18748,7 +18799,19 @@
           "assetCount": {
             "type": "number"
           },
+          "changeLogFilePath": {
+            "type": "string"
+          },
           "truncated": {
+            "type": "boolean"
+          },
+          "undoAction": {
+            "enum": [
+              "delete_created_review_album"
+            ],
+            "type": "string"
+          },
+          "undoAvailable": {
             "type": "boolean"
           }
         },
@@ -18756,7 +18819,10 @@
           "albumId",
           "albumName",
           "assetCount",
-          "truncated"
+          "changeLogFilePath",
+          "truncated",
+          "undoAction",
+          "undoAvailable"
         ],
         "type": "object"
       },
@@ -18955,6 +19021,58 @@
           "results",
           "summary",
           "toolType"
+        ],
+        "type": "object"
+      },
+      "AssistantUndoRequestDto": {
+        "properties": {
+          "changeLogFilePath": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "changeLogFilePath"
+        ],
+        "type": "object"
+      },
+      "AssistantUndoResponseDto": {
+        "properties": {
+          "actionType": {
+            "enum": [
+              "assistant_review_album_create"
+            ],
+            "type": "string"
+          },
+          "changeLogFilePath": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "undone"
+            ],
+            "type": "string"
+          },
+          "undoneAlbumId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+            "type": "string"
+          },
+          "undoneAlbumName": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "actionType",
+          "changeLogFilePath",
+          "message",
+          "status",
+          "undoneAlbumId",
+          "undoneAlbumName"
         ],
         "type": "object"
       },

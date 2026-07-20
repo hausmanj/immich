@@ -101,8 +101,28 @@ const AssistantReviewAlbumResponseSchema = z
     albumName: z.string(),
     assetCount: z.number(),
     truncated: z.boolean(),
+    changeLogFilePath: z.string(),
+    undoAvailable: z.boolean(),
+    undoAction: z.literal('delete_created_review_album'),
   })
   .meta({ id: 'AssistantReviewAlbumResponseDto' });
+
+const AssistantUndoRequestSchema = z
+  .object({
+    changeLogFilePath: z.string().trim().min(1).max(1000),
+  })
+  .meta({ id: 'AssistantUndoRequestDto' });
+
+const AssistantUndoResponseSchema = z
+  .object({
+    status: z.enum(['undone']),
+    actionType: z.literal('assistant_review_album_create'),
+    changeLogFilePath: z.string(),
+    undoneAlbumId: z.uuidv4(),
+    undoneAlbumName: z.string(),
+    message: z.string(),
+  })
+  .meta({ id: 'AssistantUndoResponseDto' });
 
 const AssistantChatResponseSchema = z
   .object({
@@ -126,6 +146,8 @@ export class AssistantReviewAlbumRequestDto extends createZodDto(AssistantReview
 export class AssistantReviewAlbumResponseDto extends createZodDto(AssistantReviewAlbumResponseSchema) {}
 export class AssistantToolRequestDto extends createZodDto(AssistantToolRequestSchema) {}
 export class AssistantToolResponseDto extends createZodDto(AssistantToolResponseSchema) {}
+export class AssistantUndoRequestDto extends createZodDto(AssistantUndoRequestSchema) {}
+export class AssistantUndoResponseDto extends createZodDto(AssistantUndoResponseSchema) {}
 
 const AssistantAssessmentBucketSchema = z
   .object({

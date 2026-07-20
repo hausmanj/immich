@@ -40,6 +40,9 @@
     albumName: string;
     assetCount: number;
     truncated: boolean;
+    changeLogFilePath: string;
+    undoAvailable: boolean;
+    undoAction: 'delete_created_review_album';
   };
 
   type AssistantToolResponse = {
@@ -206,6 +209,9 @@
       const result = (await response.json()) as AssistantReviewAlbumResponse;
       if (result.truncated) {
         toastManager.warning(`Created review album with first ${formatNumber(result.assetCount)} assets.`);
+      }
+      if (result.changeLogFilePath) {
+        toastManager.info(`Assistant change journal: ${result.changeLogFilePath}`);
       }
       await goto(Route.viewAlbum({ id: result.albumId }));
     } catch (error) {

@@ -9,6 +9,8 @@ import {
   AssistantReviewAlbumResponseDto,
   AssistantToolRequestDto,
   AssistantToolResponseDto,
+  AssistantUndoRequestDto,
+  AssistantUndoResponseDto,
 } from 'src/dtos/assistant.dto';
 import { AuthDto } from 'src/dtos/auth.dto';
 import { Permission } from 'src/enum';
@@ -68,5 +70,17 @@ export class AssistantController {
     @Body() dto: AssistantReviewAlbumRequestDto,
   ): Promise<AssistantReviewAlbumResponseDto> {
     return this.service.createReviewAlbum(auth, dto);
+  }
+
+  @Post('undo')
+  @Authenticated({ permission: Permission.AlbumDelete })
+  @HttpCode(HttpStatus.OK)
+  @Endpoint({
+    summary: 'Undo an assistant change',
+    description: 'Undo a supported assistant-created change from its persisted change journal.',
+    history: HistoryBuilder.v3(),
+  })
+  undoAssistantChange(@Auth() auth: AuthDto, @Body() dto: AssistantUndoRequestDto): Promise<AssistantUndoResponseDto> {
+    return this.service.undoAssistantChange(auth, dto);
   }
 }

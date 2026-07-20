@@ -71,11 +71,18 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - Assistant action cards can also create a review album from a deterministic server cohort by sending `cohortType` and `cohortKey` to `POST /assistant/review-album`; the server performs the cohort lookup at click time.
   - Broad searches, metadata audits, original-file audits, and folder plans remain review/search proposals unless concrete asset IDs or a deterministic cohort key are present.
   - Follow-up change: cohort-backed album creation no longer caps asset IDs; it materializes every matching cohort asset.
+- Added assistant mutation safety journaling.
+  - `POST /assistant/review-album` now writes a pre-change journal before creating the album.
+  - Journals are stored under `/data/assistant-audits/change-journal`, so Docker/Synology deployments keep them inside the existing host folder mapped to container `/data`.
+  - Each journal records action type, status, request, full target asset IDs, before-state album context, after-state created album context, undo strategy, and errors/undo results when present.
+  - Added `POST /assistant/undo` for supported assistant changes. It currently undoes assistant-created review albums by deleting only the created album; source assets are not deleted.
+  - The journal shape is intended as the safety contract for future higher-impact assistant operations, including metadata edits, archive/favorite changes, folder moves, stack changes, and duplicate-resolution actions.
 - Added OpenAPI schema entries for the assistant request/response DTOs.
 - The assistant prompt is intentionally review-first:
   - suggest searches, album plans, folder plans, metadata audits, original-file audits, and review sets;
   - do not suggest tagging unless explicitly requested;
   - never claim changes were applied;
+  - treat impactful organization changes as requiring read-only evidence first plus a persisted assistant change journal and undo path;
   - avoid deletion suggestions unless explicitly asked.
 
 ### Assistant Tool Runtime Probe
@@ -96,6 +103,11 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - `content_hash_audit` over `/external/desktop-icloud-originals` again returned `complete=true`, `scannedAssets=1824`, `hashedAssets=1824`, `resultCount=1824`, and `errorCount=0`;
   - inline result rows were omitted from the chat/API payload because the full result set was written to `/data/assistant-audits/2026-07-20T11-36-08-089Z-content_hash_audit-6e99b3f4-2bb7-4ec7-b325-5fce710837d7.json`;
   - the JSON log was verified inside `immich_server` at 856,341 bytes with 1,824 `results` rows and 0 `errors` rows.
+- Undo-safety runtime probe:
+  - Created a one-asset assistant review album named `Codex undo smoke test album`;
+  - verified the pre-change journal at `/data/assistant-audits/change-journal/2026-07-20T11-56-32-703Z-assistant_review_album_create-3d7a919a-f1e2-40d6-bf5f-5a56b0dae95b.json`;
+  - called `POST /assistant/undo`, which deleted the created album without deleting the source asset and updated the journal to `status=undone`;
+  - verified the test album no longer exists in the database.
 - Full `sidecar_pair_audit` over `/external/desktop-icloud-originals` completed:
   - `directoriesScanned=56`;
   - `sidecarFileCount=0`;
@@ -104,7 +116,7 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - `probableRenderedPairCount=8`.
 - The 8 probable variant groups are all under `/external/desktop-icloud-originals/Feb 16, 2011` and use names like `IMG_4596.JPG` plus `IMG_4596(1).JPG`. They differ in size and orientation/dimensions and should be treated as review candidates, not automatically skipped duplicates.
 - `mobile_original_compare` returned zero mobile cohorts for the current external import, which is expected until iPhone/mobile uploads with `mobile-app` metadata exist.
-- Temporary local API keys named `Codex local assistant smoke test`, `Codex local assistant tool smoke test`, `Codex local assistant no-limit smoke test`, and `Codex local assistant log smoke test` were deleted after probing.
+- Temporary local API keys named `Codex local assistant smoke test`, `Codex local assistant tool smoke test`, `Codex local assistant no-limit smoke test`, `Codex local assistant log smoke test`, and `Codex local assistant undo smoke test` were deleted after probing.
 
 ### Verification
 
