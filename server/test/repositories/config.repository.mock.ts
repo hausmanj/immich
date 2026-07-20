@@ -54,14 +54,17 @@ export const envData: EnvData = {
   assistant: {
     local: {
       args: [],
+      url: undefined,
       timeoutSeconds: 120,
     },
     claude: {
       args: [],
+      url: undefined,
       timeoutSeconds: 240,
     },
     codex: {
       args: [],
+      url: undefined,
       timeoutSeconds: 240,
     },
   },

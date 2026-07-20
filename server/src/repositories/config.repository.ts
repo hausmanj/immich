@@ -92,16 +92,19 @@ export interface EnvData {
     local: {
       command?: string;
       args: string[];
+      url?: string;
       timeoutSeconds: number;
     };
     claude: {
       command?: string;
       args: string[];
+      url?: string;
       timeoutSeconds: number;
     };
     codex: {
       command?: string;
       args: string[];
+      url?: string;
       timeoutSeconds: number;
     };
   };
@@ -370,16 +373,19 @@ const getEnv = (): EnvData => {
       local: {
         command: dto.IMMICH_ASSISTANT_LOCAL_COMMAND,
         args: parseCsv(dto.IMMICH_ASSISTANT_LOCAL_ARGS),
+        url: dto.IMMICH_ASSISTANT_LOCAL_URL,
         timeoutSeconds: dto.IMMICH_ASSISTANT_LOCAL_TIMEOUT_SECONDS ?? 120,
       },
       claude: {
         command: dto.IMMICH_ASSISTANT_CLAUDE_COMMAND,
         args: parseCsv(dto.IMMICH_ASSISTANT_CLAUDE_ARGS),
+        url: dto.IMMICH_ASSISTANT_CLAUDE_URL,
         timeoutSeconds: dto.IMMICH_ASSISTANT_CLAUDE_TIMEOUT_SECONDS ?? 240,
       },
       codex: {
         command: dto.IMMICH_ASSISTANT_CODEX_COMMAND,
         args: parseCsv(dto.IMMICH_ASSISTANT_CODEX_ARGS),
+        url: dto.IMMICH_ASSISTANT_CODEX_URL,
         timeoutSeconds: dto.IMMICH_ASSISTANT_CODEX_TIMEOUT_SECONDS ?? 240,
       },
     },

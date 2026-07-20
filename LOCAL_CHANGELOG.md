@@ -22,14 +22,20 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - `IMMICH_ASSISTANT_PROVIDER`
   - `IMMICH_ASSISTANT_LOCAL_COMMAND`
   - `IMMICH_ASSISTANT_LOCAL_ARGS`
+  - `IMMICH_ASSISTANT_LOCAL_URL`
   - `IMMICH_ASSISTANT_LOCAL_TIMEOUT_SECONDS`
   - `IMMICH_ASSISTANT_CLAUDE_COMMAND`
   - `IMMICH_ASSISTANT_CLAUDE_ARGS`
+  - `IMMICH_ASSISTANT_CLAUDE_URL`
   - `IMMICH_ASSISTANT_CLAUDE_TIMEOUT_SECONDS`
   - `IMMICH_ASSISTANT_CODEX_COMMAND`
   - `IMMICH_ASSISTANT_CODEX_ARGS`
+  - `IMMICH_ASSISTANT_CODEX_URL`
   - `IMMICH_ASSISTANT_CODEX_TIMEOUT_SECONDS`
-  - Docker constraint: the command must be available to the Immich server process/container.
+- Added `tools/assistant-cli-bridge.mjs`, a host-side bridge for Docker Desktop on macOS.
+  - Reason: host-installed `claude` and `codex` are macOS binaries and cannot run directly inside the Linux Immich server container.
+  - Bridge endpoints: `/claude`, `/codex`, and `/health` on port `3737`.
+  - Local `docker/.env` now points Claude and Codex assistant providers at `host.docker.internal:3737`.
 - Added an assistant provider selector in the web UI so chat can explicitly use Auto, Claude CLI, Codex CLI, OpenAI, or Anthropic.
 - Added OpenAPI schema entries for the assistant request/response DTOs.
 - The assistant prompt is intentionally review-first:

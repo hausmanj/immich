@@ -20,12 +20,15 @@ const resetEnv = () => {
     'IMMICH_ASSISTANT_PROVIDER',
     'IMMICH_ASSISTANT_LOCAL_COMMAND',
     'IMMICH_ASSISTANT_LOCAL_ARGS',
+    'IMMICH_ASSISTANT_LOCAL_URL',
     'IMMICH_ASSISTANT_LOCAL_TIMEOUT_SECONDS',
     'IMMICH_ASSISTANT_CLAUDE_COMMAND',
     'IMMICH_ASSISTANT_CLAUDE_ARGS',
+    'IMMICH_ASSISTANT_CLAUDE_URL',
     'IMMICH_ASSISTANT_CLAUDE_TIMEOUT_SECONDS',
     'IMMICH_ASSISTANT_CODEX_COMMAND',
     'IMMICH_ASSISTANT_CODEX_ARGS',
+    'IMMICH_ASSISTANT_CODEX_URL',
     'IMMICH_ASSISTANT_CODEX_TIMEOUT_SECONDS',
     'IMMICH_LLM_PROVIDER',
     'IMMICH_LLM_OPENAI_API_KEY',
@@ -305,16 +308,19 @@ describe('getEnv', () => {
         local: {
           command: undefined,
           args: [],
+          url: undefined,
           timeoutSeconds: 120,
         },
         claude: {
           command: undefined,
           args: [],
+          url: undefined,
           timeoutSeconds: 240,
         },
         codex: {
           command: undefined,
           args: [],
+          url: undefined,
           timeoutSeconds: 240,
         },
       });
@@ -324,12 +330,15 @@ describe('getEnv', () => {
       process.env.IMMICH_ASSISTANT_PROVIDER = 'codex-cli';
       process.env.IMMICH_ASSISTANT_LOCAL_COMMAND = 'claude';
       process.env.IMMICH_ASSISTANT_LOCAL_ARGS = '--print,--output-format,json';
+      process.env.IMMICH_ASSISTANT_LOCAL_URL = 'http://host.docker.internal:3737/local';
       process.env.IMMICH_ASSISTANT_LOCAL_TIMEOUT_SECONDS = '240';
       process.env.IMMICH_ASSISTANT_CLAUDE_COMMAND = '/opt/homebrew/bin/claude';
       process.env.IMMICH_ASSISTANT_CLAUDE_ARGS = '--print,--output-format,json';
+      process.env.IMMICH_ASSISTANT_CLAUDE_URL = 'http://host.docker.internal:3737/claude';
       process.env.IMMICH_ASSISTANT_CLAUDE_TIMEOUT_SECONDS = '300';
       process.env.IMMICH_ASSISTANT_CODEX_COMMAND = '/Users/johnhausman/.local/bin/codex';
       process.env.IMMICH_ASSISTANT_CODEX_ARGS = 'exec,-';
+      process.env.IMMICH_ASSISTANT_CODEX_URL = 'http://host.docker.internal:3737/codex';
       process.env.IMMICH_ASSISTANT_CODEX_TIMEOUT_SECONDS = '360';
 
       const { assistant } = getEnv();
@@ -338,16 +347,19 @@ describe('getEnv', () => {
         local: {
           command: 'claude',
           args: ['--print', '--output-format', 'json'],
+          url: 'http://host.docker.internal:3737/local',
           timeoutSeconds: 240,
         },
         claude: {
           command: '/opt/homebrew/bin/claude',
           args: ['--print', '--output-format', 'json'],
+          url: 'http://host.docker.internal:3737/claude',
           timeoutSeconds: 300,
         },
         codex: {
           command: '/Users/johnhausman/.local/bin/codex',
           args: ['exec', '-'],
+          url: 'http://host.docker.internal:3737/codex',
           timeoutSeconds: 360,
         },
       });
