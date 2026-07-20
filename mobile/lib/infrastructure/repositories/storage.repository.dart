@@ -5,12 +5,34 @@ import 'package:immich_mobile/extensions/platform_extensions.dart';
 import 'package:logging/logging.dart';
 import 'package:photo_manager/photo_manager.dart';
 
+class OriginalAssetFile {
+  final File file;
+  final String source;
+  final bool hasAdjustments;
+  final bool usedBaseOriginal;
+  final bool usedFallback;
+  final String? title;
+
+  const OriginalAssetFile({
+    required this.file,
+    required this.source,
+    required this.hasAdjustments,
+    required this.usedBaseOriginal,
+    required this.usedFallback,
+    this.title,
+  });
+}
+
 class StorageRepository {
   final log = Logger('StorageRepository');
 
   StorageRepository();
 
   Future<File?> getFileForAsset(String assetId) async {
+    return (await getOriginalAssetFileForUpload(assetId))?.file;
+  }
+
+  Future<OriginalAssetFile?> getOriginalAssetFileForUpload(String assetId) async {
     File? file;
     final log = Logger('StorageRepository');
 
@@ -21,7 +43,8 @@ class StorageRepository {
         return null;
       }
 
-      file = await _getOriginalFile(assetId, entity);
+      final original = await _getOriginalFile(assetId, entity);
+      file = original?.file;
       if (file == null) {
         log.warning("Cannot get file for asset $assetId");
         return null;
@@ -32,22 +55,25 @@ class StorageRepository {
         log.warning("File for asset $assetId does not exist");
         return null;
       }
+
+      return original;
     } catch (error, stackTrace) {
       log.warning("Error getting file for asset $assetId", error, stackTrace);
     }
-    return file;
+    return null;
   }
 
-  Future<File?> _getOriginalFile(
+  Future<OriginalAssetFile?> _getOriginalFile(
     String assetId,
     AssetEntity entity, {
     PMProgressHandler? progressHandler,
   }) async {
     var attemptedBaseExport = false;
+    var hasAdjustments = false;
     var title = entity.title;
 
     if (CurrentPlatform.isIOS) {
-      final hasAdjustments = await entity.darwin.hasAdjustments;
+      hasAdjustments = await entity.darwin.hasAdjustments;
       if (hasAdjustments) {
         attemptedBaseExport = true;
         title = await _getAssetTitle(entity);
@@ -64,7 +90,14 @@ class StorageRepository {
             "Using unedited base file for adjusted iOS asset: "
             "assetId=$assetId, title=$title, path=${baseFile.path}",
           );
-          return baseFile;
+          return OriginalAssetFile(
+            file: baseFile,
+            source: 'ios-darwin-base-file',
+            hasAdjustments: true,
+            usedBaseOriginal: true,
+            usedFallback: false,
+            title: title,
+          );
         }
 
         log.warning(
@@ -85,7 +118,18 @@ class StorageRepository {
       );
     }
 
-    return file;
+    if (file == null) {
+      return null;
+    }
+
+    return OriginalAssetFile(
+      file: file,
+      source: attemptedBaseExport ? 'photo-manager-origin-file-fallback' : 'photo-manager-origin-file',
+      hasAdjustments: hasAdjustments,
+      usedBaseOriginal: false,
+      usedFallback: attemptedBaseExport,
+      title: title,
+    );
   }
 
   Future<String> _getAssetTitle(AssetEntity entity) async {
@@ -168,6 +212,13 @@ class StorageRepository {
   }
 
   Future<File?> loadFileFromCloud(String assetId, {PMProgressHandler? progressHandler}) async {
+    return (await loadOriginalAssetFileFromCloud(assetId, progressHandler: progressHandler))?.file;
+  }
+
+  Future<OriginalAssetFile?> loadOriginalAssetFileFromCloud(
+    String assetId, {
+    PMProgressHandler? progressHandler,
+  }) async {
     try {
       final entity = await AssetEntity.fromId(assetId);
       if (entity == null) {

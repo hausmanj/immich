@@ -242,6 +242,7 @@ class ForegroundUploadService {
   }) async {
     File? file;
     File? livePhotoFile;
+    OriginalAssetFile? originalAssetFile;
 
     try {
       final entity = await _storageRepository.getAssetEntityForAsset(asset);
@@ -268,7 +269,11 @@ class ForegroundUploadService {
         });
 
         try {
-          file = await _storageRepository.loadFileFromCloud(asset.id, progressHandler: progressHandler);
+          originalAssetFile = await _storageRepository.loadOriginalAssetFileFromCloud(
+            asset.id,
+            progressHandler: progressHandler,
+          );
+          file = originalAssetFile?.file;
           if (entity.isLivePhoto) {
             livePhotoFile = await _storageRepository.loadMotionFileFromCloud(
               asset.id,
@@ -280,7 +285,8 @@ class ForegroundUploadService {
         }
       } else {
         // Get files locally
-        file = await _storageRepository.getFileForAsset(asset.id);
+        originalAssetFile = await _storageRepository.getOriginalAssetFileForUpload(asset.id);
+        file = originalAssetFile?.file;
         if (file == null) {
           _logger.warning("Failed to get file ${asset.id} - ${asset.name}");
           callbacks.onError?.call(
@@ -321,6 +327,7 @@ class ForegroundUploadService {
 
       final originalFileName = entity.isLivePhoto ? p.setExtension(fileName, p.extension(file.path)) : fileName;
       final deviceId = Store.get(StoreKey.deviceId);
+      final uploadFileSizeBytes = await file.length();
 
       final fields = {
         // deviceAssetId/deviceId required by server v2.7.5 and below (drop in v4.0 per #27818).
@@ -359,18 +366,41 @@ class ForegroundUploadService {
         fields['livePhotoVideoId'] = livePhotoVideoId;
       }
 
-      // Add cloudId metadata only to the still image, not the motion video, becasue when the sync id happens, the motion video can get associated with the wrong still image.
-      if (CurrentPlatform.isIOS && asset.cloudId != null) {
+      // Add iOS Photos metadata only to the still image, not the motion video, because when the sync id happens,
+      // the motion video can get associated with the wrong still image.
+      if (CurrentPlatform.isIOS) {
+        final mobileMetadata = RemoteAssetMobileAppMetadata(
+          cloudId: asset.cloudId,
+          createdAt: asset.createdAt.toIso8601String(),
+          adjustmentTime: asset.adjustmentTime?.toIso8601String(),
+          latitude: asset.latitude?.toString(),
+          longitude: asset.longitude?.toString(),
+          originalUploadSource: originalAssetFile?.source,
+          hasAdjustments: originalAssetFile?.hasAdjustments,
+          usedBaseOriginal: originalAssetFile?.usedBaseOriginal,
+          usedFallback: originalAssetFile?.usedFallback,
+          uploadFileName: originalFileName,
+          uploadFileSizeBytes: uploadFileSizeBytes,
+          width: asset.width,
+          height: asset.height,
+          durationMs: asset.durationMs,
+        );
+        _logger.info(
+          "iOS original upload metadata: "
+          "localAssetId=${asset.id}, title=${originalAssetFile?.title ?? asset.name}, "
+          "originalFileName=$originalFileName, source=${originalAssetFile?.source}, "
+          "hasAdjustments=${originalAssetFile?.hasAdjustments}, "
+          "usedBaseOriginal=${originalAssetFile?.usedBaseOriginal}, "
+          "usedFallback=${originalAssetFile?.usedFallback}, "
+          "uploadFileSizeBytes=$uploadFileSizeBytes, cloudId=${asset.cloudId}, "
+          "adjustmentTime=${asset.adjustmentTime?.toIso8601String()}, "
+          "latitude=${asset.latitude}, longitude=${asset.longitude}, "
+          "width=${asset.width}, height=${asset.height}, durationMs=${asset.durationMs}",
+        );
         fields['metadata'] = jsonEncode([
           RemoteAssetMetadataItem(
             key: RemoteAssetMetadataKey.mobileApp,
-            value: RemoteAssetMobileAppMetadata(
-              cloudId: asset.cloudId,
-              createdAt: asset.createdAt.toIso8601String(),
-              adjustmentTime: asset.adjustmentTime?.toIso8601String(),
-              latitude: asset.latitude?.toString(),
-              longitude: asset.longitude?.toString(),
-            ),
+            value: mobileMetadata,
           ),
         ]);
       }

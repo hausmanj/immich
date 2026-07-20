@@ -72,6 +72,7 @@ services:
     restart: unless-stopped
     volumes:
       - ${UPLOAD_LOCATION}/photos:/data
+      - /Users/johnhausman/Desktop/Exported ICloud Photos - DO NOT DELETE:/external/desktop-icloud-originals:ro
       - /etc/localtime:/etc/localtime:ro
       - ../packages/plugin-core:/build/plugins/immich-plugin-core
       - ../packages/plugin-llm:/build/plugins/immich-plugin-llm
