@@ -42,6 +42,10 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - Added checksum, original path, library ID, external-library flag, MIME type, file timestamps, upload/update timestamps, dimensions, duration, offline/edited state, EXIF file size, EXIF image dimensions, EXIF date fields, timezone, orientation, GPS coordinates, and camera/lens fields.
   - Added external-library summaries, source-path cohorts with examples, metadata coverage percentages, time buckets, camera/location suggestions, and sampled `mobile-app` asset metadata.
   - Tightened the prompt so the assistant says a field is "not visible in the assistant sample" instead of implying it is missing from the source file or Immich database.
+- Added a reversible assistant action path in the web UI:
+  - Assistant action cards can create a review album only when the action contains explicit sampled asset IDs.
+  - Broad searches, metadata audits, original-file audits, and folder plans remain review/search proposals unless concrete asset IDs are present.
+  - The assistant prompt/schema now tells providers to leave `assetIds` empty for broad cohorts that need more review.
 - Added OpenAPI schema entries for the assistant request/response DTOs.
 - The assistant prompt is intentionally review-first:
   - suggest searches, album plans, folder plans, metadata audits, original-file audits, and review sets;

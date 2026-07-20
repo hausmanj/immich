@@ -1,8 +1,9 @@
 <script lang="ts">
   import UserPageLayout from '$lib/components/layouts/UserPageLayout.svelte';
   import { Route } from '$lib/route';
+  import { createAlbumAndRedirect } from '$lib/utils/album-utils';
   import { Button, Icon, Textarea, toastManager } from '@immich/ui';
-  import { mdiArrowRight, mdiMagnify, mdiRobotOutline, mdiSend } from '@mdi/js';
+  import { mdiArrowRight, mdiMagnify, mdiPlusBoxOutline, mdiRobotOutline, mdiSend } from '@mdi/js';
   import type { PageData } from './$types';
 
   type AssistantProvider = 'auto' | 'claude-cli' | 'codex-cli' | 'openai' | 'anthropic';
@@ -74,6 +75,7 @@
   let provider = $state<AssistantProvider>('auto');
   let loading = $state(false);
   let loadingAssessment = $state(false);
+  let applyingActionKey = $state<string | null>(null);
   let assessment = $state<Assessment | null>(null);
   let messages = $state<ChatMessage[]>([
     {
@@ -105,6 +107,34 @@
     }
 
     return Route.search({ query: action.query });
+  };
+
+  const getActionKey = (messageIndex: number, actionIndex: number) => `${messageIndex}:${actionIndex}`;
+
+  const getReviewAlbumName = (action: AssistantAction) => {
+    return action.albumName?.trim() || action.title.trim() || 'Assistant review album';
+  };
+
+  const canCreateReviewAlbum = (action: AssistantAction) => {
+    return action.assetIds.length > 0 && action.type !== 'search' && action.type !== 'folder_plan';
+  };
+
+  const createReviewAlbum = async (action: AssistantAction, actionKey: string) => {
+    if (applyingActionKey) {
+      return;
+    }
+
+    if (action.assetIds.length === 0) {
+      toastManager.warning('This proposal does not include explicit asset IDs.');
+      return;
+    }
+
+    applyingActionKey = actionKey;
+    try {
+      await createAlbumAndRedirect(getReviewAlbumName(action), action.assetIds);
+    } finally {
+      applyingActionKey = null;
+    }
   };
 
   const getFindingHref = (finding: AssessmentFinding) => {
@@ -315,7 +345,8 @@
 
               {#if message.actions?.length}
                 <div class="mt-4 flex flex-col gap-2">
-                  {#each message.actions as action (action.type + action.title)}
+                  {#each message.actions as action, actionIndex (action.type + action.title)}
+                    {@const actionKey = getActionKey(messageIndex, actionIndex)}
                     <div
                       class="rounded-md border border-gray-200 bg-white p-3 text-gray-900 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100"
                     >
@@ -329,16 +360,28 @@
                         <div class="text-xs text-gray-500">{Math.round(action.confidence * 100)}%</div>
                       </div>
                       <div class="mt-1 text-sm text-gray-600 dark:text-gray-300">{action.rationale}</div>
-                      {#if action.query}
-                        <a
-                          class="mt-3 inline-flex items-center gap-2 text-sm font-medium text-primary"
-                          href={getSearchHref(action)}
-                        >
-                          <Icon icon={mdiMagnify} size="16" />
-                          Open search
-                          <Icon icon={mdiArrowRight} size="16" />
-                        </a>
-                      {/if}
+                      <div class="mt-3 flex flex-wrap items-center gap-3">
+                        {#if action.query}
+                          <a class="inline-flex items-center gap-2 text-sm font-medium text-primary" href={getSearchHref(action)}>
+                            <Icon icon={mdiMagnify} size="16" />
+                            Open search
+                            <Icon icon={mdiArrowRight} size="16" />
+                          </a>
+                        {/if}
+                        {#if canCreateReviewAlbum(action)}
+                          <Button
+                            type="button"
+                            size="small"
+                            onclick={() => void createReviewAlbum(action, actionKey)}
+                            disabled={applyingActionKey !== null}
+                          >
+                            <div class="flex items-center gap-2">
+                              <Icon icon={mdiPlusBoxOutline} size="16" />
+                              Create review album ({formatNumber(action.assetIds.length)})
+                            </div>
+                          </Button>
+                        {/if}
+                      </div>
                     </div>
                   {/each}
                 </div>

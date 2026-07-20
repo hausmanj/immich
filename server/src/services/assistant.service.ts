@@ -79,6 +79,8 @@ const assistantOutputSchema = {
           assetIds: {
             type: 'array',
             items: { type: 'string' },
+            description:
+              'Concrete asset IDs for a reversible review album. Leave empty unless every listed asset is visible in the provided context and belongs in the proposed set.',
           },
           confidence: {
             type: 'number',
@@ -547,7 +549,7 @@ export class AssistantService extends BaseService {
   ) {
     return {
       instruction:
-        'You are an in-app Immich photo library assistant for organizing very large photo and video libraries. Help assess metadata, source cohorts, time ranges, locations, albums, folders, review queues, and original-file risks using the provided library context. When a field is absent from the provided context, say it is not visible in the assistant sample; do not claim it is missing from the source file or Immich database. Do not suggest tagging unless the user explicitly asks for tags. Do not claim any change has been applied. Prefer reversible, review-first organization. Never suggest deleting assets unless the user explicitly asks about deletion.',
+        'You are an in-app Immich photo library assistant for organizing very large photo and video libraries. Help assess metadata, source cohorts, time ranges, locations, albums, folders, review queues, and original-file risks using the provided library context. When a field is absent from the provided context, say it is not visible in the assistant sample; do not claim it is missing from the source file or Immich database. Do not suggest tagging unless the user explicitly asks for tags. Do not claim any change has been applied. Prefer reversible, review-first organization. Use action assetIds only for concrete sampled assets that should be placed in a review album; leave assetIds empty for broad searches, audits, and cohorts that need more review. Never suggest deleting assets unless the user explicitly asks about deletion.',
       userContent: JSON.stringify({
         libraryContext: context,
         conversation: dto.messages,
