@@ -2,17 +2,21 @@ import { Injectable } from '@nestjs/common';
 import { spawn } from 'node:child_process';
 import { AlbumResponseDto } from 'src/dtos/album.dto';
 import { AssetResponseDto } from 'src/dtos/asset-response.dto';
+import { AssetMetadataResponseDto } from 'src/dtos/asset.dto';
 import {
   AssistantAssessmentResponseDto,
   AssistantChatRequestDto,
   AssistantChatResponseDto,
 } from 'src/dtos/assistant.dto';
 import { AuthDto } from 'src/dtos/auth.dto';
+import { LibraryResponseDto } from 'src/dtos/library.dto';
 import { SearchSuggestionType } from 'src/dtos/search.dto';
 import { AssetOrder, AssetOrderBy, AssetType, AssetVisibility } from 'src/enum';
 import type { EnvData } from 'src/repositories/config.repository';
 import { AlbumService } from 'src/services/album.service';
+import { AssetService } from 'src/services/asset.service';
 import { BaseService } from 'src/services/base.service';
+import { LibraryService } from 'src/services/library.service';
 import { SearchService } from 'src/services/search.service';
 
 type AssistantProvider = 'openai' | 'anthropic' | 'claude-cli' | 'codex-cli';
@@ -91,6 +95,9 @@ const assistantOutputSchema = {
 
 @Injectable()
 export class AssistantService extends BaseService {
+  private readonly assetSampleSize = 75;
+  private readonly assetMetadataSampleSize = 60;
+
   async assess(auth: AuthDto): Promise<AssistantAssessmentResponseDto> {
     const albumService = BaseService.create(AlbumService, this);
     const searchService = BaseService.create(SearchService, this);
@@ -279,29 +286,131 @@ export class AssistantService extends BaseService {
 
   private async getLibraryContext(auth: AuthDto) {
     const albumService = BaseService.create(AlbumService, this);
+    const assetService = BaseService.create(AssetService, this);
+    const libraryService = BaseService.create(LibraryService, this);
     const searchService = BaseService.create(SearchService, this);
 
-    const [albums, recent, unorganized, statistics, unorganizedStatistics] = await Promise.all([
+    const [
+      albums,
+      recent,
+      unorganized,
+      statistics,
+      unorganizedStatistics,
+      timeBuckets,
+      cameraMakes,
+      cameraModels,
+      countries,
+      cities,
+      libraries,
+    ] = await Promise.all([
       albumService.getAll(auth, { isOwned: true }),
-      searchService.searchMetadata(auth, { size: 24, withExif: true }),
-      searchService.searchMetadata(auth, { size: 24, withExif: true, isNotInAlbum: true }),
+      searchService.searchMetadata(auth, { size: this.assetSampleSize, withExif: true }),
+      searchService.searchMetadata(auth, { size: this.assetSampleSize, withExif: true, isNotInAlbum: true }),
       searchService.searchStatistics(auth, {}),
       searchService.searchStatistics(auth, { isNotInAlbum: true }),
+      this.assetRepository.getTimeBuckets({
+        userIds: [auth.user.id],
+        withStacked: true,
+        orderBy: AssetOrderBy.TakenAt,
+        order: AssetOrder.Desc,
+      }),
+      searchService.getSearchSuggestions(auth, { type: SearchSuggestionType.CAMERA_MAKE }),
+      searchService.getSearchSuggestions(auth, { type: SearchSuggestionType.CAMERA_MODEL }),
+      searchService.getSearchSuggestions(auth, { type: SearchSuggestionType.COUNTRY }),
+      searchService.getSearchSuggestions(auth, { type: SearchSuggestionType.CITY }),
+      libraryService.getAll(),
     ]);
+    const sampledAssets = this.toUniqueAssets([...recent.assets.items, ...unorganized.assets.items]);
+    const assetMetadata = await this.getAssetMetadataContext(assetService, auth, sampledAssets);
+    const externalLibraries = await this.toLibraryContexts(libraryService, libraries);
+    const topYears = this.toTopYears(timeBuckets);
 
     return {
       albums: albums.slice(0, 50).map((album) => this.toAlbumContext(album)),
-      recentAssets: recent.assets.items.map((asset) => this.toAssetContext(asset)),
-      unorganizedAssets: unorganized.assets.items.map((asset) => this.toAssetContext(asset)),
+      externalLibraries,
+      recentAssets: recent.assets.items.map((asset) => this.toAssetContext(asset, assetMetadata.get(asset.id))),
+      unorganizedAssets: unorganized.assets.items.map((asset) => this.toAssetContext(asset, assetMetadata.get(asset.id))),
+      sourcePathCohorts: this.toSourcePathCohorts(sampledAssets),
+      metadataCoverage: this.toMetadataCoverage(sampledAssets),
+      topYears,
+      cameraMakes: this.toStringList(cameraMakes),
+      cameraModels: this.toStringList(cameraModels),
+      countries: this.toStringList(countries),
+      cities: this.toStringList(cities),
       summary: {
         albums: albums.length,
-        sampledAssets: recent.assets.items.length,
+        externalLibraries: externalLibraries.length,
+        sampledAssets: sampledAssets.length,
         unorganizedAssets: unorganizedStatistics.total,
       },
       statistics: {
         totalAssets: statistics.total,
         unorganizedAssets: unorganizedStatistics.total,
       },
+    };
+  }
+
+  private toUniqueAssets(assets: AssetResponseDto[]) {
+    const seen = new Set<string>();
+    const unique: AssetResponseDto[] = [];
+    for (const asset of assets) {
+      if (seen.has(asset.id)) {
+        continue;
+      }
+      seen.add(asset.id);
+      unique.push(asset);
+    }
+    return unique;
+  }
+
+  private async getAssetMetadataContext(
+    assetService: AssetService,
+    auth: AuthDto,
+    assets: AssetResponseDto[],
+  ): Promise<Map<string, AssetMetadataResponseDto[]>> {
+    const entries = await Promise.all(
+      assets.slice(0, this.assetMetadataSampleSize).map(async (asset) => {
+        try {
+          const metadata = await assetService.getMetadata(auth, asset.id);
+          return [asset.id, metadata] as const;
+        } catch (error: unknown) {
+          const metadata: AssetMetadataResponseDto[] = [
+            {
+              key: '_metadata_read_error',
+              value: { message: this.getErrorMessage(error) },
+              updatedAt: new Date(),
+            },
+          ];
+          return [asset.id, metadata] as const;
+        }
+      }),
+    );
+
+    return new Map(entries);
+  }
+
+  private async toLibraryContexts(libraryService: LibraryService, libraries: LibraryResponseDto[]) {
+    return await Promise.all(
+      libraries.map(async (library) => {
+        try {
+          const statistics = await libraryService.getStatistics(library.id);
+          return { ...this.toLibraryContext(library), statistics };
+        } catch (error: unknown) {
+          return { ...this.toLibraryContext(library), statistics: null, error: this.getErrorMessage(error) };
+        }
+      }),
+    );
+  }
+
+  private toLibraryContext(library: LibraryResponseDto) {
+    return {
+      id: library.id,
+      ownerId: library.ownerId,
+      name: library.name,
+      assetCount: library.assetCount,
+      importPaths: library.importPaths,
+      exclusionPatterns: library.exclusionPatterns,
+      refreshedAt: library.refreshedAt,
     };
   }
 
@@ -316,21 +425,119 @@ export class AssistantService extends BaseService {
     };
   }
 
-  private toAssetContext(asset: AssetResponseDto) {
+  private toAssetContext(asset: AssetResponseDto, metadata: AssetMetadataResponseDto[] = []) {
+    const exif = asset.exifInfo;
+
     return {
       id: asset.id,
       type: asset.type,
+      libraryId: asset.libraryId ?? null,
+      isExternal: asset.originalPath?.startsWith('/external/') ?? false,
+      originalPath: asset.originalPath,
       originalFileName: asset.originalFileName,
+      originalMimeType: asset.originalMimeType ?? null,
+      checksum: asset.checksum,
+      fileCreatedAt: asset.fileCreatedAt,
+      fileModifiedAt: asset.fileModifiedAt,
       localDateTime: asset.localDateTime,
+      uploadedAt: asset.createdAt,
+      updatedAt: asset.updatedAt,
+      duration: asset.duration,
+      width: asset.width,
+      height: asset.height,
       isFavorite: asset.isFavorite,
       isArchived: asset.visibility === AssetVisibility.Archive,
-      city: asset.exifInfo?.city ?? null,
-      state: asset.exifInfo?.state ?? null,
-      country: asset.exifInfo?.country ?? null,
-      make: asset.exifInfo?.make ?? null,
-      model: asset.exifInfo?.model ?? null,
-      description: asset.exifInfo?.description ?? null,
+      isOffline: asset.isOffline,
+      isEdited: asset.isEdited,
+      hasMetadata: asset.hasMetadata,
+      exif: {
+        fileSizeInByte: exif?.fileSizeInByte ?? null,
+        imageWidth: exif?.exifImageWidth ?? asset.width,
+        imageHeight: exif?.exifImageHeight ?? asset.height,
+        make: exif?.make ?? null,
+        model: exif?.model ?? null,
+        lensModel: exif?.lensModel ?? null,
+        dateTimeOriginal: exif?.dateTimeOriginal ?? null,
+        modifyDate: exif?.modifyDate ?? null,
+        timeZone: exif?.timeZone ?? null,
+        orientation: exif?.orientation ?? null,
+        latitude: exif?.latitude ?? null,
+        longitude: exif?.longitude ?? null,
+        city: exif?.city ?? null,
+        state: exif?.state ?? null,
+        country: exif?.country ?? null,
+        hasGps: typeof exif?.latitude === 'number' && typeof exif.longitude === 'number',
+        hasCamera: !!(exif?.make || exif?.model),
+        description: exif?.description ?? null,
+      },
+      assetMetadata: metadata.map((item) => ({
+        key: item.key,
+        value: item.value,
+        updatedAt: item.updatedAt,
+      })),
       tags: asset.tags?.map((tag) => tag.value) ?? [],
+    };
+  }
+
+  private toSourcePathCohorts(assets: AssetResponseDto[]) {
+    const counts = new Map<string, { count: number; examples: string[] }>();
+    for (const asset of assets) {
+      const bucket = this.toSourcePathBucket(asset.originalPath);
+      const current = counts.get(bucket) ?? { count: 0, examples: [] };
+      current.count += 1;
+      if (current.examples.length < 5) {
+        current.examples.push(asset.originalPath);
+      }
+      counts.set(bucket, current);
+    }
+
+    return [...counts.entries()]
+      .map(([path, { count, examples }]) => ({ path, count, examples }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 30);
+  }
+
+  private toSourcePathBucket(originalPath: string) {
+    const parts = originalPath.split('/').filter(Boolean);
+    const externalIndex = parts.indexOf('external');
+    if (externalIndex !== -1) {
+      return `/${parts.slice(0, Math.min(parts.length - 1, externalIndex + 3)).join('/')}`;
+    }
+
+    return originalPath.slice(0, Math.max(0, originalPath.lastIndexOf('/'))) || originalPath;
+  }
+
+  private toMetadataCoverage(assets: AssetResponseDto[]) {
+    const total = assets.length || 1;
+    const count = (predicate: (asset: AssetResponseDto) => boolean) => assets.filter((asset) => predicate(asset)).length;
+    const withExif = count((asset) => !!asset.exifInfo);
+    const withFileSize = count((asset) => typeof asset.exifInfo?.fileSizeInByte === 'number');
+    const withChecksum = count((asset) => !!asset.checksum);
+    const withOriginalPath = count((asset) => !!asset.originalPath);
+    const withDimensions = count((asset) => typeof asset.width === 'number' && typeof asset.height === 'number');
+    const withGps = count(
+      (asset) => typeof asset.exifInfo?.latitude === 'number' && typeof asset.exifInfo.longitude === 'number',
+    );
+    const withCamera = count((asset) => !!(asset.exifInfo?.make || asset.exifInfo?.model));
+
+    return {
+      sampledAssets: assets.length,
+      withExif,
+      withFileSize,
+      withChecksum,
+      withOriginalPath,
+      withDimensions,
+      withGps,
+      withCamera,
+      percentages: {
+        withExif: Math.round((withExif / total) * 100),
+        withFileSize: Math.round((withFileSize / total) * 100),
+        withChecksum: Math.round((withChecksum / total) * 100),
+        withOriginalPath: Math.round((withOriginalPath / total) * 100),
+        withDimensions: Math.round((withDimensions / total) * 100),
+        withGps: Math.round((withGps / total) * 100),
+        withCamera: Math.round((withCamera / total) * 100),
+      },
     };
   }
 
@@ -340,7 +547,7 @@ export class AssistantService extends BaseService {
   ) {
     return {
       instruction:
-        'You are an in-app Immich photo library assistant for organizing very large photo and video libraries. Help assess metadata, source cohorts, time ranges, locations, albums, folders, review queues, and original-file risks using the provided library context. Do not suggest tagging unless the user explicitly asks for tags. Do not claim any change has been applied. Prefer reversible, review-first organization. Never suggest deleting assets unless the user explicitly asks about deletion.',
+        'You are an in-app Immich photo library assistant for organizing very large photo and video libraries. Help assess metadata, source cohorts, time ranges, locations, albums, folders, review queues, and original-file risks using the provided library context. When a field is absent from the provided context, say it is not visible in the assistant sample; do not claim it is missing from the source file or Immich database. Do not suggest tagging unless the user explicitly asks for tags. Do not claim any change has been applied. Prefer reversible, review-first organization. Never suggest deleting assets unless the user explicitly asks about deletion.',
       userContent: JSON.stringify({
         libraryContext: context,
         conversation: dto.messages,

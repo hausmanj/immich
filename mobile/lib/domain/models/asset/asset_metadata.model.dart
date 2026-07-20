@@ -29,6 +29,15 @@ class RemoteAssetMobileAppMetadata extends RemoteAssetMetadataValue {
   final String? adjustmentTime;
   final String? latitude;
   final String? longitude;
+  final String? originalUploadSource;
+  final bool? hasAdjustments;
+  final bool? usedBaseOriginal;
+  final bool? usedFallback;
+  final String? uploadFileName;
+  final int? uploadFileSizeBytes;
+  final int? width;
+  final int? height;
+  final int? durationMs;
 
   const RemoteAssetMobileAppMetadata({
     this.cloudId,
@@ -36,6 +45,15 @@ class RemoteAssetMobileAppMetadata extends RemoteAssetMetadataValue {
     this.adjustmentTime,
     this.latitude,
     this.longitude,
+    this.originalUploadSource,
+    this.hasAdjustments,
+    this.usedBaseOriginal,
+    this.usedFallback,
+    this.uploadFileName,
+    this.uploadFileSizeBytes,
+    this.width,
+    this.height,
+    this.durationMs,
   });
 
   @override
@@ -55,6 +73,33 @@ class RemoteAssetMobileAppMetadata extends RemoteAssetMetadataValue {
     }
     if (longitude != null) {
       map["longitude"] = longitude;
+    }
+    if (originalUploadSource != null) {
+      map["originalUploadSource"] = originalUploadSource;
+    }
+    if (hasAdjustments != null) {
+      map["hasAdjustments"] = hasAdjustments;
+    }
+    if (usedBaseOriginal != null) {
+      map["usedBaseOriginal"] = usedBaseOriginal;
+    }
+    if (usedFallback != null) {
+      map["usedFallback"] = usedFallback;
+    }
+    if (uploadFileName != null) {
+      map["uploadFileName"] = uploadFileName;
+    }
+    if (uploadFileSizeBytes != null) {
+      map["uploadFileSizeBytes"] = uploadFileSizeBytes;
+    }
+    if (width != null) {
+      map["width"] = width;
+    }
+    if (height != null) {
+      map["height"] = height;
+    }
+    if (durationMs != null) {
+      map["durationMs"] = durationMs;
     }
 
     return map;

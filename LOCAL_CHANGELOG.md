@@ -38,6 +38,10 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - Local `docker/.env` now points Claude and Codex assistant providers at `host.docker.internal:3737`.
 - Added an assistant provider selector in the web UI so chat can explicitly use Auto, Claude CLI, or Codex CLI.
   - Direct OpenAI and Anthropic API paths remain backend fallback plumbing, but are hidden from the Assistant UI to keep the tool focused on local Claude/Codex access.
+- Expanded the assistant asset sample context for imported-original audits.
+  - Added checksum, original path, library ID, external-library flag, MIME type, file timestamps, upload/update timestamps, dimensions, duration, offline/edited state, EXIF file size, EXIF image dimensions, EXIF date fields, timezone, orientation, GPS coordinates, and camera/lens fields.
+  - Added external-library summaries, source-path cohorts with examples, metadata coverage percentages, time buckets, camera/location suggestions, and sampled `mobile-app` asset metadata.
+  - Tightened the prompt so the assistant says a field is "not visible in the assistant sample" instead of implying it is missing from the source file or Immich database.
 - Added OpenAPI schema entries for the assistant request/response DTOs.
 - The assistant prompt is intentionally review-first:
   - suggest searches, album plans, folder plans, metadata audits, original-file audits, and review sets;
@@ -106,6 +110,10 @@ This file tracks local-only changes in this checkout that have not necessarily b
 ## 2026-07-19 - iOS Original-File Backup Investigation
 
 - Added root `AGENTS.md` with local workspace guidance, including that iPhone/simulator testing is available.
+- Added the user's Desktop Apple Photos "Export Unmodified Original" folder as a read-only dev-server external-library mount:
+  - Host path: `/Users/johnhausman/Desktop/Exported ICloud Photos - DO NOT DELETE`
+  - Container path for Immich external library import: `/external/desktop-icloud-originals`
+  - Initial scan profile: about 2.7 GB, 56 date-named folders, 1,822 JPGs, 2 MOVs, one `.DS_Store`, and no AAE/XMP/JSON sidecars found.
 - Upgraded mobile `photo_manager` from `3.9.0` to `3.10.0`.
   - Reason: `3.10.0` adds Darwin APIs for `AssetEntity.darwin.hasAdjustments` and `AssetEntity.darwin.getBaseFile()`.
   - Source: https://pub.dev/packages/photo_manager/changelog
@@ -114,6 +122,11 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - attempt unedited base-file export;
   - log detailed adjusted-asset decisions;
   - fall back to the existing original-file export path instead of silently skipping content.
+- Added structured iOS original-upload audit metadata to foreground and background uploads.
+  - Stored in the existing `mobile-app` asset metadata payload.
+  - Includes original upload source, adjustment status, base-original/fallback flags, uploaded filename, upload file size, dimensions, and duration.
+  - Adds the log marker `iOS original upload metadata`.
+- Fixed background upload metadata so video duration is sent from the local asset instead of hard-coded as `0`.
 - Updated iOS native resource selection for hashing to prefer unedited original resources before rendered/current resources.
   - Partially adopted from upstream draft PR #28543: https://github.com/immich-app/immich/pull/28543
   - Only the safer native original-resource ordering idea was adopted; the full original+edited stacking behavior was not merged.
