@@ -125,6 +125,7 @@
     - For older libraries, sparse GPS must not cause the assistant to ignore or "leave as-is" most assets.
     - `deterministicAudits.organizationCoveragePlan` is the first-choice whole-library plan. It selects non-overlapping GPS/place-anchored event review cohorts, then covers every remaining preserved source folder as reversible source-path review cohorts.
     - Treat GPS as an anchor/name signal for older content; use source folder, capture date, and camera cohorts as the primary backbone for no-GPS assets.
+    - Event cohort `sourceDirectories` should represent all materialized review folders, including no-location support folders, so the coverage plan does not propose the same source folder again as a remaining review cohort.
     - Auto provider selection now tries configured providers in order and can fall through from a failing default provider to another configured provider. Explicit provider selections remain strict.
 - Temporary local Codex assistant smoke-test API keys were created only for probing and deleted afterward.
 - Mobile validation is still pending because `flutter` and `dart` were not on PATH in this shell. Do not claim the mobile upload patch is device-verified until it has run on iPhone or iOS Simulator.
