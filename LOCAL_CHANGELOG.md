@@ -4,6 +4,13 @@ This file tracks local-only changes in this checkout that have not necessarily b
 
 ## 2026-07-19 - In-App Library Assistant Prototype
 
+- Runtime follow-up after importing the Desktop originals:
+  - Fixed assistant cohort SQL generation after chat produced `column "undefined" does not exist`.
+  - Cause: Kysely raw SQL fragments used for dynamic full-library audit cohorts were interpolated incorrectly inside a larger raw query.
+  - Fix: cohort SQL is now selected from trusted internal string helpers and inserted with `sql.raw(...)`; user-provided cohort keys remain parameterized.
+  - Restarted `immich-server`; server startup logs were clean.
+  - The in-app assistant subsequently returned a full deterministic audit for `/external/desktop-icloud-originals`, including 1,824 external assets, 1,822 images, 2 videos, 2.92 GB, date span 2010-04-22 through 2012-12-27, source/date/camera/location cohorts, duplicate-candidate status, and cohort-backed review album actions.
+  - A temporary local API key named `Codex local assistant smoke test` was created for probing and deleted afterward.
 - Added a first-pass authenticated Immich web assistant at `/assistant`.
   - Sidebar entry: `Assistant`.
   - UI behavior: full-library assessment panel plus chat-style interaction inside Immich.
@@ -46,17 +53,57 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - Full-library audit summary: image/video/favorite/archive/edited/external counts, EXIF/GPS/file-size/dimension/camera/mobile-app metadata coverage, date span, total file size, and checksum-algorithm counts.
   - Cohort identification: source folder, capture date, camera make/model, location, checksum algorithm, exact content-checksum duplicate candidates, matching file-trait duplicate candidates, video codec/format/pixel-format cohorts, and mobile original-upload metadata cohorts.
   - External-library checksum semantics are now explicit: `sha1-path` is path identity, not byte-level file integrity; only `sha1` is content-checksum evidence.
+- Added read-only executable assistant tools at `POST /assistant/tool`.
+  - `metadata_search` performs owner-scoped deterministic SQL searches with filters for cohort, path, filename, extension, media type, date range, camera, location, missing GPS, unknown camera, mobile metadata, and checksum algorithm.
+  - `content_hash_audit` reads original files from disk and computes fresh SHA1 hashes for actual byte-level evidence. It reports completion status, read errors, database checksum comparability, mismatches for true `sha1` rows, and exact byte-duplicate groups.
+  - `sidecar_pair_audit` scans source directories for AAE/XMP/JSON sidecars, MOV paired-media candidates, and probable rendered/variant filename groups.
+  - `mobile_original_compare` compares mobile-upload metadata cohorts against the Desktop originals reference prefix, using filename, file size, dimensions, EXIF date, make, and model.
+  - Tool results are read-only and do not move, delete, tag, or alter source files.
+  - Follow-up change: assistant tools no longer impose scan/result limits. If a tool matches 1,824 assets or 100,000 assets, it processes every owner-scoped match and preserves every result/error.
+  - Follow-up change: large assistant tool outputs are written as complete JSON audit logs under `/data/assistant-audits` inside the server container, with full `resultCount`, `errorCount`, and `logFilePath` returned to the UI/chat. In Docker and Synology deployments this path should live inside the existing host folder mapped to container `/data`.
+- Added assistant action support for executable tools.
+  - The LLM action schema now accepts `toolType` and `toolInput`.
+  - The web Assistant action cards show audit/search buttons for executable tool proposals.
+  - Running a tool appends the deterministic result summary and examples back into the chat.
 - Added a reversible assistant action path in the web UI:
   - Assistant action cards can create a review album only when the action contains explicit sampled asset IDs.
   - Assistant action cards can also create a review album from a deterministic server cohort by sending `cohortType` and `cohortKey` to `POST /assistant/review-album`; the server performs the cohort lookup at click time.
   - Broad searches, metadata audits, original-file audits, and folder plans remain review/search proposals unless concrete asset IDs or a deterministic cohort key are present.
-  - Cohort-backed album creation is capped at 5,000 assets per action and reports truncation for review safety.
+  - Follow-up change: cohort-backed album creation no longer caps asset IDs; it materializes every matching cohort asset.
 - Added OpenAPI schema entries for the assistant request/response DTOs.
 - The assistant prompt is intentionally review-first:
   - suggest searches, album plans, folder plans, metadata audits, original-file audits, and review sets;
   - do not suggest tagging unless explicitly requested;
   - never claim changes were applied;
   - avoid deletion suggestions unless explicitly asked.
+
+### Assistant Tool Runtime Probe
+
+- `metadata_search` over `/external/desktop-icloud-originals` with `fileExtension=JPG` returned 1,822 matching assets and explicit truncation for a limited probe.
+- Full `content_hash_audit` over `/external/desktop-icloud-originals` completed for 1,824/1,824 assets:
+  - `hashedAssets=1824`;
+  - `errorCount=0`;
+  - `storedSha1ComparableAssets=0` because the imported external library uses `sha1-path`;
+  - `exactContentDuplicateGroupCount=0`.
+- No-limit tool probe after removing caps:
+  - `content_hash_audit` over `/external/desktop-icloud-originals` returned `complete=true`;
+  - `scannedAssets=1824`;
+  - `hashedAssets=1824`;
+  - `resultCount=1824`;
+  - `errorCount=0`.
+- Log-backed no-limit tool probe:
+  - `content_hash_audit` over `/external/desktop-icloud-originals` again returned `complete=true`, `scannedAssets=1824`, `hashedAssets=1824`, `resultCount=1824`, and `errorCount=0`;
+  - inline result rows were omitted from the chat/API payload because the full result set was written to `/data/assistant-audits/2026-07-20T11-36-08-089Z-content_hash_audit-6e99b3f4-2bb7-4ec7-b325-5fce710837d7.json`;
+  - the JSON log was verified inside `immich_server` at 856,341 bytes with 1,824 `results` rows and 0 `errors` rows.
+- Full `sidecar_pair_audit` over `/external/desktop-icloud-originals` completed:
+  - `directoriesScanned=56`;
+  - `sidecarFileCount=0`;
+  - `sidecarMatchCount=0`;
+  - `orphanSidecarCount=0`;
+  - `probableRenderedPairCount=8`.
+- The 8 probable variant groups are all under `/external/desktop-icloud-originals/Feb 16, 2011` and use names like `IMG_4596.JPG` plus `IMG_4596(1).JPG`. They differ in size and orientation/dimensions and should be treated as review candidates, not automatically skipped duplicates.
+- `mobile_original_compare` returned zero mobile cohorts for the current external import, which is expected until iPhone/mobile uploads with `mobile-app` metadata exist.
+- Temporary local API keys named `Codex local assistant smoke test`, `Codex local assistant tool smoke test`, `Codex local assistant no-limit smoke test`, and `Codex local assistant log smoke test` were deleted after probing.
 
 ### Verification
 

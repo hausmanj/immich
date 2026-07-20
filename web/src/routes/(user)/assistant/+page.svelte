@@ -17,6 +17,8 @@
     assetIds: string[];
     cohortType?: 'source_path' | 'date' | 'camera' | 'location' | null;
     cohortKey?: string | null;
+    toolType?: 'content_hash_audit' | 'sidecar_pair_audit' | 'metadata_search' | 'mobile_original_compare' | null;
+    toolInput?: Record<string, unknown> | null;
     confidence: number;
   };
 
@@ -38,6 +40,19 @@
     albumName: string;
     assetCount: number;
     truncated: boolean;
+  };
+
+  type AssistantToolResponse = {
+    toolType: NonNullable<AssistantAction['toolType']>;
+    generatedAt: string;
+    summary: Record<string, unknown>;
+    results: Array<Record<string, unknown>>;
+    errors: Array<Record<string, unknown>>;
+    logFilePath?: string | null;
+    logFileFormat?: 'json' | null;
+    resultCount?: number;
+    errorCount?: number;
+    inlineResultsOmitted?: boolean;
   };
 
   type AssessmentBucket = {
@@ -85,6 +100,7 @@
   let loading = $state(false);
   let loadingAssessment = $state(false);
   let applyingActionKey = $state<string | null>(null);
+  let runningToolActionKey = $state<string | null>(null);
   let assessment = $state<Assessment | null>(null);
   let messages = $state<ChatMessage[]>([
     {
@@ -132,6 +148,28 @@
     );
   };
 
+  const canRunTool = (action: AssistantAction) => !!action.toolType;
+
+  const getRunToolLabel = (action: AssistantAction) => {
+    switch (action.toolType) {
+      case 'content_hash_audit': {
+        return 'Run hash audit';
+      }
+      case 'sidecar_pair_audit': {
+        return 'Run sidecar audit';
+      }
+      case 'metadata_search': {
+        return 'Run search';
+      }
+      case 'mobile_original_compare': {
+        return 'Compare originals';
+      }
+      default: {
+        return 'Run audit';
+      }
+    }
+  };
+
   const getCreateReviewAlbumLabel = (action: AssistantAction) => {
     return action.assetIds.length > 0 ? `Create review album (${formatNumber(action.assetIds.length)})` : 'Create review album';
   };
@@ -175,6 +213,103 @@
     } finally {
       applyingActionKey = null;
     }
+  };
+
+  const runTool = async (action: AssistantAction, actionKey: string) => {
+    if (runningToolActionKey || !action.toolType) {
+      return;
+    }
+
+    runningToolActionKey = actionKey;
+    try {
+      const response = await fetch('/api/assistant/tool', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          toolType: action.toolType,
+          input: action.toolInput ?? {
+            cohortType: action.cohortType,
+            cohortKey: action.cohortKey,
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+
+      const result = (await response.json()) as AssistantToolResponse;
+      messages = [
+        ...messages,
+        {
+          role: 'assistant',
+          content: formatToolResult(result),
+          actions: [],
+        },
+      ];
+    } catch (error) {
+      toastManager.danger(error instanceof Error ? error.message : String(error));
+    } finally {
+      runningToolActionKey = null;
+    }
+  };
+
+  const formatToolResult = (result: AssistantToolResponse) => {
+    const summary = Object.entries(result.summary)
+      .map(([key, value]) => `${key}: ${formatToolValue(value)}`)
+      .join('\n');
+    const resultCount = result.resultCount ?? result.results.length;
+    const errorCount = result.errorCount ?? result.errors.length;
+    const logLine = result.logFilePath ? `Full JSON audit log: ${result.logFilePath}` : '';
+    const omittedLine =
+      result.inlineResultsOmitted && result.logFilePath
+        ? `Inline rows omitted from chat. The log contains ${formatNumber(resultCount)} result rows and ${formatNumber(errorCount)} error rows.`
+        : '';
+    const examples = result.results.map((item) => JSON.stringify(item)).join('\n');
+    const errors = result.errors.map((item) => JSON.stringify(item)).join('\n');
+
+    return [
+      `${getToolTitle(result.toolType)} completed at ${new Date(result.generatedAt).toLocaleString()}.`,
+      '',
+      summary,
+      logLine,
+      omittedLine,
+      examples ? `\nResults:\n${examples}` : '',
+      errors ? `\nErrors:\n${errors}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+  };
+
+  const getToolTitle = (toolType: AssistantToolResponse['toolType']) => {
+    switch (toolType) {
+      case 'content_hash_audit': {
+        return 'Content hash audit';
+      }
+      case 'sidecar_pair_audit': {
+        return 'Sidecar/pair audit';
+      }
+      case 'metadata_search': {
+        return 'Metadata search';
+      }
+      case 'mobile_original_compare': {
+        return 'Mobile original comparison';
+      }
+    }
+  };
+
+  const formatToolValue = (value: unknown) => {
+    if (typeof value === 'number') {
+      return formatNumber(value);
+    }
+
+    if (typeof value === 'string' || typeof value === 'boolean' || value === null) {
+      return String(value);
+    }
+
+    return JSON.stringify(value);
   };
 
   const getFindingHref = (finding: AssessmentFinding) => {
@@ -418,6 +553,19 @@
                             <div class="flex items-center gap-2">
                               <Icon icon={mdiPlusBoxOutline} size="16" />
                               {getCreateReviewAlbumLabel(action)}
+                            </div>
+                          </Button>
+                        {/if}
+                        {#if canRunTool(action)}
+                          <Button
+                            type="button"
+                            size="small"
+                            onclick={() => void runTool(action, actionKey)}
+                            disabled={runningToolActionKey !== null}
+                          >
+                            <div class="flex items-center gap-2">
+                              <Icon icon={mdiRobotOutline} size="16" />
+                              {runningToolActionKey === actionKey ? 'Running...' : getRunToolLabel(action)}
                             </div>
                           </Button>
                         {/if}

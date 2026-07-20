@@ -4,6 +4,7 @@ import {
   Insertable,
   Kysely,
   NotNull,
+  RawBuilder,
   Selectable,
   SelectQueryBuilder,
   ShallowDehydrateObject,
@@ -195,6 +196,67 @@ export interface AssistantMobileAppMetadataAuditBucket {
   usedFallbackCount: number;
   hasAdjustmentsCount: number;
   examples: string[];
+}
+
+export interface AssistantAuditAsset {
+  id: string;
+  type: string;
+  originalPath: string;
+  originalFileName: string;
+  storedChecksum: string | null;
+  checksumAlgorithm: string;
+  isExternal: boolean;
+  isEdited: boolean;
+  libraryId: string | null;
+  fileSizeInByte: string | null;
+  width: number | null;
+  height: number | null;
+  duration: string | null;
+  localDateTime: string | null;
+  dateTimeOriginal: string | null;
+  make: string | null;
+  model: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  city: string | null;
+  state: string | null;
+  country: string | null;
+  mobileAppMetadata: unknown | null;
+}
+
+export interface AssistantAuditAssetSearch {
+  cohortType?: string | null;
+  cohortKey?: string | null;
+  originalPathContains?: string;
+  originalFileNameContains?: string;
+  fileExtension?: string;
+  checksumAlgorithm?: string;
+  type?: string;
+  takenAfter?: Date;
+  takenBefore?: Date;
+  make?: string;
+  model?: string;
+  country?: string;
+  state?: string;
+  city?: string;
+  noGps?: boolean;
+  unknownCamera?: boolean;
+  hasMobileMetadata?: boolean;
+}
+
+export interface AssistantMobileOriginalComparisonBucket {
+  key: string;
+  mobileAssetCount: number;
+  referenceAssetCount: number;
+  exactTraitMatchCount: number;
+  sizeMismatchCount: number;
+  dimensionsMismatchCount: number;
+  dateMismatchCount: number;
+  cameraMismatchCount: number;
+  usedBaseOriginalCount: number;
+  usedFallbackCount: number;
+  hasAdjustmentsCount: number;
+  examples: Array<Record<string, unknown>>;
 }
 
 export interface YearMonthDay {
@@ -508,39 +570,15 @@ export class AssetRepository {
   }
 
   getAssistantSourcePathCohorts(ownerId: string, limit: number): Promise<AssistantLibraryAuditBucket[]> {
-    return this.getAssistantAuditBuckets(
-      ownerId,
-      limit,
-      sql<string>`
-        case
-          when a."originalPath" like '/external/%'
-            then regexp_replace(a."originalPath", '^(/external/[^/]+/[^/]+).*$', '\1')
-          else regexp_replace(a."originalPath", '/[^/]+$', '')
-        end
-      `,
-    );
+    return this.getAssistantAuditBuckets(ownerId, limit, this.getAssistantSourcePathCohortSql());
   }
 
   getAssistantDateCohorts(ownerId: string, limit: number): Promise<AssistantLibraryAuditBucket[]> {
-    return this.getAssistantAuditBuckets(
-      ownerId,
-      limit,
-      sql<string>`(a."localDateTime" at time zone 'UTC')::date::text`,
-    );
+    return this.getAssistantAuditBuckets(ownerId, limit, this.getAssistantDateCohortSql());
   }
 
   getAssistantCameraCohorts(ownerId: string, limit: number): Promise<AssistantLibraryAuditBucket[]> {
-    return this.getAssistantAuditBuckets(
-      ownerId,
-      limit,
-      sql<string>`
-        concat_ws(
-          ' ',
-          coalesce(nullif(ae.make, ''), 'Unknown make'),
-          coalesce(nullif(ae.model, ''), 'Unknown model')
-        )
-      `,
-    );
+    return this.getAssistantAuditBuckets(ownerId, limit, this.getAssistantCameraCohortSql());
   }
 
   async getAssistantLocationCohorts(ownerId: string, limit: number): Promise<AssistantLocationAuditBucket[]> {
@@ -727,34 +765,189 @@ export class AssetRepository {
     return rows;
   }
 
-  async getAssistantCohortAssetIds(ownerId: string, cohortType: string, cohortKey: string, limit: number) {
+  async getAssistantCohortAssetIds(ownerId: string, cohortType: string, cohortKey: string, limit?: number) {
     const cohortSql = this.getAssistantCohortSql(cohortType);
     if (!cohortSql) {
       return [];
     }
 
+    const limitClause = limit === undefined ? sql`` : sql`limit ${limit}`;
     const { rows } = await sql<{ id: string }>`
       select a.id
       from asset a
       left join asset_exif ae on ae."assetId" = a.id
       where a."ownerId" = ${asUuid(ownerId)}
         and a."deletedAt" is null
-        and (${cohortSql}) = ${cohortKey}
+        and (${sql.raw(cohortSql)}) = ${cohortKey}
       order by a."localDateTime" asc, a."originalFileName" asc
-      limit ${limit}
+      ${limitClause}
     `.execute(this.db);
 
     return rows.map(({ id }) => id);
   }
 
+  async getAssistantAuditAssets(ownerId: string, filters: AssistantAuditAssetSearch): Promise<AssistantAuditAsset[]> {
+    const conditions = this.getAssistantAuditAssetConditions(ownerId, filters);
+    const { rows } = await sql<AssistantAuditAsset>`
+      select
+        a.id,
+        a.type::text as type,
+        a."originalPath",
+        a."originalFileName",
+        encode(a.checksum, 'base64') as "storedChecksum",
+        a."checksumAlgorithm"::text as "checksumAlgorithm",
+        a."isExternal",
+        a."isEdited",
+        a."libraryId",
+        ae."fileSizeInByte"::text as "fileSizeInByte",
+        a.width,
+        a.height,
+        a.duration,
+        (a."localDateTime" at time zone 'UTC')::text as "localDateTime",
+        (ae."dateTimeOriginal" at time zone 'UTC')::text as "dateTimeOriginal",
+        ae.make,
+        ae.model,
+        ae.latitude,
+        ae.longitude,
+        ae.city,
+        ae.state,
+        ae.country,
+        am.value as "mobileAppMetadata"
+      from asset a
+      left join asset_exif ae on ae."assetId" = a.id
+      left join asset_metadata am on am."assetId" = a.id and am.key = 'mobile-app'
+      where ${sql.join(conditions, sql` and `)}
+      order by a."localDateTime" asc, a."originalFileName" asc
+    `.execute(this.db);
+
+    return rows;
+  }
+
+  async getAssistantAuditAssetCount(ownerId: string, filters: AssistantAuditAssetSearch): Promise<number> {
+    const conditions = this.getAssistantAuditAssetConditions(ownerId, filters);
+    const { rows } = await sql<{ count: number }>`
+      select count(*)::int as count
+      from asset a
+      left join asset_exif ae on ae."assetId" = a.id
+      left join asset_metadata am on am."assetId" = a.id and am.key = 'mobile-app'
+      where ${sql.join(conditions, sql` and `)}
+    `.execute(this.db);
+
+    return rows[0]?.count ?? 0;
+  }
+
+  async getAssistantMobileOriginalComparison(
+    ownerId: string,
+    desktopSourcePrefix: string,
+  ): Promise<AssistantMobileOriginalComparisonBucket[]> {
+    const { rows } = await sql<AssistantMobileOriginalComparisonBucket>`
+      with mobile as (
+        select
+          a.id,
+          a."originalPath",
+          a."originalFileName",
+          a.width,
+          a.height,
+          a."localDateTime",
+          ae."fileSizeInByte",
+          ae."dateTimeOriginal",
+          ae.make,
+          ae.model,
+          am.value as metadata
+        from asset a
+        inner join asset_metadata am on am."assetId" = a.id and am.key = 'mobile-app'
+        left join asset_exif ae on ae."assetId" = a.id
+        where a."ownerId" = ${asUuid(ownerId)}
+          and a."deletedAt" is null
+      ),
+      reference as (
+        select
+          a.id,
+          a."originalPath",
+          a."originalFileName",
+          a.width,
+          a.height,
+          ae."fileSizeInByte",
+          ae."dateTimeOriginal",
+          ae.make,
+          ae.model
+        from asset a
+        left join asset_exif ae on ae."assetId" = a.id
+        where a."ownerId" = ${asUuid(ownerId)}
+          and a."deletedAt" is null
+          and a."isExternal"
+          and a."originalPath" like ${`${desktopSourcePrefix}%`}
+      ),
+      joined as (
+        select
+          mobile.*,
+          reference.id as "referenceId",
+          reference."originalPath" as "referencePath",
+          reference."fileSizeInByte" as "referenceFileSizeInByte",
+          reference.width as "referenceWidth",
+          reference.height as "referenceHeight",
+          reference."dateTimeOriginal" as "referenceDateTimeOriginal",
+          reference.make as "referenceMake",
+          reference.model as "referenceModel"
+        from mobile
+        left join reference on lower(reference."originalFileName") = lower(mobile."originalFileName")
+      )
+      select
+        coalesce(metadata->>'originalUploadSource', 'mobile-app metadata without originalUploadSource') as key,
+        count(distinct id)::int as "mobileAssetCount",
+        count(distinct "referenceId")::int as "referenceAssetCount",
+        count(distinct id) filter (
+          where "referenceId" is not null
+            and "fileSizeInByte" is not distinct from "referenceFileSizeInByte"
+            and width is not distinct from "referenceWidth"
+            and height is not distinct from "referenceHeight"
+            and "dateTimeOriginal" is not distinct from "referenceDateTimeOriginal"
+            and make is not distinct from "referenceMake"
+            and model is not distinct from "referenceModel"
+        )::int as "exactTraitMatchCount",
+        count(distinct id) filter (where "referenceId" is not null and "fileSizeInByte" is distinct from "referenceFileSizeInByte")::int as "sizeMismatchCount",
+        count(distinct id) filter (where "referenceId" is not null and (width is distinct from "referenceWidth" or height is distinct from "referenceHeight"))::int as "dimensionsMismatchCount",
+        count(distinct id) filter (where "referenceId" is not null and "dateTimeOriginal" is distinct from "referenceDateTimeOriginal")::int as "dateMismatchCount",
+        count(distinct id) filter (where "referenceId" is not null and (make is distinct from "referenceMake" or model is distinct from "referenceModel"))::int as "cameraMismatchCount",
+        count(distinct id) filter (where metadata->>'usedBaseOriginal' = 'true')::int as "usedBaseOriginalCount",
+        count(distinct id) filter (where metadata->>'usedFallback' = 'true')::int as "usedFallbackCount",
+        count(distinct id) filter (where metadata->>'hasAdjustments' = 'true')::int as "hasAdjustmentsCount",
+        (array_agg(
+          jsonb_build_object(
+            'mobileAssetId', id,
+            'mobilePath', "originalPath",
+            'referencePath', "referencePath",
+            'fileSizeInByte', "fileSizeInByte",
+            'referenceFileSizeInByte', "referenceFileSizeInByte",
+            'width', width,
+            'height', height,
+            'referenceWidth', "referenceWidth",
+            'referenceHeight', "referenceHeight",
+            'dateTimeOriginal', "dateTimeOriginal",
+            'referenceDateTimeOriginal', "referenceDateTimeOriginal",
+            'make', make,
+            'model', model,
+            'referenceMake', "referenceMake",
+            'referenceModel', "referenceModel"
+          )
+          order by "localDateTime" desc
+        ) as examples
+      from joined
+      group by coalesce(metadata->>'originalUploadSource', 'mobile-app metadata without originalUploadSource')
+      order by count(distinct id) desc, 1 asc
+    `.execute(this.db);
+
+    return rows;
+  }
+
   private async getAssistantAuditBuckets(
     ownerId: string,
     limit: number,
-    bucketSql: ReturnType<typeof sql<string>>,
+    bucketSql: string,
   ): Promise<AssistantLibraryAuditBucket[]> {
     const { rows } = await sql<AssistantLibraryAuditBucket>`
       select
-        (${bucketSql}) as key,
+        (${sql.raw(bucketSql)}) as key,
         count(*)::int as "assetCount",
         count(*) filter (where a.type = 'IMAGE')::int as "imageCount",
         count(*) filter (where a.type = 'VIDEO')::int as "videoCount",
@@ -777,7 +970,7 @@ export class AssetRepository {
       left join asset_metadata am on am."assetId" = a.id and am.key = 'mobile-app'
       where a."ownerId" = ${asUuid(ownerId)}
         and a."deletedAt" is null
-      group by (${bucketSql})
+      group by (${sql.raw(bucketSql)})
       order by count(*) desc, 1 asc
       limit ${limit}
     `.execute(this.db);
@@ -785,47 +978,141 @@ export class AssetRepository {
     return rows;
   }
 
-  private getAssistantCohortSql(cohortType: string): ReturnType<typeof sql<string>> | null {
+  private getAssistantCohortSql(cohortType: string): string | null {
     switch (cohortType) {
       case 'source_path': {
-        return sql<string>`
-          case
-            when a."originalPath" like '/external/%'
-              then regexp_replace(a."originalPath", '^(/external/[^/]+/[^/]+).*$', '\1')
-            else regexp_replace(a."originalPath", '/[^/]+$', '')
-          end
-        `;
+        return this.getAssistantSourcePathCohortSql();
       }
 
       case 'date': {
-        return sql<string>`(a."localDateTime" at time zone 'UTC')::date::text`;
+        return this.getAssistantDateCohortSql();
       }
 
       case 'camera': {
-        return sql<string>`
-          concat_ws(
-            ' ',
-            coalesce(nullif(ae.make, ''), 'Unknown make'),
-            coalesce(nullif(ae.model, ''), 'Unknown model')
-          )
-        `;
+        return this.getAssistantCameraCohortSql();
       }
 
       case 'location': {
-        return sql<string>`
-          case
-            when ae.country is null and ae.state is null and ae.city is null
-              and ae.latitude is not null and ae.longitude is not null then 'GPS without place labels'
-            when ae.country is null and ae.state is null and ae.city is null then 'No visible location'
-            else concat_ws(' / ', nullif(ae.country, ''), nullif(ae.state, ''), nullif(ae.city, ''))
-          end
-        `;
+        return this.getAssistantLocationCohortSql();
       }
 
       default: {
         return null;
       }
     }
+  }
+
+  private getAssistantSourcePathCohortSql() {
+    return String.raw`
+      case
+        when a."originalPath" like '/external/%'
+          then regexp_replace(a."originalPath", '^(/external/[^/]+/[^/]+).*$', '\1')
+        else regexp_replace(a."originalPath", '/[^/]+$', '')
+      end
+    `;
+  }
+
+  private getAssistantDateCohortSql() {
+    return `(a."localDateTime" at time zone 'UTC')::date::text`;
+  }
+
+  private getAssistantCameraCohortSql() {
+    return `
+      concat_ws(
+        ' ',
+        coalesce(nullif(ae.make, ''), 'Unknown make'),
+        coalesce(nullif(ae.model, ''), 'Unknown model')
+      )
+    `;
+  }
+
+  private getAssistantLocationCohortSql() {
+    return `
+      case
+        when ae.country is null and ae.state is null and ae.city is null
+          and ae.latitude is not null and ae.longitude is not null then 'GPS without place labels'
+        when ae.country is null and ae.state is null and ae.city is null then 'No visible location'
+        else concat_ws(' / ', nullif(ae.country, ''), nullif(ae.state, ''), nullif(ae.city, ''))
+      end
+    `;
+  }
+
+  private getAssistantAuditAssetConditions(
+    ownerId: string,
+    filters: AssistantAuditAssetSearch,
+  ): Array<RawBuilder<unknown>> {
+    const conditions: Array<RawBuilder<unknown>> = [
+      sql`a."ownerId" = ${asUuid(ownerId)}`,
+      sql`a."deletedAt" is null`,
+    ];
+
+    const cohortSql = filters.cohortType && filters.cohortKey ? this.getAssistantCohortSql(filters.cohortType) : null;
+    if (cohortSql && filters.cohortKey) {
+      conditions.push(sql`(${sql.raw(cohortSql)}) = ${filters.cohortKey}`);
+    }
+
+    if (filters.originalPathContains) {
+      conditions.push(sql`a."originalPath" ilike ${`%${filters.originalPathContains}%`}`);
+    }
+
+    if (filters.originalFileNameContains) {
+      conditions.push(sql`a."originalFileName" ilike ${`%${filters.originalFileNameContains}%`}`);
+    }
+
+    if (filters.fileExtension) {
+      const extension = filters.fileExtension.startsWith('.') ? filters.fileExtension : `.${filters.fileExtension}`;
+      conditions.push(sql`lower(a."originalFileName") like ${`%${extension.toLowerCase()}`}`);
+    }
+
+    if (filters.checksumAlgorithm) {
+      conditions.push(sql`a."checksumAlgorithm" = ${filters.checksumAlgorithm}`);
+    }
+
+    if (filters.type) {
+      conditions.push(sql`a.type = ${filters.type}`);
+    }
+
+    if (filters.takenAfter) {
+      conditions.push(sql`a."localDateTime" >= ${filters.takenAfter}`);
+    }
+
+    if (filters.takenBefore) {
+      conditions.push(sql`a."localDateTime" <= ${filters.takenBefore}`);
+    }
+
+    if (filters.make) {
+      conditions.push(sql`ae.make ilike ${`%${filters.make}%`}`);
+    }
+
+    if (filters.model) {
+      conditions.push(sql`ae.model ilike ${`%${filters.model}%`}`);
+    }
+
+    if (filters.country) {
+      conditions.push(sql`ae.country ilike ${`%${filters.country}%`}`);
+    }
+
+    if (filters.state) {
+      conditions.push(sql`ae.state ilike ${`%${filters.state}%`}`);
+    }
+
+    if (filters.city) {
+      conditions.push(sql`ae.city ilike ${`%${filters.city}%`}`);
+    }
+
+    if (filters.noGps) {
+      conditions.push(sql`(ae.latitude is null or ae.longitude is null)`);
+    }
+
+    if (filters.unknownCamera) {
+      conditions.push(sql`(ae.make is null and ae.model is null)`);
+    }
+
+    if (filters.hasMobileMetadata !== undefined) {
+      conditions.push(filters.hasMobileMetadata ? sql`am."assetId" is not null` : sql`am."assetId" is null`);
+    }
+
+    return conditions;
   }
 
   upsertMetadata(id: string, items: Array<{ key: string; value: Record<string, unknown> }>) {

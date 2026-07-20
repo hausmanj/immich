@@ -5251,6 +5251,57 @@
         "x-immich-permission": "album.create"
       }
     },
+    "/assistant/tool": {
+      "post": {
+        "description": "Run a read-only deterministic assistant audit or search against the authenticated user library.",
+        "operationId": "runTool",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssistantToolRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssistantToolResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Run an assistant audit tool",
+        "tags": [
+          "Assistant"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          }
+        ],
+        "x-immich-permission": "asset.read"
+      }
+    },
     "/auth/admin-sign-up": {
       "post": {
         "description": "Create the first admin user in the system.",
@@ -18455,6 +18506,25 @@
           "title": {
             "type": "string"
           },
+          "toolInput": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AssistantToolInputDto"
+              }
+            ],
+            "nullable": true
+          },
+          "toolType": {
+            "enum": [
+              "content_hash_audit",
+              "sidecar_pair_audit",
+              "metadata_search",
+              "mobile_original_compare",
+              null
+            ],
+            "nullable": true,
+            "type": "string"
+          },
           "type": {
             "enum": [
               "search",
@@ -18797,6 +18867,204 @@
           "albumName",
           "assetCount",
           "truncated"
+        ],
+        "type": "object"
+      },
+      "AssistantToolInputDto": {
+        "properties": {
+          "checksumAlgorithm": {
+            "maxLength": 50,
+            "minLength": 1,
+            "nullable": true,
+            "type": "string"
+          },
+          "city": {
+            "maxLength": 250,
+            "minLength": 1,
+            "nullable": true,
+            "type": "string"
+          },
+          "cohortKey": {
+            "nullable": true,
+            "type": "string"
+          },
+          "cohortType": {
+            "enum": [
+              "source_path",
+              "date",
+              "camera",
+              "location",
+              null
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "country": {
+            "maxLength": 250,
+            "minLength": 1,
+            "nullable": true,
+            "type": "string"
+          },
+          "desktopSourcePrefix": {
+            "maxLength": 500,
+            "minLength": 1,
+            "nullable": true,
+            "type": "string"
+          },
+          "fileExtension": {
+            "maxLength": 20,
+            "minLength": 1,
+            "nullable": true,
+            "type": "string"
+          },
+          "hasMobileMetadata": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "make": {
+            "maxLength": 250,
+            "minLength": 1,
+            "nullable": true,
+            "type": "string"
+          },
+          "model": {
+            "maxLength": 250,
+            "minLength": 1,
+            "nullable": true,
+            "type": "string"
+          },
+          "noGps": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "originalFileNameContains": {
+            "maxLength": 250,
+            "minLength": 1,
+            "nullable": true,
+            "type": "string"
+          },
+          "originalPathContains": {
+            "maxLength": 500,
+            "minLength": 1,
+            "nullable": true,
+            "type": "string"
+          },
+          "state": {
+            "maxLength": 250,
+            "minLength": 1,
+            "nullable": true,
+            "type": "string"
+          },
+          "takenAfter": {
+            "example": "2024-01-01T00:00:00.000Z",
+            "format": "date-time",
+            "nullable": true,
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "type": "string"
+          },
+          "takenBefore": {
+            "example": "2024-01-01T00:00:00.000Z",
+            "format": "date-time",
+            "nullable": true,
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "IMAGE",
+              "VIDEO",
+              "AUDIO",
+              "OTHER",
+              null
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "unknownCamera": {
+            "nullable": true,
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "AssistantToolRequestDto": {
+        "properties": {
+          "input": {
+            "$ref": "#/components/schemas/AssistantToolInputDto",
+            "default": {}
+          },
+          "toolType": {
+            "enum": [
+              "content_hash_audit",
+              "sidecar_pair_audit",
+              "metadata_search",
+              "mobile_original_compare"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "toolType"
+        ],
+        "type": "object"
+      },
+      "AssistantToolResponseDto": {
+        "properties": {
+          "errorCount": {
+            "type": "number"
+          },
+          "errors": {
+            "items": {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "generatedAt": {
+            "type": "string"
+          },
+          "inlineResultsOmitted": {
+            "type": "boolean"
+          },
+          "logFileFormat": {
+            "const": "json",
+            "nullable": true,
+            "type": "string"
+          },
+          "logFilePath": {
+            "nullable": true,
+            "type": "string"
+          },
+          "resultCount": {
+            "type": "number"
+          },
+          "results": {
+            "items": {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "summary": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "toolType": {
+            "enum": [
+              "content_hash_audit",
+              "sidecar_pair_audit",
+              "metadata_search",
+              "mobile_original_compare"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "errors",
+          "generatedAt",
+          "results",
+          "summary",
+          "toolType"
         ],
         "type": "object"
       },
