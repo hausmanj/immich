@@ -10,11 +10,13 @@ import {
 import { AuthDto } from 'src/dtos/auth.dto';
 import { SearchSuggestionType } from 'src/dtos/search.dto';
 import { AssetOrder, AssetOrderBy, AssetType, AssetVisibility } from 'src/enum';
+import type { EnvData } from 'src/repositories/config.repository';
 import { AlbumService } from 'src/services/album.service';
 import { BaseService } from 'src/services/base.service';
 import { SearchService } from 'src/services/search.service';
 
-type LlmProvider = 'openai' | 'anthropic' | 'local-cli';
+type AssistantProvider = 'openai' | 'anthropic' | 'claude-cli' | 'codex-cli';
+type LlmProvider = AssistantProvider | 'local-cli';
 
 type RemoteProviderConfig = {
   provider: Exclude<LlmProvider, 'local-cli'>;
@@ -23,7 +25,7 @@ type RemoteProviderConfig = {
 };
 
 type LocalCliProviderConfig = {
-  provider: 'local-cli';
+  provider: 'claude-cli' | 'codex-cli' | 'local-cli';
   command: string;
   args: string[];
   timeoutSeconds: number;
@@ -163,25 +165,24 @@ export class AssistantService extends BaseService {
 
   async chat(auth: AuthDto, dto: AssistantChatRequestDto): Promise<AssistantChatResponseDto> {
     const context = await this.getLibraryContext(auth);
-    const providerConfig = this.getLlmProvider();
+    const providerConfig = this.getLlmProvider(dto.provider);
 
     if (!providerConfig) {
       return {
         status: 'disabled',
         answer:
-          'The assistant is not configured. Set IMMICH_ASSISTANT_LOCAL_COMMAND for a local CLI, or set IMMICH_LLM_PROVIDER with the matching provider API key.',
+          'The assistant is not configured. Set IMMICH_ASSISTANT_CLAUDE_COMMAND, IMMICH_ASSISTANT_CODEX_COMMAND, or set IMMICH_LLM_PROVIDER with the matching provider API key.',
         actions: [],
         context: context.summary,
       };
     }
 
     try {
-      const output =
-        providerConfig.provider === 'local-cli'
-          ? await this.callLocalCli(providerConfig, dto, context)
-          : providerConfig.provider === 'openai'
-            ? await this.callOpenAi(providerConfig, dto, context)
-            : await this.callAnthropic(providerConfig, dto, context);
+      const output = this.isLocalCliProvider(providerConfig)
+        ? await this.callLocalCli(providerConfig, dto, context)
+        : providerConfig.provider === 'openai'
+          ? await this.callOpenAi(providerConfig, dto, context)
+          : await this.callAnthropic(providerConfig, dto, context);
 
       return {
         status: 'success',
@@ -206,19 +207,45 @@ export class AssistantService extends BaseService {
     }
   }
 
-  private getLlmProvider(): ProviderConfig | undefined {
+  private getLlmProvider(requested?: AssistantProvider): ProviderConfig | undefined {
     const { assistant, llm } = this.configRepository.getEnv();
+    const requestedLocal = requested === 'claude-cli' || requested === 'codex-cli' ? requested : assistant.provider;
+    if (requestedLocal === 'claude-cli' && assistant.claude.command) {
+      return this.toLocalCliProvider('claude-cli', assistant.claude);
+    }
+
+    if (requestedLocal === 'codex-cli' && assistant.codex.command) {
+      return this.toLocalCliProvider('codex-cli', assistant.codex);
+    }
+
+    if (requested === 'openai' || requested === 'anthropic') {
+      return this.toRemoteProvider(requested, llm);
+    }
+
+    if (assistant.provider === 'openai' || assistant.provider === 'anthropic') {
+      return this.toRemoteProvider(assistant.provider, llm);
+    }
+
+    if (assistant.claude.command) {
+      return this.toLocalCliProvider('claude-cli', assistant.claude);
+    }
+
+    if (assistant.codex.command) {
+      return this.toLocalCliProvider('codex-cli', assistant.codex);
+    }
+
     if (assistant.local.command) {
-      return {
-        provider: 'local-cli',
-        command: assistant.local.command,
-        args: assistant.local.args,
-        timeoutSeconds: assistant.local.timeoutSeconds,
-        model: assistant.local.command,
-      };
+      return this.toLocalCliProvider('local-cli', assistant.local);
     }
 
     const provider = llm.provider ?? (llm.openai.apiKey ? 'openai' : llm.anthropic.apiKey ? 'anthropic' : undefined);
+    return provider ? this.toRemoteProvider(provider, llm) : undefined;
+  }
+
+  private toRemoteProvider(
+    provider: Exclude<AssistantProvider, 'claude-cli' | 'codex-cli'>,
+    llm: EnvData['llm'],
+  ): ProviderConfig | undefined {
     if (!provider || (provider !== 'openai' && provider !== 'anthropic')) {
       return;
     }
@@ -229,6 +256,23 @@ export class AssistantService extends BaseService {
     }
 
     return { provider, apiKey: config.apiKey, model: config.model };
+  }
+
+  private toLocalCliProvider(
+    provider: LocalCliProviderConfig['provider'],
+    local: { command?: string; args: string[]; timeoutSeconds: number },
+  ): ProviderConfig | undefined {
+    if (!local.command) {
+      return;
+    }
+
+    return {
+      provider,
+      command: local.command,
+      args: local.args,
+      timeoutSeconds: local.timeoutSeconds,
+      model: local.command,
+    };
   }
 
   private async getLibraryContext(auth: AuthDto) {
@@ -554,6 +598,10 @@ export class AssistantService extends BaseService {
 
   private isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;
+  }
+
+  private isLocalCliProvider(provider: ProviderConfig): provider is LocalCliProviderConfig {
+    return provider.provider === 'local-cli' || provider.provider === 'claude-cli' || provider.provider === 'codex-cli';
   }
 
   private toStringList(values: Array<string | null>): string[] {

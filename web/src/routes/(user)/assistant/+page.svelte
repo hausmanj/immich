@@ -5,6 +5,8 @@
   import { mdiArrowRight, mdiMagnify, mdiRobotOutline, mdiSend } from '@mdi/js';
   import type { PageData } from './$types';
 
+  type AssistantProvider = 'auto' | 'claude-cli' | 'codex-cli' | 'openai' | 'anthropic';
+
   type AssistantAction = {
     type: 'search' | 'album_plan' | 'folder_plan' | 'metadata_audit' | 'original_file_audit' | 'review';
     title: string;
@@ -69,6 +71,7 @@
   let { data }: Props = $props();
 
   let prompt = $state('');
+  let provider = $state<AssistantProvider>('auto');
   let loading = $state(false);
   let loadingAssessment = $state(false);
   let assessment = $state<Assessment | null>(null);
@@ -89,6 +92,14 @@
     original_file_audit: 'Original audit',
     review: 'Review',
   };
+
+  const providerOptions: Array<{ value: AssistantProvider; label: string }> = [
+    { value: 'auto', label: 'Auto' },
+    { value: 'claude-cli', label: 'Claude' },
+    { value: 'codex-cli', label: 'Codex' },
+    { value: 'openai', label: 'OpenAI' },
+    { value: 'anthropic', label: 'Anthropic' },
+  ];
 
   const getSearchHref = (action: AssistantAction) => {
     if (!action.query) {
@@ -150,6 +161,7 @@
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
+          provider: provider === 'auto' ? undefined : provider,
           messages: nextMessages.map(({ role, content }) => ({ role, content })).slice(-12),
         }),
       });
@@ -360,7 +372,19 @@
         disabled={loading}
         onkeydown={onKeydown}
       />
-      <div class="mt-3 flex justify-end">
+      <div class="mt-3 flex items-center justify-between gap-3">
+        <label class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+          Provider
+          <select
+            bind:value={provider}
+            class="rounded-md border border-gray-300 bg-white px-2 py-1 text-sm text-gray-900 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100"
+            disabled={loading}
+          >
+            {#each providerOptions as option (option.value)}
+              <option value={option.value}>{option.label}</option>
+            {/each}
+          </select>
+        </label>
         <Button type="button" onclick={() => void send()} disabled={loading || !prompt.trim()}>
           <div class="flex items-center gap-2">
             <Icon icon={mdiSend} size="16" />

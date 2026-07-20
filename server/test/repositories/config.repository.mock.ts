@@ -56,6 +56,14 @@ export const envData: EnvData = {
       args: [],
       timeoutSeconds: 120,
     },
+    claude: {
+      args: [],
+      timeoutSeconds: 240,
+    },
+    codex: {
+      args: [],
+      timeoutSeconds: 240,
+    },
   },
 
   llm: {

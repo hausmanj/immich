@@ -10,6 +10,7 @@ const AssistantChatMessageSchema = z
 
 const AssistantChatRequestSchema = z
   .object({
+    provider: z.enum(['openai', 'anthropic', 'claude-cli', 'codex-cli']).optional().describe('Assistant provider'),
     messages: z.array(AssistantChatMessageSchema).min(1).max(20).describe('Conversation messages'),
   })
   .meta({ id: 'AssistantChatRequestDto' });
@@ -29,7 +30,7 @@ const AssistantActionSchema = z
 const AssistantChatResponseSchema = z
   .object({
     status: z.enum(['success', 'disabled', 'error']),
-    provider: z.enum(['openai', 'anthropic', 'local-cli']).optional(),
+    provider: z.enum(['openai', 'anthropic', 'claude-cli', 'codex-cli', 'local-cli']).optional(),
     model: z.string().optional(),
     answer: z.string(),
     actions: z.array(AssistantActionSchema),

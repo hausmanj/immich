@@ -88,7 +88,18 @@ export interface EnvData {
   };
 
   assistant: {
+    provider?: 'openai' | 'anthropic' | 'claude-cli' | 'codex-cli';
     local: {
+      command?: string;
+      args: string[];
+      timeoutSeconds: number;
+    };
+    claude: {
+      command?: string;
+      args: string[];
+      timeoutSeconds: number;
+    };
+    codex: {
       command?: string;
       args: string[];
       timeoutSeconds: number;
@@ -355,10 +366,21 @@ const getEnv = (): EnvData => {
     },
 
     assistant: {
+      provider: dto.IMMICH_ASSISTANT_PROVIDER,
       local: {
         command: dto.IMMICH_ASSISTANT_LOCAL_COMMAND,
         args: parseCsv(dto.IMMICH_ASSISTANT_LOCAL_ARGS),
         timeoutSeconds: dto.IMMICH_ASSISTANT_LOCAL_TIMEOUT_SECONDS ?? 120,
+      },
+      claude: {
+        command: dto.IMMICH_ASSISTANT_CLAUDE_COMMAND,
+        args: parseCsv(dto.IMMICH_ASSISTANT_CLAUDE_ARGS),
+        timeoutSeconds: dto.IMMICH_ASSISTANT_CLAUDE_TIMEOUT_SECONDS ?? 240,
+      },
+      codex: {
+        command: dto.IMMICH_ASSISTANT_CODEX_COMMAND,
+        args: parseCsv(dto.IMMICH_ASSISTANT_CODEX_ARGS),
+        timeoutSeconds: dto.IMMICH_ASSISTANT_CODEX_TIMEOUT_SECONDS ?? 240,
       },
     },
 
