@@ -167,6 +167,8 @@ export interface AssistantEventAuditBucket extends AssistantLibraryAuditBucket {
   dateSpanDays: number;
   activeDayCount: number;
   locationAssetCount: number;
+  noLocationAssetCount: number;
+  sourceFolderAssetCount: number;
   confidence: number;
 }
 
@@ -662,7 +664,8 @@ export class AssetRepository {
           nullif(ae.city, '') as city,
           ae.make,
           ae.model,
-          (a."localDateTime" at time zone 'UTC')::date as "localDate"
+          (a."localDateTime" at time zone 'UTC')::date as "localDate",
+          regexp_replace(a."originalPath", '/[^/]+$', '') as "sourceDirectory"
         from asset a
         left join asset_exif ae on ae."assetId" = a.id
         where a."ownerId" = ${asUuid(ownerId)}
@@ -694,7 +697,8 @@ export class AssetRepository {
           coalesce(sum("fileSizeInByte"), 0)::text as "totalFileSizeBytes",
           count(distinct "localDate")::int as "activeDayCount",
           count(*)::int as "locationAssetCount",
-          array_remove((array_agg("originalPath" order by "localDateTime" desc))[1:5], null) as examples
+          array_remove((array_agg("originalPath" order by "localDateTime" desc))[1:5], null) as examples,
+          array_remove(array_agg(distinct "sourceDirectory"), null) as "sourceDirectories"
         from base
         where country is not null and city is not null
         group by country, state, city
@@ -726,7 +730,8 @@ export class AssetRepository {
           coalesce(sum("fileSizeInByte"), 0)::text as "totalFileSizeBytes",
           count(distinct "localDate")::int as "activeDayCount",
           count(*)::int as "locationAssetCount",
-          array_remove((array_agg("originalPath" order by "localDateTime" desc))[1:5], null) as examples
+          array_remove((array_agg("originalPath" order by "localDateTime" desc))[1:5], null) as examples,
+          array_remove(array_agg(distinct "sourceDirectory"), null) as "sourceDirectories"
         from base
         where country is not null and state is not null
         group by country, state
@@ -758,11 +763,93 @@ export class AssetRepository {
           coalesce(sum("fileSizeInByte"), 0)::text as "totalFileSizeBytes",
           count(distinct "localDate")::int as "activeDayCount",
           count(*)::int as "locationAssetCount",
-          array_remove((array_agg("originalPath" order by "localDateTime" desc))[1:5], null) as examples
+          array_remove((array_agg("originalPath" order by "localDateTime" desc))[1:5], null) as examples,
+          array_remove(array_agg(distinct "sourceDirectory"), null) as "sourceDirectories"
         from base
         where country is not null
         group by country
         having count(*) >= 12 and count(distinct "localDate") >= 2
+      ),
+      enriched as (
+        select
+          candidates.*,
+          review_assets."assetCount" as "reviewAssetCount",
+          review_assets."imageCount" as "reviewImageCount",
+          review_assets."videoCount" as "reviewVideoCount",
+          review_assets."favoriteCount" as "reviewFavoriteCount",
+          review_assets."archivedCount" as "reviewArchivedCount",
+          review_assets."editedCount" as "reviewEditedCount",
+          review_assets."externalCount" as "reviewExternalCount",
+          review_assets."gpsCount" as "reviewGpsCount",
+          review_assets."exifCount" as "reviewExifCount",
+          review_assets."fileSizeCount" as "reviewFileSizeCount",
+          review_assets."dimensionsCount" as "reviewDimensionsCount",
+          review_assets."cameraCount" as "reviewCameraCount",
+          review_assets."totalFileSizeBytes" as "reviewTotalFileSizeBytes",
+          review_assets."dateStartDay" as "reviewDateStartDay",
+          review_assets."dateEndDay" as "reviewDateEndDay",
+          review_assets."activeDayCount" as "reviewActiveDayCount",
+          review_assets."noLocationAssetCount",
+          review_assets."sourceFolderAssetCount",
+          review_assets.examples as "reviewExamples"
+        from candidates
+        cross join lateral (
+          select
+            count(*)::int as "assetCount",
+            count(*) filter (where review_asset.type = 'IMAGE')::int as "imageCount",
+            count(*) filter (where review_asset.type = 'VIDEO')::int as "videoCount",
+            count(*) filter (where review_asset."isFavorite")::int as "favoriteCount",
+            count(*) filter (where review_asset.visibility = 'archive')::int as "archivedCount",
+            count(*) filter (where review_asset."isEdited")::int as "editedCount",
+            count(*) filter (where review_asset."isExternal")::int as "externalCount",
+            count(*) filter (where review_asset.latitude is not null and review_asset.longitude is not null)::int as "gpsCount",
+            count(review_asset."exifAssetId")::int as "exifCount",
+            count(*) filter (where review_asset."fileSizeInByte" is not null)::int as "fileSizeCount",
+            count(*) filter (where review_asset.width is not null and review_asset.height is not null)::int as "dimensionsCount",
+            count(*) filter (where review_asset.make is not null or review_asset.model is not null)::int as "cameraCount",
+            coalesce(sum(review_asset."fileSizeInByte"), 0)::text as "totalFileSizeBytes",
+            min(review_asset."localDate") as "dateStartDay",
+            max(review_asset."localDate") as "dateEndDay",
+            count(distinct review_asset."localDate")::int as "activeDayCount",
+            count(*) filter (where review_asset.country is null and review_asset.state is null and review_asset.city is null)::int as "noLocationAssetCount",
+            count(*) filter (where review_asset."sourceDirectory" = any(candidates."sourceDirectories"))::int as "sourceFolderAssetCount",
+            array_remove((array_agg(review_asset."originalPath" order by review_asset."localDateTime" desc))[1:5], null) as examples
+          from base review_asset
+          where (
+            (
+              review_asset."localDate" >= candidates."dateStartDay"
+              and review_asset."localDate" <= candidates."dateEndDay"
+              and (
+                (
+                  candidates."eventKind" = 'place_country'
+                  and (
+                    review_asset.country = candidates.country
+                    or (review_asset.country is null and review_asset.state is null and review_asset.city is null)
+                  )
+                )
+                or (
+                  candidates."eventKind" = 'place_region'
+                  and (
+                    (review_asset.country = candidates.country and review_asset.state = candidates.state)
+                    or (review_asset.country is null and review_asset.state is null and review_asset.city is null)
+                  )
+                )
+                or (
+                  candidates."eventKind" = 'place_exact'
+                  and (
+                    (
+                      review_asset.country = candidates.country
+                      and review_asset.state is not distinct from candidates.state
+                      and review_asset.city = candidates.city
+                    )
+                    or (review_asset.country is null and review_asset.state is null and review_asset.city is null)
+                  )
+                )
+              )
+            )
+            or review_asset."sourceDirectory" = any(candidates."sourceDirectories")
+          )
+        ) review_assets
       )
       select
         jsonb_build_object(
@@ -778,39 +865,41 @@ export class AssetRepository {
         country,
         state,
         city,
-        "assetCount",
-        "imageCount",
-        "videoCount",
-        "favoriteCount",
-        "archivedCount",
-        "editedCount",
-        "externalCount",
-        "gpsCount",
-        "exifCount",
-        "fileSizeCount",
-        "dimensionsCount",
-        "cameraCount",
+        "reviewAssetCount" as "assetCount",
+        "reviewImageCount" as "imageCount",
+        "reviewVideoCount" as "videoCount",
+        "reviewFavoriteCount" as "favoriteCount",
+        "reviewArchivedCount" as "archivedCount",
+        "reviewEditedCount" as "editedCount",
+        "reviewExternalCount" as "externalCount",
+        "reviewGpsCount" as "gpsCount",
+        "reviewExifCount" as "exifCount",
+        "reviewFileSizeCount" as "fileSizeCount",
+        "reviewDimensionsCount" as "dimensionsCount",
+        "reviewCameraCount" as "cameraCount",
         "mobileAppMetadataCount",
-        ("dateStartDay"::timestamp)::text as "dateStart",
-        ("dateEndDay"::timestamp + interval '1 day' - interval '1 second')::text as "dateEnd",
-        "totalFileSizeBytes",
-        ("dateEndDay" - "dateStartDay" + 1)::int as "dateSpanDays",
-        "activeDayCount",
+        ("reviewDateStartDay"::timestamp)::text as "dateStart",
+        ("reviewDateEndDay"::timestamp + interval '1 day' - interval '1 second')::text as "dateEnd",
+        "reviewTotalFileSizeBytes" as "totalFileSizeBytes",
+        ("reviewDateEndDay" - "reviewDateStartDay" + 1)::int as "dateSpanDays",
+        "reviewActiveDayCount" as "activeDayCount",
         "locationAssetCount",
+        "noLocationAssetCount",
+        "sourceFolderAssetCount",
         round(
           least(
             0.99,
             0.45
               + least("activeDayCount", 14) * 0.025
-              + least("assetCount", 120) * 0.002
+              + least("reviewAssetCount", 120) * 0.002
               + case "eventKind" when 'place_region' then 0.12 when 'place_exact' then 0.08 else 0.04 end
           )::numeric,
           2
         )::float as confidence,
-        examples
-      from candidates
+        "reviewExamples" as examples
+      from enriched
       where ("dateEndDay" - "dateStartDay" + 1) between 2 and 45
-      order by confidence desc, "assetCount" desc, "dateStartDay" asc, label asc
+      order by confidence desc, "reviewAssetCount" desc, "dateStartDay" asc, label asc
       limit ${limit}
     `.execute(this.db);
 
@@ -972,13 +1061,31 @@ export class AssetRepository {
   }
 
   async getAssistantEventCohortAssetIds(ownerId: string, cohortKey: string, limit?: number) {
-    const conditions = this.getAssistantEventCohortConditions(ownerId, cohortKey);
+    const event = this.parseAssistantEventCohortKey(cohortKey);
+    const anchorConditions = this.getAssistantEventCohortAnchorConditions(ownerId, event);
+    const compatibleLocationCondition = this.getAssistantEventCompatibleLocationCondition(event);
     const limitClause = limit === undefined ? sql`` : sql`limit ${limit}`;
     const { rows } = await sql<{ id: string }>`
+      with source_directories as (
+        select distinct regexp_replace(a."originalPath", '/[^/]+$', '') as "sourceDirectory"
+        from asset a
+        left join asset_exif ae on ae."assetId" = a.id
+        where ${sql.join(anchorConditions, sql` and `)}
+      )
       select a.id
       from asset a
       left join asset_exif ae on ae."assetId" = a.id
-      where ${sql.join(conditions, sql` and `)}
+      where a."ownerId" = ${asUuid(ownerId)}
+        and a."deletedAt" is null
+        and a."localDateTime" is not null
+        and (
+          (
+            (a."localDateTime" at time zone 'UTC')::date >= ${event.dateStart}::date
+            and (a."localDateTime" at time zone 'UTC')::date <= ${event.dateEnd}::date
+            and ${compatibleLocationCondition}
+          )
+          or regexp_replace(a."originalPath", '/[^/]+$', '') in (select "sourceDirectory" from source_directories)
+        )
       order by a."localDateTime" asc, a."originalFileName" asc
       ${limitClause}
     `.execute(this.db);
@@ -1239,9 +1346,22 @@ export class AssetRepository {
 
   private getAssistantEventCohortConditions(ownerId: string, cohortKey: string): Array<RawBuilder<unknown>> {
     const event = this.parseAssistantEventCohortKey(cohortKey);
+    return [
+      sql`a."ownerId" = ${asUuid(ownerId)}`,
+      sql`a."deletedAt" is null`,
+      sql`a."localDateTime" is not null`,
+      this.getAssistantEventMaterializedCondition(ownerId, event),
+    ];
+  }
+
+  private getAssistantEventCohortAnchorConditions(
+    ownerId: string,
+    event: ReturnType<AssetRepository['parseAssistantEventCohortKey']>,
+  ): Array<RawBuilder<unknown>> {
     const conditions: Array<RawBuilder<unknown>> = [
       sql`a."ownerId" = ${asUuid(ownerId)}`,
       sql`a."deletedAt" is null`,
+      sql`a."localDateTime" is not null`,
       sql`(a."localDateTime" at time zone 'UTC')::date >= ${event.dateStart}::date`,
       sql`(a."localDateTime" at time zone 'UTC')::date <= ${event.dateEnd}::date`,
     ];
@@ -1265,6 +1385,67 @@ export class AssetRepository {
     }
 
     return conditions;
+  }
+
+  private getAssistantEventMaterializedCondition(
+    ownerId: string,
+    event: ReturnType<AssetRepository['parseAssistantEventCohortKey']>,
+  ) {
+    return sql`
+      (
+        (
+          (a."localDateTime" at time zone 'UTC')::date >= ${event.dateStart}::date
+          and (a."localDateTime" at time zone 'UTC')::date <= ${event.dateEnd}::date
+          and ${this.getAssistantEventCompatibleLocationCondition(event)}
+        )
+        or regexp_replace(a."originalPath", '/[^/]+$', '') in (
+          select distinct regexp_replace(anchor_asset."originalPath", '/[^/]+$', '')
+          from asset anchor_asset
+          left join asset_exif anchor_exif on anchor_exif."assetId" = anchor_asset.id
+          where anchor_asset."ownerId" = ${asUuid(ownerId)}
+            and anchor_asset."deletedAt" is null
+            and anchor_asset."localDateTime" is not null
+            and (anchor_asset."localDateTime" at time zone 'UTC')::date >= ${event.dateStart}::date
+            and (anchor_asset."localDateTime" at time zone 'UTC')::date <= ${event.dateEnd}::date
+            and ${this.getAssistantEventAnchorLocationCondition(event, 'anchor_exif')}
+        )
+      )
+    `;
+  }
+
+  private getAssistantEventCompatibleLocationCondition(
+    event: ReturnType<AssetRepository['parseAssistantEventCohortKey']>,
+  ) {
+    const noVisibleLocation = sql`nullif(ae.country, '') is null and nullif(ae.state, '') is null and nullif(ae.city, '') is null`;
+
+    switch (event.kind) {
+      case 'place_country': {
+        return sql`(nullif(ae.country, '') = ${event.country} or (${noVisibleLocation}))`;
+      }
+      case 'place_region': {
+        return sql`((nullif(ae.country, '') = ${event.country} and nullif(ae.state, '') = ${event.state}) or (${noVisibleLocation}))`;
+      }
+      case 'place_exact': {
+        return sql`((nullif(ae.country, '') = ${event.country} and nullif(ae.state, '') is not distinct from ${event.state} and nullif(ae.city, '') = ${event.city}) or (${noVisibleLocation}))`;
+      }
+    }
+  }
+
+  private getAssistantEventAnchorLocationCondition(
+    event: ReturnType<AssetRepository['parseAssistantEventCohortKey']>,
+    exifAlias: string,
+  ) {
+    switch (event.kind) {
+      case 'place_country': {
+        return sql`nullif(${sql.ref(`${exifAlias}.country`)}, '') = ${event.country}`;
+      }
+      case 'place_region': {
+        return sql`nullif(${sql.ref(`${exifAlias}.country`)}, '') = ${event.country} and nullif(${sql.ref(`${exifAlias}.state`)}, '') = ${event.state}`;
+      }
+      case 'place_exact': {
+        return sql`nullif(${sql.ref(`${exifAlias}.country`)}, '') = ${event.country} and nullif(${sql.ref(`${exifAlias}.state`)}, '') is not distinct from ${event.state} and nullif(${sql.ref(`${exifAlias}.city`)}, '') = ${event.city}`;
+      }
+    }
   }
 
   private parseAssistantEventCohortKey(cohortKey: string): {

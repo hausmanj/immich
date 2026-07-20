@@ -251,15 +251,29 @@
     return action.albumName?.trim() || action.title.trim() || 'Assistant review album';
   };
 
-  const canCreateReviewAlbum = (action: AssistantAction) => {
+  const isStaleActionMessage = (messageIndex: number) => {
+    return messages.slice(messageIndex + 1).some((message) => message.role === 'user');
+  };
+
+  const hasExecutableAction = (action: AssistantAction) => {
     return (
+      !!action.toolType ||
+      (action.type !== 'search' &&
+        action.type !== 'folder_plan' &&
+        (action.assetIds.length > 0 || !!(action.cohortType && action.cohortKey)))
+    );
+  };
+
+  const canCreateReviewAlbum = (action: AssistantAction, messageIndex: number) => {
+    return (
+      !isStaleActionMessage(messageIndex) &&
       action.type !== 'search' &&
       action.type !== 'folder_plan' &&
       (action.assetIds.length > 0 || !!(action.cohortType && action.cohortKey))
     );
   };
 
-  const canRunTool = (action: AssistantAction) => !!action.toolType;
+  const canRunTool = (action: AssistantAction, messageIndex: number) => !!action.toolType && !isStaleActionMessage(messageIndex);
 
   const getRunToolLabel = (action: AssistantAction) => {
     switch (action.toolType) {
@@ -825,7 +839,7 @@
                             <Icon icon={mdiArrowRight} size="16" />
                           </a>
                         {/if}
-                        {#if canCreateReviewAlbum(action)}
+                        {#if canCreateReviewAlbum(action, messageIndex)}
                           <Button
                             type="button"
                             size="small"
@@ -838,7 +852,7 @@
                             </div>
                           </Button>
                         {/if}
-                        {#if canRunTool(action)}
+                        {#if canRunTool(action, messageIndex)}
                           <Button
                             type="button"
                             size="small"
@@ -850,6 +864,9 @@
                               {runningToolActionKey === actionKey ? 'Running...' : getRunToolLabel(action)}
                             </div>
                           </Button>
+                        {/if}
+                        {#if isStaleActionMessage(messageIndex) && hasExecutableAction(action)}
+                          <span class="text-xs text-gray-500">Outdated action</span>
                         {/if}
                       </div>
                     </div>

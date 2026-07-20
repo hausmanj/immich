@@ -127,6 +127,13 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - the returned action carried `cohortType='event'` and an event JSON `cohortKey`;
   - `POST /assistant/review-album` materialized that event key into a temporary 164-asset review album;
   - `POST /assistant/undo` deleted the temporary event review album without deleting source assets.
+- Bora Bora/French Polynesia event follow-up:
+  - Root cause: event review album materialization was too GPS/place-literal, so the French Polynesia action created a 164-asset GPS/place-backed album and omitted no-location same-trip photos.
+  - Changed event cohort logic so `assetCount` is the materialized review cohort, not just the GPS/place anchor count.
+  - Event materialization now includes compatible no-location assets in the event date span plus assets from source folders anchored by GPS/place evidence.
+  - Direct database verification for `French Polynesia / Leeward Islands` produced a 551-asset review cohort: 164 GPS/place anchors, 387 no-location support assets, source folders from Oct 15, Oct 16, Oct 17, Oct 18, and Oct 19, and source-folder date carryover through 2012-10-20.
+  - Adjacent 2012-10-21 has 11 no-location assets in its own source folder; keep it as a separate review candidate unless later evidence ties it into the trip.
+  - Assistant UI action buttons now become stale after a newer user message, preventing old action cards from creating unrelated albums after the user has shifted context.
 - Full `sidecar_pair_audit` over `/external/desktop-icloud-originals` completed:
   - `directoriesScanned=56`;
   - `sidecarFileCount=0`;
