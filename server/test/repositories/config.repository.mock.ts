@@ -51,6 +51,15 @@ export const envData: EnvData = {
     trustedProxies: [],
   },
 
+  llm: {
+    openai: {
+      model: 'gpt-5.6-luna',
+    },
+    anthropic: {
+      model: 'claude-sonnet-5',
+    },
+  },
+
   otel: {
     metrics: {
       hostMetrics: false,
@@ -77,6 +86,7 @@ export const envData: EnvData = {
       indexHtml: '/build/www/index.html',
     },
     corePlugin: '/build/plugins/immich-plugin-core',
+    corePlugins: ['/build/plugins/immich-plugin-core', '/build/plugins/immich-plugin-llm'],
   },
 
   setup: {

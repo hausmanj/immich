@@ -17,6 +17,11 @@ const resetEnv = () => {
     'IMMICH_API_METRICS_PORT',
     'IMMICH_MEDIA_LOCATION',
     'IMMICH_MICROSERVICES_METRICS_PORT',
+    'IMMICH_LLM_PROVIDER',
+    'IMMICH_LLM_OPENAI_API_KEY',
+    'IMMICH_LLM_OPENAI_MODEL',
+    'IMMICH_LLM_ANTHROPIC_API_KEY',
+    'IMMICH_LLM_ANTHROPIC_MODEL',
     'IMMICH_TELEMETRY_INCLUDE',
     'IMMICH_TELEMETRY_EXCLUDE',
 
@@ -279,6 +284,49 @@ describe('getEnv', () => {
     it('should reject invalid trusted proxies', () => {
       process.env.IMMICH_TRUSTED_PROXIES = '10.1';
       expect(() => getEnv()).toThrow('[IMMICH_TRUSTED_PROXIES] Must be an ip address or ip address range');
+    });
+  });
+
+  describe('llm', () => {
+    it('should use defaults without API keys', () => {
+      const { llm } = getEnv();
+      expect(llm).toEqual({
+        provider: undefined,
+        openai: {
+          apiKey: undefined,
+          model: 'gpt-5.6-luna',
+        },
+        anthropic: {
+          apiKey: undefined,
+          model: 'claude-sonnet-5',
+        },
+      });
+    });
+
+    it('should parse provider API keys and model overrides', () => {
+      process.env.IMMICH_LLM_PROVIDER = 'anthropic';
+      process.env.IMMICH_LLM_OPENAI_API_KEY = 'openai-key';
+      process.env.IMMICH_LLM_OPENAI_MODEL = 'gpt-test';
+      process.env.IMMICH_LLM_ANTHROPIC_API_KEY = 'anthropic-key';
+      process.env.IMMICH_LLM_ANTHROPIC_MODEL = 'claude-test';
+
+      const { llm } = getEnv();
+      expect(llm).toEqual({
+        provider: 'anthropic',
+        openai: {
+          apiKey: 'openai-key',
+          model: 'gpt-test',
+        },
+        anthropic: {
+          apiKey: 'anthropic-key',
+          model: 'claude-test',
+        },
+      });
+    });
+
+    it('should reject invalid providers', () => {
+      process.env.IMMICH_LLM_PROVIDER = 'local';
+      expect(() => getEnv()).toThrowError('[IMMICH_LLM_PROVIDER] Invalid option: expected one of');
     });
   });
 

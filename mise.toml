@@ -3,6 +3,7 @@ experimental_monorepo_root = true
 [monorepo]
 config_roots = [
   "packages/plugin-core",
+  "packages/plugin-llm",
   "server",
   "packages/cli",
   "deployment",
@@ -49,8 +50,8 @@ run = [
 
 [tasks.plugins]
 run = [
-  "pnpm --filter @immich/sdk --filter @immich/plugin-sdk --filter @immich/plugin-core install --frozen-lockfile",
-  "pnpm --filter @immich/sdk --filter @immich/plugin-sdk --filter @immich/plugin-core build",
+  "pnpm --filter @immich/sdk --filter @immich/plugin-sdk --filter @immich/plugin-core --filter @immich/plugin-llm install --frozen-lockfile",
+  "pnpm --filter @immich/sdk --filter @immich/plugin-sdk --filter @immich/plugin-core --filter @immich/plugin-llm build",
 ]
 
 [tasks.open-api-typescript]

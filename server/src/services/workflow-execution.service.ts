@@ -14,12 +14,14 @@ import { BulkIdsDto } from 'src/dtos/asset-ids.response.dto';
 import { AuthDto } from 'src/dtos/auth.dto';
 import { PluginManifestDto } from 'src/dtos/plugin-manifest.dto';
 import {
+  AssetFileType,
   BootstrapEventPriority,
   DatabaseLock,
   ImmichEnvironment,
   ImmichWorker,
   JobName,
   JobStatus,
+  Permission,
   QueueName,
   WorkflowType,
 } from 'src/enum';
@@ -28,6 +30,7 @@ import { AlbumService } from 'src/services/album.service';
 import { AssetService } from 'src/services/asset.service';
 import { BaseService } from 'src/services/base.service';
 import { JobOf } from 'src/types';
+import { mimeTypes } from 'src/utils/mime-types';
 
 const dummy = () => {
   throw new Error(
@@ -46,6 +49,56 @@ type HostContext = {
   allowedHosts: string[];
 };
 
+type LlmProvider = 'openai' | 'anthropic';
+type AssetMediaVariant = 'thumbnail' | 'preview';
+
+type GetAssetPreviewDataUrlRequest = {
+  assetId: string;
+  variant?: AssetMediaVariant;
+  edited?: boolean;
+  maxBytes?: number;
+};
+
+type GetAssetPreviewDataUrlResponse = {
+  assetId: string;
+  variant: AssetMediaVariant;
+  mimeType: string;
+  bytes: number;
+  dataUrl: string;
+};
+
+type AnalyzeAssetWithLlmRequest = {
+  assetId: string;
+  provider?: LlmProvider;
+  model?: string;
+  prompt: string;
+  schema?: Record<string, unknown>;
+  variant?: AssetMediaVariant;
+  edited?: boolean;
+  maxBytes?: number;
+  maxOutputTokens?: number;
+  store?: boolean;
+};
+
+type AnalyzeAssetWithLlmResponse = {
+  status: 'success' | 'disabled' | 'error';
+  provider?: LlmProvider;
+  model?: string;
+  output?: unknown;
+  rawText?: string;
+  error?: string;
+  media?: {
+    variant: AssetMediaVariant;
+    mimeType: string;
+    bytes: number;
+  };
+};
+
+type WorkflowAuditLogRequest = {
+  message: string;
+  data?: Record<string, unknown>;
+};
+
 export class WorkflowExecutionService extends BaseService {
   private jwtSecret!: string;
 
@@ -56,7 +109,10 @@ export class WorkflowExecutionService extends BaseService {
       // Can this use system metadata similar to geocoding?
 
       const { environment, resourcePaths, plugins } = this.configRepository.getEnv();
-      await this.importFolder(resourcePaths.corePlugin, { force: environment === ImmichEnvironment.Development });
+      const corePlugins = [...new Set([resourcePaths.corePlugin, ...(resourcePaths.corePlugins ?? [])])];
+      for (const folder of corePlugins) {
+        await this.importFolder(folder, { force: environment === ImmichEnvironment.Development });
+      }
 
       if (plugins.external.allow && plugins.external.installFolder) {
         await this.importFolders(plugins.external.installFolder);
@@ -77,6 +133,15 @@ export class WorkflowExecutionService extends BaseService {
     );
     const addAssetsToAlbums = this.wrap<[dto: AlbumsAddAssetsDto]>((authDto, ctx, args) =>
       albumService.addAssetsToAlbums(authDto, ...args),
+    );
+    const getAssetPreviewDataUrl = this.wrap<[dto: GetAssetPreviewDataUrlRequest]>((authDto, ctx, args) =>
+      this.getAssetPreviewDataUrl(authDto, args[0]),
+    );
+    const analyzeAssetWithLlm = this.wrap<[dto: AnalyzeAssetWithLlmRequest]>((authDto, ctx, args) =>
+      this.analyzeAssetWithLlm(authDto, args[0]),
+    );
+    const writeWorkflowAuditLog = this.wrap<[dto: WorkflowAuditLogRequest]>((authDto, ctx, args) =>
+      this.writeWorkflowAuditLog(authDto, args[0]),
     );
     const httpRequest = this.wrap<
       [
@@ -111,6 +176,9 @@ export class WorkflowExecutionService extends BaseService {
       createAlbum,
       addAssetsToAlbum,
       addAssetsToAlbums,
+      getAssetPreviewDataUrl,
+      analyzeAssetWithLlm,
+      writeWorkflowAuditLog,
       httpRequest,
     };
 
@@ -119,6 +187,9 @@ export class WorkflowExecutionService extends BaseService {
       createAlbum: dummy,
       addAssetsToAlbum: dummy,
       addAssetsToAlbums: dummy,
+      getAssetPreviewDataUrl: dummy,
+      analyzeAssetWithLlm: dummy,
+      writeWorkflowAuditLog: dummy,
       httpRequest: dummy,
     };
 
@@ -292,6 +363,263 @@ export class WorkflowExecutionService extends BaseService {
     return this.cryptoRepository.signJwt({ userId }, this.jwtSecret);
   }
 
+  private async getAssetPreviewDataUrl(
+    auth: AuthDto,
+    { assetId, variant = 'preview', edited = false, maxBytes = 5 * 1024 * 1024 }: GetAssetPreviewDataUrlRequest,
+  ): Promise<GetAssetPreviewDataUrlResponse> {
+    await this.requireAccess({ auth, permission: Permission.AssetView, ids: [assetId] });
+
+    if (variant !== 'thumbnail' && variant !== 'preview') {
+      throw new Error(`Invalid asset media variant: ${variant}`);
+    }
+
+    const size = variant === 'thumbnail' ? AssetFileType.Thumbnail : AssetFileType.Preview;
+    const { path } = await this.assetRepository.getForThumbnail(assetId, size, edited);
+    if (!path) {
+      throw new Error(`Asset ${assetId} has no ${variant} media available`);
+    }
+
+    const stats = await this.storageRepository.stat(path);
+    if (stats.size > maxBytes) {
+      throw new Error(`Asset ${assetId} ${variant} is ${stats.size} bytes, larger than maxBytes=${maxBytes}`);
+    }
+
+    const bytes = await this.storageRepository.readFile(path);
+    const mimeType = mimeTypes.lookup(path) || 'application/octet-stream';
+
+    return {
+      assetId,
+      variant,
+      mimeType,
+      bytes: bytes.length,
+      dataUrl: `data:${mimeType};base64,${bytes.toString('base64')}`,
+    };
+  }
+
+  private getLlmProvider(requested?: LlmProvider) {
+    const { llm } = this.configRepository.getEnv();
+    const provider =
+      requested ?? llm.provider ?? (llm.openai.apiKey ? 'openai' : llm.anthropic.apiKey ? 'anthropic' : undefined);
+    if (!provider || (provider !== 'openai' && provider !== 'anthropic')) {
+      return;
+    }
+
+    const config = llm[provider];
+    if (!config.apiKey) {
+      return;
+    }
+
+    return { provider, apiKey: config.apiKey, model: config.model };
+  }
+
+  private async analyzeAssetWithLlm(
+    auth: AuthDto,
+    request: AnalyzeAssetWithLlmRequest,
+  ): Promise<AnalyzeAssetWithLlmResponse> {
+    const providerConfig = this.getLlmProvider(request.provider);
+    if (!providerConfig) {
+      this.logger.warn(`LLM asset analysis disabled or missing API key for asset ${request.assetId}`);
+      return { status: 'disabled' };
+    }
+
+    try {
+      const media = await this.getAssetPreviewDataUrl(auth, request);
+      const model = request.model ?? providerConfig.model;
+      const result =
+        providerConfig.provider === 'openai'
+          ? await this.callOpenAi({ ...request, dataUrl: media.dataUrl, model, apiKey: providerConfig.apiKey })
+          : await this.callAnthropic({
+              ...request,
+              base64: media.dataUrl.split(',', 2)[1] ?? '',
+              mimeType: media.mimeType,
+              model,
+              apiKey: providerConfig.apiKey,
+            });
+
+      this.logger.log(
+        `LLM asset analysis completed assetId=${request.assetId} provider=${providerConfig.provider} model=${model} media=${media.variant} bytes=${media.bytes}`,
+      );
+
+      return {
+        status: 'success',
+        provider: providerConfig.provider,
+        model,
+        ...result,
+        media: {
+          variant: media.variant,
+          mimeType: media.mimeType,
+          bytes: media.bytes,
+        },
+      };
+    } catch (error: Error | any) {
+      this.logger.warn(`LLM asset analysis failed assetId=${request.assetId}: ${error?.message ?? error}`);
+      return {
+        status: 'error',
+        provider: providerConfig.provider,
+        model: request.model ?? providerConfig.model,
+        error: String(error?.message ?? error),
+      };
+    }
+  }
+
+  private async callOpenAi({
+    apiKey,
+    model,
+    prompt,
+    dataUrl,
+    schema,
+    maxOutputTokens = 1024,
+    store = false,
+  }: AnalyzeAssetWithLlmRequest & { apiKey: string; model: string; dataUrl: string }) {
+    const body: Record<string, unknown> = {
+      model,
+      input: [
+        {
+          role: 'user',
+          content: [
+            { type: 'input_text', text: prompt },
+            { type: 'input_image', image_url: dataUrl, detail: 'low' },
+          ],
+        },
+      ],
+      max_output_tokens: maxOutputTokens,
+      store,
+    };
+
+    if (schema) {
+      body.text = {
+        format: {
+          type: 'json_schema',
+          name: 'immich_asset_analysis',
+          strict: true,
+          schema,
+        },
+      };
+    }
+
+    const response = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+
+    return this.readLlmResponse(response, (payload) => {
+      const text = this.findOpenAiOutputText(payload);
+      return { rawText: text, output: this.parseJsonOrText(text) };
+    });
+  }
+
+  private async callAnthropic({
+    apiKey,
+    model,
+    prompt,
+    base64,
+    mimeType,
+    schema,
+    maxOutputTokens = 1024,
+  }: AnalyzeAssetWithLlmRequest & { apiKey: string; model: string; base64: string; mimeType: string }) {
+    const body: Record<string, unknown> = {
+      model,
+      max_tokens: maxOutputTokens,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: prompt },
+            { type: 'image', source: { type: 'base64', media_type: mimeType, data: base64 } },
+          ],
+        },
+      ],
+    };
+
+    if (schema) {
+      body.tools = [
+        {
+          name: 'immich_asset_analysis',
+          description: 'Return structured analysis for an Immich asset.',
+          input_schema: schema,
+        },
+      ];
+      body.tool_choice = { type: 'tool', name: 'immich_asset_analysis' };
+    }
+
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+
+    return this.readLlmResponse(response, (payload) => {
+      const toolUse = Array.isArray(payload.content)
+        ? payload.content.find((item: any) => item?.type === 'tool_use' && item?.name === 'immich_asset_analysis')
+        : undefined;
+      if (toolUse?.input && typeof toolUse.input === 'object') {
+        return { rawText: JSON.stringify(toolUse.input), output: toolUse.input };
+      }
+
+      const text = Array.isArray(payload.content)
+        ? payload.content
+            .filter((item: any) => item?.type === 'text' && typeof item.text === 'string')
+            .map((item: any) => item.text)
+            .join('\n')
+        : '';
+      return { rawText: text, output: this.parseJsonOrText(text) };
+    });
+  }
+
+  private async readLlmResponse<T>(response: Response, parse: (payload: any) => T): Promise<T> {
+    const text = await response.text();
+    let payload: any;
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      payload = { error: text };
+    }
+
+    if (!response.ok) {
+      throw new Error(`Provider request failed with ${response.status}: ${JSON.stringify(payload)}`);
+    }
+    return parse(payload);
+  }
+
+  private findOpenAiOutputText(payload: any): string {
+    if (typeof payload.output_text === 'string') {
+      return payload.output_text;
+    }
+
+    const chunks: string[] = [];
+    for (const item of payload.output ?? []) {
+      for (const content of item.content ?? []) {
+        if (content.type === 'output_text' && typeof content.text === 'string') {
+          chunks.push(content.text);
+        }
+      }
+    }
+    return chunks.join('\n');
+  }
+
+  private parseJsonOrText(text: string): unknown {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return text;
+    }
+  }
+
+  private async writeWorkflowAuditLog(auth: AuthDto, entry: WorkflowAuditLogRequest) {
+    this.logger.log(
+      `Workflow plugin audit userId=${auth.user.id} message=${entry.message} data=${JSON.stringify(entry.data ?? {})}`,
+    );
+    return { ok: true };
+  }
+
   @OnEvent({ name: 'AssetCreate' })
   onAssetCreate({ asset: { ownerId: userId, id: assetId } }: ArgOf<'AssetCreate'>) {
     return this.onAssetTrigger({ userId, assetId, trigger: WorkflowTrigger.AssetCreate });
@@ -445,6 +773,10 @@ export class WorkflowExecutionService extends BaseService {
             result.changes,
           );
           ({ data } = await read(type));
+        }
+
+        if (result?.data) {
+          data = { ...(data as Record<string, unknown>), ...result.data } as WorkflowEventData<T>;
         }
 
         if (result?.config) {

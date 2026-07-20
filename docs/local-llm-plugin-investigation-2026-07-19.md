@@ -195,6 +195,45 @@ Start with Option 2 plus the server-side parts of Option 3:
 
 This preserves the existing workflow/plugin design while adding the one capability plugins currently lack: controlled access to asset visual content.
 
+## Implemented Local Prototype
+
+Commit-in-progress implementation follows the recommended Option 2 plus the server-managed parts of Option 3.
+
+Added:
+
+- `packages/plugin-llm`
+- server host function `getAssetPreviewDataUrl`
+- server host function `analyzeAssetWithLlm`
+- server host function `writeWorkflowAuditLog`
+- OpenAI Responses API adapter
+- Anthropic Messages API adapter
+- built-in plugin import list for `immich-plugin-core` and `immich-plugin-llm`
+- plugin SDK host-function bindings for the new functions
+
+Configuration is environment-variable based for the local prototype:
+
+- `IMMICH_LLM_PROVIDER=openai|anthropic`
+- `IMMICH_LLM_OPENAI_API_KEY`
+- `IMMICH_LLM_OPENAI_MODEL`
+- `IMMICH_LLM_ANTHROPIC_API_KEY`
+- `IMMICH_LLM_ANTHROPIC_MODEL`
+
+The first plugin method is `assetSuggestDescription`. It runs from the `AssetMetadataExtraction` workflow trigger, sends the generated preview image plus selected asset metadata to the server-managed provider adapter, asks for strict JSON with `description`, `tags`, and `confidence`, and logs every decision with asset id, filename, `isEdited`, provider/model result, and dry-run status.
+
+The workflow template defaults to:
+
+- dry run enabled
+- only process assets whose description is empty
+- use preview media, not originals
+- no content deletion or upload skipping
+
+Failure behavior:
+
+- missing API key returns `status: disabled`
+- provider/media errors return `status: error`
+- the plugin writes an audit log entry and returns no asset mutation
+- the workflow does not randomly skip or delete source content
+
 ## Relationship To iPhone Original Upload Work
 
 The original-file iPhone upload problem should stay in the mobile/native upload path. An LLM plugin should not decide whether to skip edited/original assets during upload.
@@ -252,4 +291,3 @@ Minimal production-minded prototype:
    - default: dry run or only update empty descriptions
 5. Add workflow execution tests for success, provider failure, disabled/no-key behavior, and no-skip fallback.
 6. Add web UI copy only if needed by existing workflow schema rendering; otherwise use JSON-schema config first.
-
