@@ -17,7 +17,7 @@ const AssistantChatRequestSchema = z
   })
   .meta({ id: 'AssistantChatRequestDto' });
 
-const AssistantCohortTypeSchema = z.enum(['source_path', 'date', 'camera', 'location']);
+const AssistantCohortTypeSchema = z.enum(['source_path', 'date', 'camera', 'location', 'event']);
 
 const AssistantToolTypeSchema = z.enum([
   'content_hash_audit',

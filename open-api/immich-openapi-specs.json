@@ -18519,6 +18519,7 @@
               "date",
               "camera",
               "location",
+              "event",
               null
             ],
             "nullable": true,
@@ -19138,6 +19139,7 @@
               "date",
               "camera",
               "location",
+              "event",
               null
             ],
             "nullable": true,
@@ -19213,6 +19215,7 @@
               "date",
               "camera",
               "location",
+              "event",
               null
             ],
             "nullable": true,

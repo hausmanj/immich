@@ -17,7 +17,7 @@
     query: string | null;
     albumName: string | null;
     assetIds: string[];
-    cohortType?: 'source_path' | 'date' | 'camera' | 'location' | null;
+    cohortType?: 'source_path' | 'date' | 'camera' | 'location' | 'event' | null;
     cohortKey?: string | null;
     toolType?: 'content_hash_audit' | 'sidecar_pair_audit' | 'metadata_search' | 'mobile_original_compare' | null;
     toolInput?: Record<string, unknown> | null;

@@ -52,6 +52,8 @@ This file tracks local-only changes in this checkout that have not necessarily b
 - Added server-side assistant search/identification audits that run before each chat response.
   - Full-library audit summary: image/video/favorite/archive/edited/external counts, EXIF/GPS/file-size/dimension/camera/mobile-app metadata coverage, date span, total file size, and checksum-algorithm counts.
   - Cohort identification: source folder, capture date, camera make/model, location, checksum algorithm, exact content-checksum duplicate candidates, matching file-trait duplicate candidates, video codec/format/pixel-format cohorts, and mobile original-upload metadata cohorts.
+  - Follow-up change: added deterministic `event` cohorts for multi-day exact-place, region, and country trip candidates. Event cohorts include date span, active-day count, location-backed asset count, confidence, examples, and actionable `cohortType='event'`/`cohortKey` values.
+  - The assistant prompt now prefers event cohorts for multi-day trips and same-location travel, and treats daily date cohorts as fallback review units rather than default trip boundaries.
   - External-library checksum semantics are now explicit: `sha1-path` is path identity, not byte-level file integrity; only `sha1` is content-checksum evidence.
 - Added read-only executable assistant tools at `POST /assistant/tool`.
   - `metadata_search` performs owner-scoped deterministic SQL searches with filters for cohort, path, filename, extension, media type, date range, camera, location, missing GPS, unknown camera, mobile metadata, and checksum algorithm.
@@ -119,6 +121,11 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - `POST /assistant/undo` restored the test asset to `isFavorite=false` and `visibility=timeline` and updated the journal to `status=undone`.
   - `stack_change` create stacked two test assets and wrote `/data/assistant-audits/change-journal/2026-07-20T12-18-10-100Z-stack_change-750bc028-9ef2-4f11-9d93-62050d62f333.json`;
   - `POST /assistant/undo` deleted the created stack and verified both test assets were restored to `stackId=null`.
+- Event/trip cohort runtime probe:
+  - Assistant chat identified `French Polynesia / Leeward Islands` from 2012-10-15 through 2012-10-19 as one multi-day event cohort with 164 assets instead of proposing daily albums;
+  - the returned action carried `cohortType='event'` and an event JSON `cohortKey`;
+  - `POST /assistant/review-album` materialized that event key into a temporary 164-asset review album;
+  - `POST /assistant/undo` deleted the temporary event review album without deleting source assets.
 - Full `sidecar_pair_audit` over `/external/desktop-icloud-originals` completed:
   - `directoriesScanned=56`;
   - `sidecarFileCount=0`;
