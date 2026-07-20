@@ -52,6 +52,7 @@
   - The web/chat payload may omit inline row-level results when the audit log is written, but the log file must contain the complete result/error arrays and the response must report the full `resultCount`, `errorCount`, and `logFilePath`.
   - Assistant action cards can now include `toolType`/`toolInput`; the web UI shows a read-only audit/search button and appends tool results back into the chat.
   - Inline assistant tool results should stay human-readable. The web formatter groups sidecar/variant results and summarizes asset rows by filename, size, dimensions, timestamp, camera/edited flags, and source path instead of dumping raw JSON.
+  - The Assistant web page persists conversation workflow state in browser localStorage key `immich-assistant-conversation-v1`, including messages, action cards, provider, prompt draft, and assessment. Creating a review album appends the album ID and change-journal path to the chat before navigating away.
 - Relevant notes:
   - `mobile/ios/unedited-original-upload-investigation.md`
   - `mobile/ios/open-pr-triage-2026-07-19.md`

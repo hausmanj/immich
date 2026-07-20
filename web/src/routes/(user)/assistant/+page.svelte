@@ -1,9 +1,11 @@
 <script lang="ts">
+  import { browser } from '$app/environment';
   import UserPageLayout from '$lib/components/layouts/UserPageLayout.svelte';
   import { Route } from '$lib/route';
   import { goto } from '$app/navigation';
   import { Button, Icon, Textarea, toastManager } from '@immich/ui';
-  import { mdiArrowRight, mdiMagnify, mdiPlusBoxOutline, mdiRobotOutline, mdiSend } from '@mdi/js';
+  import { mdiArrowRight, mdiMagnify, mdiPlusBoxOutline, mdiRobotOutline, mdiSend, mdiTrashCanOutline } from '@mdi/js';
+  import { onMount } from 'svelte';
   import type { PageData } from './$types';
 
   type AssistantProvider = 'auto' | 'claude-cli' | 'codex-cli' | 'openai' | 'anthropic';
@@ -26,6 +28,15 @@
     role: 'user' | 'assistant';
     content: string;
     actions?: AssistantAction[];
+  };
+
+  type AssistantPersistedState = {
+    version: 1;
+    updatedAt: string;
+    provider: AssistantProvider;
+    prompt: string;
+    messages: ChatMessage[];
+    assessment: Assessment | null;
   };
 
   type AssistantResponse = {
@@ -105,6 +116,7 @@
   let applyingActionKey = $state<string | null>(null);
   let runningToolActionKey = $state<string | null>(null);
   let assessment = $state<Assessment | null>(null);
+  let assistantStateLoaded = $state(false);
   let messages = $state<ChatMessage[]>([
     {
       role: 'assistant',
@@ -128,6 +140,85 @@
     { value: 'claude-cli', label: 'Claude' },
     { value: 'codex-cli', label: 'Codex' },
   ];
+
+  const assistantStateStorageKey = 'immich-assistant-conversation-v1';
+  const assistantStateVersion = 1;
+  const assistantStateMaxMessages = 80;
+
+  onMount(() => {
+    loadAssistantState();
+    assistantStateLoaded = true;
+  });
+
+  $effect(() => {
+    if (!assistantStateLoaded) {
+      return;
+    }
+
+    saveAssistantState();
+  });
+
+  const loadAssistantState = () => {
+    if (!browser) {
+      return;
+    }
+
+    try {
+      const raw = localStorage.getItem(assistantStateStorageKey);
+      if (!raw) {
+        return;
+      }
+
+      const state = JSON.parse(raw) as AssistantPersistedState;
+      if (state.version !== assistantStateVersion || !Array.isArray(state.messages)) {
+        return;
+      }
+
+      provider = providerOptions.some((option) => option.value === state.provider) ? state.provider : 'auto';
+      prompt = typeof state.prompt === 'string' ? state.prompt : '';
+      messages = state.messages.length > 0 ? state.messages : messages;
+      assessment = state.assessment ?? null;
+    } catch {
+      localStorage.removeItem(assistantStateStorageKey);
+    }
+  };
+
+  const saveAssistantState = () => {
+    if (!browser) {
+      return;
+    }
+
+    const state: AssistantPersistedState = {
+      version: assistantStateVersion,
+      updatedAt: new Date().toISOString(),
+      provider,
+      prompt,
+      messages: messages.slice(-assistantStateMaxMessages),
+      assessment,
+    };
+
+    try {
+      localStorage.setItem(assistantStateStorageKey, JSON.stringify(state));
+    } catch {
+      toastManager.warning('Assistant conversation could not be saved in this browser.');
+    }
+  };
+
+  const clearAssistantState = () => {
+    messages = [
+      {
+        role: 'assistant',
+        content:
+          'Ask me how to organize this library. I can assess metadata and propose review-first organization plans.',
+        actions: [],
+      },
+    ];
+    prompt = '';
+    assessment = null;
+    if (browser) {
+      localStorage.removeItem(assistantStateStorageKey);
+    }
+  };
 
   const getSearchHref = (action: AssistantAction) => {
     if (!action.query) {
@@ -213,6 +304,22 @@
       if (result.changeLogFilePath) {
         toastManager.info(`Assistant change journal: ${result.changeLogFilePath}`);
       }
+      messages = [
+        ...messages,
+        {
+          role: 'assistant',
+          content: [
+            `Created review album "${result.albumName}" with ${formatNumber(result.assetCount)} assets.`,
+            `Album ID: ${result.albumId}`,
+            `Change journal: ${result.changeLogFilePath}`,
+            result.undoAvailable ? `Undo action: ${result.undoAction}` : '',
+          ]
+            .filter(Boolean)
+            .join('\n'),
+          actions: [],
+        },
+      ];
+      saveAssistantState();
       await goto(Route.viewAlbum({ id: result.albumId }));
     } catch (error) {
       toastManager.danger(error instanceof Error ? error.message : String(error));
@@ -771,12 +878,20 @@
             {/each}
           </select>
         </label>
-        <Button type="button" onclick={() => void send()} disabled={loading || !prompt.trim()}>
-          <div class="flex items-center gap-2">
-            <Icon icon={mdiSend} size="16" />
-            Send
-          </div>
-        </Button>
+        <div class="flex items-center gap-2">
+          <Button type="button" color="secondary" variant="outline" onclick={clearAssistantState} disabled={loading}>
+            <div class="flex items-center gap-2">
+              <Icon icon={mdiTrashCanOutline} size="16" />
+              Clear
+            </div>
+          </Button>
+          <Button type="button" onclick={() => void send()} disabled={loading || !prompt.trim()}>
+            <div class="flex items-center gap-2">
+              <Icon icon={mdiSend} size="16" />
+              Send
+            </div>
+          </Button>
+        </div>
       </div>
     </div>
   </div>
