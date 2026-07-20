@@ -17,9 +17,16 @@ const resetEnv = () => {
     'IMMICH_API_METRICS_PORT',
     'IMMICH_MEDIA_LOCATION',
     'IMMICH_MICROSERVICES_METRICS_PORT',
+    'IMMICH_ASSISTANT_PROVIDER',
     'IMMICH_ASSISTANT_LOCAL_COMMAND',
     'IMMICH_ASSISTANT_LOCAL_ARGS',
     'IMMICH_ASSISTANT_LOCAL_TIMEOUT_SECONDS',
+    'IMMICH_ASSISTANT_CLAUDE_COMMAND',
+    'IMMICH_ASSISTANT_CLAUDE_ARGS',
+    'IMMICH_ASSISTANT_CLAUDE_TIMEOUT_SECONDS',
+    'IMMICH_ASSISTANT_CODEX_COMMAND',
+    'IMMICH_ASSISTANT_CODEX_ARGS',
+    'IMMICH_ASSISTANT_CODEX_TIMEOUT_SECONDS',
     'IMMICH_LLM_PROVIDER',
     'IMMICH_LLM_OPENAI_API_KEY',
     'IMMICH_LLM_OPENAI_MODEL',
@@ -294,25 +301,54 @@ describe('getEnv', () => {
     it('should use default assistant local command settings', () => {
       const { assistant } = getEnv();
       expect(assistant).toEqual({
+        provider: undefined,
         local: {
           command: undefined,
           args: [],
           timeoutSeconds: 120,
         },
+        claude: {
+          command: undefined,
+          args: [],
+          timeoutSeconds: 240,
+        },
+        codex: {
+          command: undefined,
+          args: [],
+          timeoutSeconds: 240,
+        },
       });
     });
 
     it('should parse assistant local command settings', () => {
+      process.env.IMMICH_ASSISTANT_PROVIDER = 'codex-cli';
       process.env.IMMICH_ASSISTANT_LOCAL_COMMAND = 'claude';
       process.env.IMMICH_ASSISTANT_LOCAL_ARGS = '--print,--output-format,json';
       process.env.IMMICH_ASSISTANT_LOCAL_TIMEOUT_SECONDS = '240';
+      process.env.IMMICH_ASSISTANT_CLAUDE_COMMAND = '/opt/homebrew/bin/claude';
+      process.env.IMMICH_ASSISTANT_CLAUDE_ARGS = '--print,--output-format,json';
+      process.env.IMMICH_ASSISTANT_CLAUDE_TIMEOUT_SECONDS = '300';
+      process.env.IMMICH_ASSISTANT_CODEX_COMMAND = '/Users/johnhausman/.local/bin/codex';
+      process.env.IMMICH_ASSISTANT_CODEX_ARGS = 'exec,-';
+      process.env.IMMICH_ASSISTANT_CODEX_TIMEOUT_SECONDS = '360';
 
       const { assistant } = getEnv();
       expect(assistant).toEqual({
+        provider: 'codex-cli',
         local: {
           command: 'claude',
           args: ['--print', '--output-format', 'json'],
           timeoutSeconds: 240,
+        },
+        claude: {
+          command: '/opt/homebrew/bin/claude',
+          args: ['--print', '--output-format', 'json'],
+          timeoutSeconds: 300,
+        },
+        codex: {
+          command: '/Users/johnhausman/.local/bin/codex',
+          args: ['exec', '-'],
+          timeoutSeconds: 360,
         },
       });
     });

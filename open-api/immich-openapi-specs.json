@@ -18593,6 +18593,16 @@
             "maxItems": 20,
             "minItems": 1,
             "type": "array"
+          },
+          "provider": {
+            "description": "Assistant provider",
+            "enum": [
+              "openai",
+              "anthropic",
+              "claude-cli",
+              "codex-cli"
+            ],
+            "type": "string"
           }
         },
         "required": [
@@ -18640,6 +18650,8 @@
             "enum": [
               "openai",
               "anthropic",
+              "claude-cli",
+              "codex-cli",
               "local-cli"
             ],
             "type": "string"

@@ -19,10 +19,18 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - The local command path executes without a shell, passes the prompt/context over stdin, and expects JSON or plain text on stdout.
   - Supports OpenAI Responses API and Anthropic Messages API.
 - Added local assistant CLI env settings:
+  - `IMMICH_ASSISTANT_PROVIDER`
   - `IMMICH_ASSISTANT_LOCAL_COMMAND`
   - `IMMICH_ASSISTANT_LOCAL_ARGS`
   - `IMMICH_ASSISTANT_LOCAL_TIMEOUT_SECONDS`
+  - `IMMICH_ASSISTANT_CLAUDE_COMMAND`
+  - `IMMICH_ASSISTANT_CLAUDE_ARGS`
+  - `IMMICH_ASSISTANT_CLAUDE_TIMEOUT_SECONDS`
+  - `IMMICH_ASSISTANT_CODEX_COMMAND`
+  - `IMMICH_ASSISTANT_CODEX_ARGS`
+  - `IMMICH_ASSISTANT_CODEX_TIMEOUT_SECONDS`
   - Docker constraint: the command must be available to the Immich server process/container.
+- Added an assistant provider selector in the web UI so chat can explicitly use Auto, Claude CLI, Codex CLI, OpenAI, or Anthropic.
 - Added OpenAPI schema entries for the assistant request/response DTOs.
 - The assistant prompt is intentionally review-first:
   - suggest searches, album plans, folder plans, metadata audits, original-file audits, and review sets;
