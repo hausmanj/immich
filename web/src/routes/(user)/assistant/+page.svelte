@@ -5,7 +5,7 @@
   import { goto } from '$app/navigation';
   import { Button, Icon, Textarea, toastManager } from '@immich/ui';
   import { mdiArrowRight, mdiMagnify, mdiPlusBoxOutline, mdiRobotOutline, mdiSend, mdiTrashCanOutline } from '@mdi/js';
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import type { PageData } from './$types';
 
   type AssistantProvider = 'auto' | 'claude-cli' | 'codex-cli' | 'openai' | 'anthropic';
@@ -117,6 +117,7 @@
   let runningToolActionKey = $state<string | null>(null);
   let assessment = $state<Assessment | null>(null);
   let assistantStateLoaded = $state(false);
+  let messagesContainer: HTMLDivElement | null = null;
   let messages = $state<ChatMessage[]>([
     {
       role: 'assistant',
@@ -148,6 +149,7 @@
   onMount(() => {
     loadAssistantState();
     assistantStateLoaded = true;
+    void scrollMessagesToBottom();
   });
 
   $effect(() => {
@@ -157,6 +159,20 @@
 
     saveAssistantState();
   });
+
+  $effect(() => {
+    const shouldScroll = assistantStateLoaded && (messages.length > 0 || loading);
+    if (shouldScroll) {
+      void scrollMessagesToBottom();
+    }
+  });
+
+  const scrollMessagesToBottom = async () => {
+    await tick();
+    if (messagesContainer) {
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
+  };
 
   const loadAssistantState = () => {
     if (!browser) {
@@ -218,6 +234,7 @@
     if (browser) {
       localStorage.removeItem(assistantStateStorageKey);
     }
+    void scrollMessagesToBottom();
   };
 
   const getSearchHref = (action: AssistantAction) => {
@@ -758,6 +775,7 @@
     </div>
 
     <div
+      bind:this={messagesContainer}
       class="min-h-0 flex-1 overflow-y-auto rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-900"
     >
       <div class="flex flex-col gap-4">

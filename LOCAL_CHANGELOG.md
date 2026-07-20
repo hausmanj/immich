@@ -69,6 +69,7 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - Running a tool appends the deterministic result summary and examples back into the chat.
   - Follow-up change: inline tool results are now formatted by tool type instead of dumped as raw JSON. Sidecar/variant groups show grouped filename, size, dimensions, timestamp, camera/edited flags, and source path lines for review.
   - Follow-up change: the Assistant page now persists conversation workflow state in browser localStorage key `immich-assistant-conversation-v1`, including messages, action cards, provider, prompt draft, and assessment. Review-album creation appends the created album ID and change-journal path to the chat before navigating to the album.
+  - Follow-up change: the Assistant conversation pane now scrolls to the latest message after restored state loads and when new user, assistant, or tool messages appear.
 - Added a reversible assistant action path in the web UI:
   - Assistant action cards can create a review album only when the action contains explicit sampled asset IDs.
   - Assistant action cards can also create a review album from a deterministic server cohort by sending `cohortType` and `cohortKey` to `POST /assistant/review-album`; the server performs the cohort lookup at click time.

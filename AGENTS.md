@@ -54,6 +54,7 @@
   - Assistant action cards can now include `toolType`/`toolInput`; the web UI shows a read-only audit/search button and appends tool results back into the chat.
   - Inline assistant tool results should stay human-readable. The web formatter groups sidecar/variant results and summarizes asset rows by filename, size, dimensions, timestamp, camera/edited flags, and source path instead of dumping raw JSON.
   - The Assistant web page persists conversation workflow state in browser localStorage key `immich-assistant-conversation-v1`, including messages, action cards, provider, prompt draft, and assessment. Creating a review album appends the album ID and change-journal path to the chat before navigating away.
+  - When reopening or returning to the Assistant web page, the conversation pane should scroll to the latest message after persisted state loads and after new assistant/user/tool output is appended.
 - Relevant notes:
   - `mobile/ios/unedited-original-upload-investigation.md`
   - `mobile/ios/open-pr-triage-2026-07-19.md`
