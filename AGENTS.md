@@ -33,6 +33,7 @@
   - When a field is absent from the assistant context, call it "not visible in the assistant sample" rather than missing from the source file or database.
   - Prefer metadata audits and review plans over irreversible library reorganization.
   - Assistant action cards in the web UI may create review albums from explicit sampled `assetIds` or deterministic `cohortType`/`cohortKey` pairs. Broad cohort/folder/search ideas should stay as proposals or search links until reviewed.
+  - Deterministic cohorts include `event` cohorts for multi-day place/trip groupings. Prefer these over daily `date` cohorts when organizing same-location travel or multi-day events.
   - `POST /assistant/review-album` materializes cohort-backed review albums server-side.
   - Any assistant mutation must have a persisted pre-change journal before it runs. The current journal directory is `/data/assistant-audits/change-journal`, which maps through the existing Docker/Synology `/data` volume.
   - The change journal format is intentionally generic: `actionType`, `status`, `request`, `before`, `after`, `undo`, target IDs, and any error/undo result.
@@ -108,6 +109,11 @@
   - Verified duplicate-resolution apply is blocked and journaled while undo is unavailable.
   - Verified `archive_favorite` apply on asset `9f6e56f5-a1a9-40ce-ac87-8fa3aa3d2515` changed favorite state, then `POST /assistant/undo` restored `isFavorite=false` and `visibility=timeline` from the journal.
   - Verified `stack_change` create with assets `cf47e24a-a465-4315-a95b-dc9de04bf1c3` and `af88efde-f81d-4862-9991-7b29cef66c1f`, then `POST /assistant/undo` deleted the created stack and restored both assets to `stackId=null`.
+- After event/trip cohort update:
+  - `deterministicAudits.eventCohorts` identifies multi-day exact-place, region, and country trip candidates with date span, active-day count, location-backed asset count, confidence, and `cohortType='event'`.
+  - The assistant prompt now explicitly avoids daily album splits when a higher-confidence event cohort covers the same trip/location span.
+  - Verified runtime behavior: the assistant identified `French Polynesia / Leeward Islands` from 2012-10-15 through 2012-10-19 as one event cohort with 164 assets and returned an actionable `cohortType='event'`.
+  - Verified event cohort materialization: created a temporary 164-asset review album from that event key, then `POST /assistant/undo` deleted the album without deleting source assets.
 - Temporary local Codex assistant smoke-test API keys were created only for probing and deleted afterward.
 - Mobile validation is still pending because `flutter` and `dart` were not on PATH in this shell. Do not claim the mobile upload patch is device-verified until it has run on iPhone or iOS Simulator.
 - Next practical test after import: ask the in-app Codex assistant to audit `/external/desktop-icloud-originals` for original-file evidence, then compare sampled external-library assets against the Desktop export by filename, size, dimensions, EXIF dates/GPS/camera fields, and checksum.

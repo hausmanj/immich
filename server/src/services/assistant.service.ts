@@ -23,7 +23,7 @@ import { AuthDto } from 'src/dtos/auth.dto';
 import { LibraryResponseDto } from 'src/dtos/library.dto';
 import { SearchSuggestionType } from 'src/dtos/search.dto';
 import { AssetOrder, AssetOrderBy, AssetType, AssetVisibility, JobName, Permission } from 'src/enum';
-import type { AssistantAuditAsset, AssistantAuditAssetSearch } from 'src/repositories/asset.repository';
+import type { AssistantAuditAsset, AssistantAuditAssetSearch, AssistantEventAuditBucket } from 'src/repositories/asset.repository';
 import type { EnvData } from 'src/repositories/config.repository';
 import { AlbumService } from 'src/services/album.service';
 import { AssetService } from 'src/services/asset.service';
@@ -111,7 +111,7 @@ const assistantActionTypes = [
 ] as const;
 
 const assistantToolInputProperties = {
-  cohortType: { type: ['string', 'null'], enum: ['source_path', 'date', 'camera', 'location', null] },
+  cohortType: { type: ['string', 'null'], enum: ['source_path', 'date', 'camera', 'location', 'event', null] },
   cohortKey: { type: ['string', 'null'] },
   originalPathContains: { type: ['string', 'null'] },
   originalFileNameContains: { type: ['string', 'null'] },
@@ -162,7 +162,7 @@ const assistantOutputSchema = {
           },
           cohortType: {
             type: ['string', 'null'],
-            enum: ['source_path', 'date', 'camera', 'location', null],
+            enum: ['source_path', 'date', 'camera', 'location', 'event', null],
             description:
               'Deterministic Immich cohort type for a reversible review album. Use only when the cohort appears in deterministicAudits.',
           },
@@ -1267,6 +1267,7 @@ export class AssistantService extends BaseService {
       libraryAuditSummary,
       sourcePathCohorts,
       dateCohorts,
+      eventCohorts,
       cameraCohorts,
       locationCohorts,
       checksumAlgorithmCohorts,
@@ -1294,6 +1295,7 @@ export class AssistantService extends BaseService {
       this.assetRepository.getAssistantLibraryAuditSummary(auth.user.id),
       this.assetRepository.getAssistantSourcePathCohorts(auth.user.id, this.auditBucketLimit),
       this.assetRepository.getAssistantDateCohorts(auth.user.id, this.auditBucketLimit),
+      this.assetRepository.getAssistantEventCohorts(auth.user.id, this.auditBucketLimit),
       this.assetRepository.getAssistantCameraCohorts(auth.user.id, this.auditBucketLimit),
       this.assetRepository.getAssistantLocationCohorts(auth.user.id, this.auditBucketLimit),
       this.assetRepository.getAssistantChecksumAlgorithmCohorts(auth.user.id),
@@ -1325,6 +1327,7 @@ export class AssistantService extends BaseService {
         librarySummary: libraryAuditSummary,
         sourcePathCohorts: this.toActionableCohorts('source_path', sourcePathCohorts),
         dateCohorts: this.toActionableCohorts('date', dateCohorts),
+        eventCohorts: this.toActionableEventCohorts(eventCohorts),
         cameraCohorts: this.toActionableCohorts('camera', cameraCohorts),
         locationCohorts: this.toActionableCohorts('location', locationCohorts),
         checksumAlgorithmCohorts,
@@ -1336,7 +1339,7 @@ export class AssistantService extends BaseService {
         mobileAppMetadataCohorts,
         requestedToolResults,
         actionGuidance:
-          'For reversible review albums, use cohortType and cohortKey from these deterministic cohorts instead of enumerating large asset ID lists. For deeper evidence, propose a read-only tool action with toolType/toolInput so Immich can run content_hash_audit, sidecar_pair_audit, metadata_search, or mobile_original_compare.',
+          'For reversible review albums, prefer eventCohorts for multi-day trips and same-location travel before falling back to single-day dateCohorts. Use cohortType and cohortKey from deterministic cohorts instead of enumerating large asset ID lists. For deeper evidence, propose a read-only tool action with toolType/toolInput so Immich can run content_hash_audit, sidecar_pair_audit, metadata_search, or mobile_original_compare.',
       },
       mutationCapabilities: this.getMutationCapabilities(),
       topYears,
@@ -1380,6 +1383,21 @@ export class AssistantService extends BaseService {
       cohortType,
       cohortKey: cohort.key,
     }));
+  }
+
+  private toActionableEventCohorts(cohorts: AssistantEventAuditBucket[]) {
+    return cohorts.map((cohort) => ({
+      ...cohort,
+      cohortType: 'event' as const,
+      cohortKey: cohort.key,
+      title: `${cohort.label} (${this.toDateLabel(cohort.dateStart)} to ${this.toDateLabel(cohort.dateEnd)})`,
+      rationale:
+        `${cohort.activeDayCount} active days across ${cohort.dateSpanDays} calendar days with ${cohort.locationAssetCount} location-backed assets. Prefer this over daily albums when organizing a multi-day trip or repeated same-location event.`,
+    }));
+  }
+
+  private toDateLabel(value: string | null) {
+    return value?.slice(0, 10) ?? 'unknown date';
   }
 
   private async getAssetMetadataContext(
@@ -1911,7 +1929,7 @@ export class AssistantService extends BaseService {
   ) {
     return {
       instruction:
-        'You are an in-app Immich photo library assistant for organizing very large photo and video libraries. Help assess metadata, source cohorts, time ranges, locations, albums, folders, review queues, duplicates, video metadata, and original-file risks using the provided library context. Prefer deterministicAudits over the sampled assets when discussing whole-library counts, cohorts, duplicate candidates, videos, mobile upload audit coverage, and review-album candidates. When deterministicAudits.requestedToolResults is present, treat it as server-run evidence from the current user request; it contains the full tool summary, result count, error count, and logFilePath when large row-level output was written to disk. Full row-level results remain available through a tool action and, when present, the JSON audit log. When proposing a reversible review album from deterministicAudits, set action.cohortType and action.cohortKey to the exact cohort fields and leave assetIds empty unless the action is based on explicit sampled assets. When more evidence is needed, include action.toolType and action.toolInput for one of the read-only Immich tools: content_hash_audit, sidecar_pair_audit, metadata_search, or mobile_original_compare. Treat impactful organization changes as requiring read-only evidence first plus a persisted assistant change journal and undo path before the change is considered safe. Use mutationCapabilities to distinguish executable journaled mutations from plan-only blocked mutations: metadata_edit, archive_favorite, and stack_change are currently applyable with typed undo; folder_move and duplicate_resolution are registered but apply-blocked until a reliable typed undo exists. Treat checksumAlgorithm=sha1 as file-content evidence and checksumAlgorithm=sha1-path as external-library path identity, not byte-level integrity. When a field is absent from the provided context, say it is not visible in the assistant context; do not claim it is missing from the source file or Immich database. Do not suggest tagging unless the user explicitly asks for tags. Do not claim any change has been applied. Prefer reversible, review-first organization. Never suggest deleting assets unless the user explicitly asks about deletion.',
+        'You are an in-app Immich photo library assistant for organizing very large photo and video libraries. Help assess metadata, source cohorts, time ranges, locations, albums, folders, review queues, duplicates, video metadata, and original-file risks using the provided library context. Prefer deterministicAudits over the sampled assets when discussing whole-library counts, cohorts, duplicate candidates, videos, mobile upload audit coverage, and review-album candidates. Prefer deterministicAudits.eventCohorts for multi-day trips, same-location travel, and event-style organization; do not split a trip into daily albums when a higher-confidence event cohort covers the same date/location span. Daily dateCohorts are fallback review units, not the default trip boundary. When deterministicAudits.requestedToolResults is present, treat it as server-run evidence from the current user request; it contains the full tool summary, result count, error count, and logFilePath when large row-level output was written to disk. Full row-level results remain available through a tool action and, when present, the JSON audit log. When proposing a reversible review album from deterministicAudits, set action.cohortType and action.cohortKey to the exact cohort fields and leave assetIds empty unless the action is based on explicit sampled assets. When more evidence is needed, include action.toolType and action.toolInput for one of the read-only Immich tools: content_hash_audit, sidecar_pair_audit, metadata_search, or mobile_original_compare. Treat impactful organization changes as requiring read-only evidence first plus a persisted assistant change journal and undo path before the change is considered safe. Use mutationCapabilities to distinguish executable journaled mutations from plan-only blocked mutations: metadata_edit, archive_favorite, and stack_change are currently applyable with typed undo; folder_move and duplicate_resolution are registered but apply-blocked until a reliable typed undo exists. Treat checksumAlgorithm=sha1 as file-content evidence and checksumAlgorithm=sha1-path as external-library path identity, not byte-level integrity. When a field is absent from the provided context, say it is not visible in the assistant context; do not claim it is missing from the source file or Immich database. Do not suggest tagging unless the user explicitly asks for tags. Do not claim any change has been applied. Prefer reversible, review-first organization. Never suggest deleting assets unless the user explicitly asks about deletion.',
       userContent: JSON.stringify({
         libraryContext: context,
         conversation: dto.messages,
@@ -2203,6 +2221,9 @@ export class AssistantService extends BaseService {
         continue;
       }
 
+      const cohortKey = typeof action.cohortKey === 'string' ? action.cohortKey : null;
+      const cohortType = this.toCohortType(action.cohortType) ?? (this.isEventCohortKey(cohortKey) ? 'event' : null);
+
       actions.push({
         type: action.type as (typeof assistantActionTypes)[number],
         title: action.title,
@@ -2212,8 +2233,8 @@ export class AssistantService extends BaseService {
         assetIds: Array.isArray(action.assetIds)
           ? action.assetIds.filter((assetId): assetId is string => typeof assetId === 'string')
           : [],
-        cohortType: this.toCohortType(action.cohortType),
-        cohortKey: typeof action.cohortKey === 'string' ? action.cohortKey : null,
+        cohortType,
+        cohortKey,
         toolType: this.toToolType(action.toolType),
         toolInput: this.toToolInput(action.toolInput),
         confidence: typeof action.confidence === 'number' ? action.confidence : 0.5,
@@ -2228,7 +2249,27 @@ export class AssistantService extends BaseService {
   }
 
   private toCohortType(value: unknown) {
-    return value === 'source_path' || value === 'date' || value === 'camera' || value === 'location' ? value : null;
+    return value === 'source_path' || value === 'date' || value === 'camera' || value === 'location' || value === 'event'
+      ? value
+      : null;
+  }
+
+  private isEventCohortKey(value: string | null) {
+    if (!value) {
+      return false;
+    }
+
+    try {
+      const parsed = JSON.parse(value) as Record<string, unknown>;
+      return (
+        (parsed.kind === 'place_exact' || parsed.kind === 'place_region' || parsed.kind === 'place_country') &&
+        typeof parsed.country === 'string' &&
+        typeof parsed.dateStart === 'string' &&
+        typeof parsed.dateEnd === 'string'
+      );
+    } catch {
+      return false;
+    }
   }
 
   private toToolType(value: unknown): AssistantToolType | null {

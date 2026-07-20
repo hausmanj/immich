@@ -158,6 +158,18 @@ export interface AssistantLocationAuditBucket extends AssistantLibraryAuditBucke
   longitudeMax: number | null;
 }
 
+export interface AssistantEventAuditBucket extends AssistantLibraryAuditBucket {
+  eventKind: string;
+  label: string;
+  country: string | null;
+  state: string | null;
+  city: string | null;
+  dateSpanDays: number;
+  activeDayCount: number;
+  locationAssetCount: number;
+  confidence: number;
+}
+
 export interface AssistantChecksumAuditBucket {
   checksumAlgorithm: string;
   assetCount: number;
@@ -636,6 +648,175 @@ export class AssetRepository {
     return rows;
   }
 
+  async getAssistantEventCohorts(ownerId: string, limit: number): Promise<AssistantEventAuditBucket[]> {
+    const { rows } = await sql<AssistantEventAuditBucket>`
+      with base as (
+        select
+          a.*,
+          ae."assetId" as "exifAssetId",
+          ae."fileSizeInByte",
+          ae.latitude,
+          ae.longitude,
+          nullif(ae.country, '') as country,
+          nullif(ae.state, '') as state,
+          nullif(ae.city, '') as city,
+          ae.make,
+          ae.model,
+          (a."localDateTime" at time zone 'UTC')::date as "localDate"
+        from asset a
+        left join asset_exif ae on ae."assetId" = a.id
+        where a."ownerId" = ${asUuid(ownerId)}
+          and a."deletedAt" is null
+          and a."localDateTime" is not null
+      ),
+      candidates as (
+        select
+          'place_exact' as "eventKind",
+          concat_ws(' / ', country, state, city) as label,
+          country,
+          state,
+          city,
+          min("localDate") as "dateStartDay",
+          max("localDate") as "dateEndDay",
+          count(*)::int as "assetCount",
+          count(*) filter (where type = 'IMAGE')::int as "imageCount",
+          count(*) filter (where type = 'VIDEO')::int as "videoCount",
+          count(*) filter (where "isFavorite")::int as "favoriteCount",
+          count(*) filter (where visibility = 'archive')::int as "archivedCount",
+          count(*) filter (where "isEdited")::int as "editedCount",
+          count(*) filter (where "isExternal")::int as "externalCount",
+          count(*) filter (where latitude is not null and longitude is not null)::int as "gpsCount",
+          count("exifAssetId")::int as "exifCount",
+          count(*) filter (where "fileSizeInByte" is not null)::int as "fileSizeCount",
+          count(*) filter (where width is not null and height is not null)::int as "dimensionsCount",
+          count(*) filter (where make is not null or model is not null)::int as "cameraCount",
+          0::int as "mobileAppMetadataCount",
+          coalesce(sum("fileSizeInByte"), 0)::text as "totalFileSizeBytes",
+          count(distinct "localDate")::int as "activeDayCount",
+          count(*)::int as "locationAssetCount",
+          array_remove((array_agg("originalPath" order by "localDateTime" desc))[1:5], null) as examples
+        from base
+        where country is not null and city is not null
+        group by country, state, city
+        having count(*) >= 8 and count(distinct "localDate") >= 2
+
+        union all
+
+        select
+          'place_region' as "eventKind",
+          concat_ws(' / ', country, state) as label,
+          country,
+          state,
+          null::text as city,
+          min("localDate") as "dateStartDay",
+          max("localDate") as "dateEndDay",
+          count(*)::int as "assetCount",
+          count(*) filter (where type = 'IMAGE')::int as "imageCount",
+          count(*) filter (where type = 'VIDEO')::int as "videoCount",
+          count(*) filter (where "isFavorite")::int as "favoriteCount",
+          count(*) filter (where visibility = 'archive')::int as "archivedCount",
+          count(*) filter (where "isEdited")::int as "editedCount",
+          count(*) filter (where "isExternal")::int as "externalCount",
+          count(*) filter (where latitude is not null and longitude is not null)::int as "gpsCount",
+          count("exifAssetId")::int as "exifCount",
+          count(*) filter (where "fileSizeInByte" is not null)::int as "fileSizeCount",
+          count(*) filter (where width is not null and height is not null)::int as "dimensionsCount",
+          count(*) filter (where make is not null or model is not null)::int as "cameraCount",
+          0::int as "mobileAppMetadataCount",
+          coalesce(sum("fileSizeInByte"), 0)::text as "totalFileSizeBytes",
+          count(distinct "localDate")::int as "activeDayCount",
+          count(*)::int as "locationAssetCount",
+          array_remove((array_agg("originalPath" order by "localDateTime" desc))[1:5], null) as examples
+        from base
+        where country is not null and state is not null
+        group by country, state
+        having count(*) >= 10 and count(distinct "localDate") >= 2
+
+        union all
+
+        select
+          'place_country' as "eventKind",
+          country as label,
+          country,
+          null::text as state,
+          null::text as city,
+          min("localDate") as "dateStartDay",
+          max("localDate") as "dateEndDay",
+          count(*)::int as "assetCount",
+          count(*) filter (where type = 'IMAGE')::int as "imageCount",
+          count(*) filter (where type = 'VIDEO')::int as "videoCount",
+          count(*) filter (where "isFavorite")::int as "favoriteCount",
+          count(*) filter (where visibility = 'archive')::int as "archivedCount",
+          count(*) filter (where "isEdited")::int as "editedCount",
+          count(*) filter (where "isExternal")::int as "externalCount",
+          count(*) filter (where latitude is not null and longitude is not null)::int as "gpsCount",
+          count("exifAssetId")::int as "exifCount",
+          count(*) filter (where "fileSizeInByte" is not null)::int as "fileSizeCount",
+          count(*) filter (where width is not null and height is not null)::int as "dimensionsCount",
+          count(*) filter (where make is not null or model is not null)::int as "cameraCount",
+          0::int as "mobileAppMetadataCount",
+          coalesce(sum("fileSizeInByte"), 0)::text as "totalFileSizeBytes",
+          count(distinct "localDate")::int as "activeDayCount",
+          count(*)::int as "locationAssetCount",
+          array_remove((array_agg("originalPath" order by "localDateTime" desc))[1:5], null) as examples
+        from base
+        where country is not null
+        group by country
+        having count(*) >= 12 and count(distinct "localDate") >= 2
+      )
+      select
+        jsonb_build_object(
+          'kind', "eventKind",
+          'country', country,
+          'state', state,
+          'city', city,
+          'dateStart', "dateStartDay"::text,
+          'dateEnd', "dateEndDay"::text
+        )::text as key,
+        "eventKind",
+        label,
+        country,
+        state,
+        city,
+        "assetCount",
+        "imageCount",
+        "videoCount",
+        "favoriteCount",
+        "archivedCount",
+        "editedCount",
+        "externalCount",
+        "gpsCount",
+        "exifCount",
+        "fileSizeCount",
+        "dimensionsCount",
+        "cameraCount",
+        "mobileAppMetadataCount",
+        ("dateStartDay"::timestamp)::text as "dateStart",
+        ("dateEndDay"::timestamp + interval '1 day' - interval '1 second')::text as "dateEnd",
+        "totalFileSizeBytes",
+        ("dateEndDay" - "dateStartDay" + 1)::int as "dateSpanDays",
+        "activeDayCount",
+        "locationAssetCount",
+        round(
+          least(
+            0.99,
+            0.45
+              + least("activeDayCount", 14) * 0.025
+              + least("assetCount", 120) * 0.002
+              + case "eventKind" when 'place_region' then 0.12 when 'place_exact' then 0.08 else 0.04 end
+          )::numeric,
+          2
+        )::float as confidence,
+        examples
+      from candidates
+      where ("dateEndDay" - "dateStartDay" + 1) between 2 and 45
+      order by confidence desc, "assetCount" desc, "dateStartDay" asc, label asc
+      limit ${limit}
+    `.execute(this.db);
+
+    return rows;
+  }
+
   async getAssistantChecksumAlgorithmCohorts(ownerId: string): Promise<AssistantChecksumAuditBucket[]> {
     const { rows } = await sql<AssistantChecksumAuditBucket>`
       select
@@ -766,6 +947,10 @@ export class AssetRepository {
   }
 
   async getAssistantCohortAssetIds(ownerId: string, cohortType: string, cohortKey: string, limit?: number) {
+    if (cohortType === 'event') {
+      return this.getAssistantEventCohortAssetIds(ownerId, cohortKey, limit);
+    }
+
     const cohortSql = this.getAssistantCohortSql(cohortType);
     if (!cohortSql) {
       return [];
@@ -779,6 +964,21 @@ export class AssetRepository {
       where a."ownerId" = ${asUuid(ownerId)}
         and a."deletedAt" is null
         and (${sql.raw(cohortSql)}) = ${cohortKey}
+      order by a."localDateTime" asc, a."originalFileName" asc
+      ${limitClause}
+    `.execute(this.db);
+
+    return rows.map(({ id }) => id);
+  }
+
+  async getAssistantEventCohortAssetIds(ownerId: string, cohortKey: string, limit?: number) {
+    const conditions = this.getAssistantEventCohortConditions(ownerId, cohortKey);
+    const limitClause = limit === undefined ? sql`` : sql`limit ${limit}`;
+    const { rows } = await sql<{ id: string }>`
+      select a.id
+      from asset a
+      left join asset_exif ae on ae."assetId" = a.id
+      where ${sql.join(conditions, sql` and `)}
       order by a."localDateTime" asc, a."originalFileName" asc
       ${limitClause}
     `.execute(this.db);
@@ -1037,6 +1237,70 @@ export class AssetRepository {
     `;
   }
 
+  private getAssistantEventCohortConditions(ownerId: string, cohortKey: string): Array<RawBuilder<unknown>> {
+    const event = this.parseAssistantEventCohortKey(cohortKey);
+    const conditions: Array<RawBuilder<unknown>> = [
+      sql`a."ownerId" = ${asUuid(ownerId)}`,
+      sql`a."deletedAt" is null`,
+      sql`(a."localDateTime" at time zone 'UTC')::date >= ${event.dateStart}::date`,
+      sql`(a."localDateTime" at time zone 'UTC')::date <= ${event.dateEnd}::date`,
+    ];
+
+    if (event.country) {
+      conditions.push(sql`nullif(ae.country, '') = ${event.country}`);
+    }
+
+    if (event.kind === 'place_region' || event.kind === 'place_exact') {
+      if (!event.state) {
+        throw new TypeError('Assistant event cohort key is missing state');
+      }
+      conditions.push(sql`nullif(ae.state, '') = ${event.state}`);
+    }
+
+    if (event.kind === 'place_exact') {
+      if (!event.city) {
+        throw new TypeError('Assistant event cohort key is missing city');
+      }
+      conditions.push(sql`nullif(ae.city, '') = ${event.city}`);
+    }
+
+    return conditions;
+  }
+
+  private parseAssistantEventCohortKey(cohortKey: string): {
+    kind: 'place_exact' | 'place_region' | 'place_country';
+    country: string;
+    state: string | null;
+    city: string | null;
+    dateStart: string;
+    dateEnd: string;
+  } {
+    const parsed = JSON.parse(cohortKey) as Record<string, unknown>;
+    const kind = parsed.kind;
+    const country = parsed.country;
+    const state = parsed.state;
+    const city = parsed.city;
+    const dateStart = parsed.dateStart;
+    const dateEnd = parsed.dateEnd;
+
+    if (kind !== 'place_exact' && kind !== 'place_region' && kind !== 'place_country') {
+      throw new TypeError('Assistant event cohort key has unsupported kind');
+    }
+
+    if (typeof country !== 'string' || typeof dateStart !== 'string' || typeof dateEnd !== 'string') {
+      throw new TypeError('Assistant event cohort key is missing required fields');
+    }
+
+    return {
+      kind,
+      country,
+      state: typeof state === 'string' ? state : null,
+      city: typeof city === 'string' ? city : null,
+      dateStart,
+      dateEnd,
+    };
+  }
+
   private getAssistantAuditAssetConditions(
     ownerId: string,
     filters: AssistantAuditAssetSearch,
@@ -1046,8 +1310,12 @@ export class AssetRepository {
       sql`a."deletedAt" is null`,
     ];
 
+    if (filters.cohortType === 'event' && filters.cohortKey) {
+      conditions.push(...this.getAssistantEventCohortConditions(ownerId, filters.cohortKey).slice(2));
+    }
+
     const cohortSql = filters.cohortType && filters.cohortKey ? this.getAssistantCohortSql(filters.cohortType) : null;
-    if (cohortSql && filters.cohortKey) {
+    if (cohortSql && filters.cohortKey && filters.cohortType !== 'event') {
       conditions.push(sql`(${sql.raw(cohortSql)}) = ${filters.cohortKey}`);
     }
 
