@@ -1,4 +1,5 @@
 import { createZodDto } from 'nestjs-zod';
+import { isoDatetimeToDate } from 'src/validation';
 import z from 'zod';
 
 const AssistantChatMessageSchema = z
@@ -15,6 +16,38 @@ const AssistantChatRequestSchema = z
   })
   .meta({ id: 'AssistantChatRequestDto' });
 
+const AssistantCohortTypeSchema = z.enum(['source_path', 'date', 'camera', 'location']);
+
+const AssistantToolTypeSchema = z.enum([
+  'content_hash_audit',
+  'sidecar_pair_audit',
+  'metadata_search',
+  'mobile_original_compare',
+]);
+
+const AssistantToolInputSchema = z
+  .object({
+    cohortType: AssistantCohortTypeSchema.nullable().optional(),
+    cohortKey: z.string().nullable().optional(),
+    originalPathContains: z.string().trim().min(1).max(500).nullable().optional(),
+    originalFileNameContains: z.string().trim().min(1).max(250).nullable().optional(),
+    fileExtension: z.string().trim().min(1).max(20).nullable().optional(),
+    checksumAlgorithm: z.string().trim().min(1).max(50).nullable().optional(),
+    type: z.enum(['IMAGE', 'VIDEO', 'AUDIO', 'OTHER']).nullable().optional(),
+    takenAfter: isoDatetimeToDate.nullable().optional(),
+    takenBefore: isoDatetimeToDate.nullable().optional(),
+    make: z.string().trim().min(1).max(250).nullable().optional(),
+    model: z.string().trim().min(1).max(250).nullable().optional(),
+    country: z.string().trim().min(1).max(250).nullable().optional(),
+    state: z.string().trim().min(1).max(250).nullable().optional(),
+    city: z.string().trim().min(1).max(250).nullable().optional(),
+    noGps: z.boolean().nullable().optional(),
+    unknownCamera: z.boolean().nullable().optional(),
+    hasMobileMetadata: z.boolean().nullable().optional(),
+    desktopSourcePrefix: z.string().trim().min(1).max(500).nullable().optional(),
+  })
+  .meta({ id: 'AssistantToolInputDto' });
+
 const AssistantActionSchema = z
   .object({
     type: z.enum(['search', 'album_plan', 'folder_plan', 'metadata_audit', 'original_file_audit', 'review']),
@@ -23,8 +56,10 @@ const AssistantActionSchema = z
     query: z.string().nullable(),
     albumName: z.string().nullable(),
     assetIds: z.array(z.uuidv4()),
-    cohortType: z.enum(['source_path', 'date', 'camera', 'location']).nullable().optional(),
+    cohortType: AssistantCohortTypeSchema.nullable().optional(),
     cohortKey: z.string().nullable().optional(),
+    toolType: AssistantToolTypeSchema.nullable().optional(),
+    toolInput: AssistantToolInputSchema.nullable().optional(),
     confidence: z.number().min(0).max(1),
   })
   .meta({ id: 'AssistantActionDto' });
@@ -33,10 +68,32 @@ const AssistantReviewAlbumRequestSchema = z
   .object({
     albumName: z.string().trim().min(1).max(250),
     assetIds: z.array(z.uuidv4()).optional(),
-    cohortType: z.enum(['source_path', 'date', 'camera', 'location']).nullable().optional(),
+    cohortType: AssistantCohortTypeSchema.nullable().optional(),
     cohortKey: z.string().nullable().optional(),
   })
   .meta({ id: 'AssistantReviewAlbumRequestDto' });
+
+const AssistantToolRequestSchema = z
+  .object({
+    toolType: AssistantToolTypeSchema,
+    input: AssistantToolInputSchema.optional().default({}),
+  })
+  .meta({ id: 'AssistantToolRequestDto' });
+
+const AssistantToolResponseSchema = z
+  .object({
+    toolType: AssistantToolTypeSchema,
+    generatedAt: z.string(),
+    summary: z.record(z.string(), z.unknown()),
+    results: z.array(z.record(z.string(), z.unknown())),
+    errors: z.array(z.record(z.string(), z.unknown())),
+    logFilePath: z.string().nullable().optional(),
+    logFileFormat: z.literal('json').nullable().optional(),
+    resultCount: z.number().optional(),
+    errorCount: z.number().optional(),
+    inlineResultsOmitted: z.boolean().optional(),
+  })
+  .meta({ id: 'AssistantToolResponseDto' });
 
 const AssistantReviewAlbumResponseSchema = z
   .object({
@@ -67,6 +124,8 @@ export class AssistantChatRequestDto extends createZodDto(AssistantChatRequestSc
 export class AssistantChatResponseDto extends createZodDto(AssistantChatResponseSchema) {}
 export class AssistantReviewAlbumRequestDto extends createZodDto(AssistantReviewAlbumRequestSchema) {}
 export class AssistantReviewAlbumResponseDto extends createZodDto(AssistantReviewAlbumResponseSchema) {}
+export class AssistantToolRequestDto extends createZodDto(AssistantToolRequestSchema) {}
+export class AssistantToolResponseDto extends createZodDto(AssistantToolResponseSchema) {}
 
 const AssistantAssessmentBucketSchema = z
   .object({

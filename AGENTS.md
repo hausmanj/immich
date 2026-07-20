@@ -33,7 +33,17 @@
   - When a field is absent from the assistant context, call it "not visible in the assistant sample" rather than missing from the source file or database.
   - Prefer metadata audits and review plans over irreversible library reorganization.
   - Assistant action cards in the web UI may create review albums from explicit sampled `assetIds` or deterministic `cohortType`/`cohortKey` pairs. Broad cohort/folder/search ideas should stay as proposals or search links until reviewed.
-  - `POST /assistant/review-album` materializes cohort-backed review albums server-side and caps each action at 5,000 assets.
+  - `POST /assistant/review-album` materializes cohort-backed review albums server-side.
+  - Runtime fix applied after initial assistant chat failure: assistant cohort SQL expressions must be inserted with trusted internal `sql.raw(...)` strings, while user-provided `cohortKey` values remain parameterized. The prior `RawBuilder` interpolation generated `(undefined) as key` at runtime.
+  - `POST /assistant/tool` runs read-only deterministic assistant tools:
+    - `metadata_search`: owner-scoped SQL search with path/name/extension/type/date/camera/location/GPS/mobile/checksum filters.
+    - `content_hash_audit`: reads `originalPath` bytes and computes fresh SHA1 for byte-level evidence; does not treat `sha1-path` as content evidence.
+    - `sidecar_pair_audit`: scans owned asset source directories for AAE/XMP/JSON sidecars, MOV paired media, and probable rendered/variant filename groups.
+    - `mobile_original_compare`: compares mobile-upload audit metadata against the Desktop original reference cohort by filename, file size, dimensions, EXIF date, and camera fields.
+  - Assistant tools must not impose scan/result caps. They should process every owner-scoped matching asset and preserve every tool result/error. Do not reintroduce default `limit` behavior for these tools.
+  - Large assistant tool outputs are written as full JSON audit logs under `/data/assistant-audits` inside the Immich server container. On Docker/Synology this is expected to live under the existing host folder mapped to container `/data`, for example `/volume1/docker/immich/library/assistant-audits` when `/volume1/docker/immich/library:/data` is the compose mount.
+  - The web/chat payload may omit inline row-level results when the audit log is written, but the log file must contain the complete result/error arrays and the response must report the full `resultCount`, `errorCount`, and `logFilePath`.
+  - Assistant action cards can now include `toolType`/`toolInput`; the web UI shows a read-only audit/search button and appends tool results back into the chat.
 - Relevant notes:
   - `mobile/ios/unedited-original-upload-investigation.md`
   - `mobile/ios/open-pr-triage-2026-07-19.md`
@@ -69,6 +79,19 @@
   - `/Users/johnhausman/.local/pnpm/node_modules/.bin/pnpm --filter immich run check`
   - `/Users/johnhausman/.local/pnpm/node_modules/.bin/pnpm --filter immich run lint`
   - `git diff --check`
+- After the deterministic-audit upgrade, the in-app assistant successfully returned full-library chat output for `/external/desktop-icloud-originals`: 1,824 external assets, 1,822 images, 2 videos, 2010-04-22 through 2012-12-27, 2.92 GB, 228 GPS-backed assets, and 1,596 assets with no visible location.
+- After assistant tool upgrade:
+  - Full Desktop-originals byte-hash audit completed for 1,824/1,824 assets with zero file read errors and zero exact byte-duplicate groups.
+  - Full Desktop-originals sidecar/pair audit scanned 56/56 directories with zero AAE/XMP/JSON sidecars and zero sidecar errors.
+  - Sidecar/pair audit found 8 probable filename variant groups under `/external/desktop-icloud-originals/Feb 16, 2011`, involving paired names such as `IMG_4596.JPG` and `IMG_4596(1).JPG`; those are review candidates, not automatic duplicates.
+  - `mobile_original_compare` currently returns zero mobile cohorts for the Desktop external import because `mobile-app` metadata is not present on these external-library assets.
+- After no-limit tool update:
+  - `content_hash_audit` over `/external/desktop-icloud-originals` returned `complete=true`, `scannedAssets=1824`, `hashedAssets=1824`, `errorCount=0`, and `resultCount=1824`.
+  - Cohort-backed review album actions no longer cap cohort size; they materialize every matching asset ID.
+- After log-backed tool update:
+  - Large tool output is compacted in the chat/API response but not skipped; the full result/error arrays are written to `/data/assistant-audits`.
+  - Verified probe: `/external/desktop-icloud-originals` hash audit wrote `/data/assistant-audits/2026-07-20T11-36-08-089Z-content_hash_audit-6e99b3f4-2bb7-4ec7-b325-5fce710837d7.json` with 1,824 result rows, 0 error rows, and 856,341 bytes.
+- Temporary local Codex assistant smoke-test API keys were created only for probing and deleted afterward.
 - Mobile validation is still pending because `flutter` and `dart` were not on PATH in this shell. Do not claim the mobile upload patch is device-verified until it has run on iPhone or iOS Simulator.
 - Next practical test after import: ask the in-app Codex assistant to audit `/external/desktop-icloud-originals` for original-file evidence, then compare sampled external-library assets against the Desktop export by filename, size, dimensions, EXIF dates/GPS/camera fields, and checksum.
 - If the assistant returns an album/review action with concrete `assetIds` or `cohortType`/`cohortKey`, the web UI should show a `Create review album` button. This is the only current in-app organization mutation path and should remain reversible.

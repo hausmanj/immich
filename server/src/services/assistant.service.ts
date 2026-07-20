@@ -1,5 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { spawn } from 'node:child_process';
+import { readdir } from 'node:fs/promises';
+import { basename, dirname, extname, join } from 'node:path';
 import { AlbumResponseDto } from 'src/dtos/album.dto';
 import { AssetResponseDto } from 'src/dtos/asset-response.dto';
 import { AssetMetadataResponseDto } from 'src/dtos/asset.dto';
@@ -9,11 +11,14 @@ import {
   AssistantChatResponseDto,
   AssistantReviewAlbumRequestDto,
   AssistantReviewAlbumResponseDto,
+  AssistantToolRequestDto,
+  AssistantToolResponseDto,
 } from 'src/dtos/assistant.dto';
 import { AuthDto } from 'src/dtos/auth.dto';
 import { LibraryResponseDto } from 'src/dtos/library.dto';
 import { SearchSuggestionType } from 'src/dtos/search.dto';
 import { AssetOrder, AssetOrderBy, AssetType, AssetVisibility } from 'src/enum';
+import type { AssistantAuditAsset, AssistantAuditAssetSearch } from 'src/repositories/asset.repository';
 import type { EnvData } from 'src/repositories/config.repository';
 import { AlbumService } from 'src/services/album.service';
 import { AssetService } from 'src/services/asset.service';
@@ -23,6 +28,11 @@ import { SearchService } from 'src/services/search.service';
 
 type AssistantProvider = 'openai' | 'anthropic' | 'claude-cli' | 'codex-cli';
 type LlmProvider = AssistantProvider | 'local-cli';
+type AssistantToolType =
+  | 'content_hash_audit'
+  | 'sidecar_pair_audit'
+  | 'metadata_search'
+  | 'mobile_original_compare';
 
 type RemoteProviderConfig = {
   provider: Exclude<LlmProvider, 'local-cli'>;
@@ -54,6 +64,27 @@ const assistantActionTypes = [
   'original_file_audit',
   'review',
 ] as const;
+
+const assistantToolInputProperties = {
+  cohortType: { type: ['string', 'null'], enum: ['source_path', 'date', 'camera', 'location', null] },
+  cohortKey: { type: ['string', 'null'] },
+  originalPathContains: { type: ['string', 'null'] },
+  originalFileNameContains: { type: ['string', 'null'] },
+  fileExtension: { type: ['string', 'null'] },
+  checksumAlgorithm: { type: ['string', 'null'] },
+  type: { type: ['string', 'null'], enum: ['IMAGE', 'VIDEO', 'AUDIO', 'OTHER', null] },
+  takenAfter: { type: ['string', 'null'] },
+  takenBefore: { type: ['string', 'null'] },
+  make: { type: ['string', 'null'] },
+  model: { type: ['string', 'null'] },
+  country: { type: ['string', 'null'] },
+  state: { type: ['string', 'null'] },
+  city: { type: ['string', 'null'] },
+  noGps: { type: ['boolean', 'null'] },
+  unknownCamera: { type: ['boolean', 'null'] },
+  hasMobileMetadata: { type: ['boolean', 'null'] },
+  desktopSourcePrefix: { type: ['string', 'null'] },
+};
 
 const assistantOutputSchema = {
   type: 'object',
@@ -95,13 +126,39 @@ const assistantOutputSchema = {
             description:
               'Exact deterministic cohort key from deterministicAudits. Use with cohortType to let Immich materialize the cohort at action time.',
           },
+          toolType: {
+            type: ['string', 'null'],
+            enum: ['content_hash_audit', 'sidecar_pair_audit', 'metadata_search', 'mobile_original_compare', null],
+            description:
+              'Read-only Immich assistant tool to run when this action needs deterministic evidence beyond the preloaded context.',
+          },
+          toolInput: {
+            type: ['object', 'null'],
+            additionalProperties: false,
+            properties: assistantToolInputProperties,
+            required: Object.keys(assistantToolInputProperties),
+            description:
+              'Input for toolType. Use cohortType/cohortKey, path/name/date/camera/location filters, or desktopSourcePrefix as needed. Assistant tools scan every matching asset.',
+          },
           confidence: {
             type: 'number',
             minimum: 0,
             maximum: 1,
           },
         },
-        required: ['type', 'title', 'rationale', 'query', 'albumName', 'assetIds', 'cohortType', 'cohortKey', 'confidence'],
+        required: [
+          'type',
+          'title',
+          'rationale',
+          'query',
+          'albumName',
+          'assetIds',
+          'cohortType',
+          'cohortKey',
+          'toolType',
+          'toolInput',
+          'confidence',
+        ],
       },
     },
   },
@@ -114,7 +171,8 @@ export class AssistantService extends BaseService {
   private readonly assetMetadataSampleSize = 60;
   private readonly auditBucketLimit = 80;
   private readonly duplicateCandidateLimit = 40;
-  private readonly reviewAlbumCohortLimit = 5000;
+  private readonly assistantToolInlineResultThreshold = 100;
+  private readonly assistantToolLogDirectory = '/data/assistant-audits';
 
   async assess(auth: AuthDto): Promise<AssistantAssessmentResponseDto> {
     const albumService = BaseService.create(AlbumService, this);
@@ -190,7 +248,7 @@ export class AssistantService extends BaseService {
   }
 
   async chat(auth: AuthDto, dto: AssistantChatRequestDto): Promise<AssistantChatResponseDto> {
-    const context = await this.getLibraryContext(auth);
+    const context = await this.getLibraryContext(auth, dto);
     const providerConfig = this.getLlmProvider(dto.provider);
 
     if (!providerConfig) {
@@ -238,52 +296,137 @@ export class AssistantService extends BaseService {
     dto: AssistantReviewAlbumRequestDto,
   ): Promise<AssistantReviewAlbumResponseDto> {
     const albumService = BaseService.create(AlbumService, this);
-    const resolvedAssetIds = await this.getReviewAlbumAssetIds(auth, dto);
-    if (resolvedAssetIds.assetIds.length === 0) {
+    const assetIds = await this.getReviewAlbumAssetIds(auth, dto);
+    if (assetIds.length === 0) {
       throw new BadRequestException('The assistant review album request did not resolve any assets');
     }
 
     const album = await albumService.create(auth, {
       albumName: dto.albumName,
-      description: this.getReviewAlbumDescription(dto, resolvedAssetIds.truncated),
-      assetIds: resolvedAssetIds.assetIds,
+      description: this.getReviewAlbumDescription(dto),
+      assetIds,
     });
 
     return {
       albumId: album.id,
       albumName: album.albumName,
-      assetCount: resolvedAssetIds.assetIds.length,
-      truncated: resolvedAssetIds.truncated,
+      assetCount: assetIds.length,
+      truncated: false,
     };
+  }
+
+  async runTool(auth: AuthDto, dto: AssistantToolRequestDto): Promise<AssistantToolResponseDto> {
+    let response: AssistantToolResponseDto;
+
+    switch (dto.toolType) {
+      case 'content_hash_audit': {
+        response = await this.runContentHashAudit(auth, dto);
+        break;
+      }
+
+      case 'sidecar_pair_audit': {
+        response = await this.runSidecarPairAudit(auth, dto);
+        break;
+      }
+
+      case 'metadata_search': {
+        response = await this.runMetadataSearch(auth, dto);
+        break;
+      }
+
+      case 'mobile_original_compare': {
+        response = await this.runMobileOriginalCompare(auth, dto);
+        break;
+      }
+    }
+
+    return this.withAssistantToolLog(auth, response);
+  }
+
+  private async withAssistantToolLog(
+    auth: AuthDto,
+    response: AssistantToolResponseDto,
+  ): Promise<AssistantToolResponseDto> {
+    const resultCount = response.results.length;
+    const errorCount = response.errors.length;
+    const inlineResultsOmitted = resultCount + errorCount > this.assistantToolInlineResultThreshold;
+
+    if (!inlineResultsOmitted) {
+      return {
+        ...response,
+        resultCount,
+        errorCount,
+        inlineResultsOmitted: false,
+      };
+    }
+
+    const logFilePath = await this.writeAssistantToolLog(auth, response, resultCount, errorCount);
+
+    return {
+      ...response,
+      summary: {
+        ...response.summary,
+        resultCount,
+        errorCount,
+        logFilePath,
+        logFileFormat: 'json',
+        inlineResultsOmitted,
+      },
+      results: [],
+      errors: [],
+      logFilePath,
+      logFileFormat: 'json',
+      resultCount,
+      errorCount,
+      inlineResultsOmitted,
+    };
+  }
+
+  private async writeAssistantToolLog(
+    auth: AuthDto,
+    response: AssistantToolResponseDto,
+    resultCount: number,
+    errorCount: number,
+  ) {
+    this.storageRepository.mkdirSync(this.assistantToolLogDirectory);
+    const timestamp = response.generatedAt.replaceAll(':', '-').replaceAll('.', '-');
+    const logFilePath = join(
+      this.assistantToolLogDirectory,
+      `${timestamp}-${response.toolType}-${this.cryptoRepository.randomUUID()}.json`,
+    );
+    const payload = {
+      ...response,
+      ownerId: auth.user.id,
+      logFilePath,
+      logFileFormat: 'json',
+      resultCount,
+      errorCount,
+      inlineResultsOmitted: false,
+    };
+
+    await this.storageRepository.createOrOverwriteFile(logFilePath, Buffer.from(JSON.stringify(payload)));
+    return logFilePath;
   }
 
   private async getReviewAlbumAssetIds(
     auth: AuthDto,
     dto: AssistantReviewAlbumRequestDto,
-  ): Promise<{ assetIds: string[]; truncated: boolean }> {
+  ): Promise<string[]> {
     const explicitAssetIds = this.toUniqueStrings(dto.assetIds ?? []);
     if (explicitAssetIds.length > 0) {
-      return { assetIds: explicitAssetIds.slice(0, this.reviewAlbumCohortLimit), truncated: explicitAssetIds.length > this.reviewAlbumCohortLimit };
+      return explicitAssetIds;
     }
 
     if (!dto.cohortType || !dto.cohortKey) {
-      return { assetIds: [], truncated: false };
+      return [];
     }
 
-    const assetIds = await this.assetRepository.getAssistantCohortAssetIds(
-      auth.user.id,
-      dto.cohortType,
-      dto.cohortKey,
-      this.reviewAlbumCohortLimit + 1,
-    );
-
-    return { assetIds: assetIds.slice(0, this.reviewAlbumCohortLimit), truncated: assetIds.length > this.reviewAlbumCohortLimit };
+    return await this.assetRepository.getAssistantCohortAssetIds(auth.user.id, dto.cohortType, dto.cohortKey);
   }
 
-  private getReviewAlbumDescription(dto: AssistantReviewAlbumRequestDto, truncated: boolean) {
+  private getReviewAlbumDescription(dto: AssistantReviewAlbumRequestDto) {
     const source = dto.cohortType && dto.cohortKey ? `cohort ${dto.cohortType}:${dto.cohortKey}` : 'explicit asset IDs';
-    const suffix = truncated ? ` Limited to first ${this.reviewAlbumCohortLimit} assets for review safety.` : '';
-    return `Created by Immich Assistant from ${source}.${suffix}`;
+    return `Created by Immich Assistant from ${source}.`;
   }
 
   private getLlmProvider(requested?: AssistantProvider): ProviderConfig | undefined {
@@ -355,7 +498,7 @@ export class AssistantService extends BaseService {
     };
   }
 
-  private async getLibraryContext(auth: AuthDto) {
+  private async getLibraryContext(auth: AuthDto, dto?: AssistantChatRequestDto) {
     const albumService = BaseService.create(AlbumService, this);
     const assetService = BaseService.create(AssetService, this);
     const libraryService = BaseService.create(LibraryService, this);
@@ -416,6 +559,8 @@ export class AssistantService extends BaseService {
     const externalLibraries = await this.toLibraryContexts(libraryService, libraries);
     const topYears = this.toTopYears(timeBuckets);
 
+    const requestedToolResults = dto ? await this.getAutomaticToolResults(auth, dto) : [];
+
     return {
       albums: albums.slice(0, 50).map((album) => this.toAlbumContext(album)),
       externalLibraries,
@@ -441,8 +586,9 @@ export class AssistantService extends BaseService {
         },
         videoCohorts,
         mobileAppMetadataCohorts,
+        requestedToolResults,
         actionGuidance:
-          'For reversible review albums, use cohortType and cohortKey from these deterministic cohorts instead of enumerating large asset ID lists.',
+          'For reversible review albums, use cohortType and cohortKey from these deterministic cohorts instead of enumerating large asset ID lists. For deeper evidence, propose a read-only tool action with toolType/toolInput so Immich can run content_hash_audit, sidecar_pair_audit, metadata_search, or mobile_original_compare.',
       },
       topYears,
       cameraMakes: this.toStringList(cameraMakes),
@@ -665,13 +811,358 @@ export class AssistantService extends BaseService {
     };
   }
 
+  private async getAutomaticToolResults(auth: AuthDto, dto: AssistantChatRequestDto) {
+    const latest = dto.messages.toReversed().find((message) => message.role === 'user')?.content.toLowerCase() ?? '';
+    const toolRequests: AssistantToolRequestDto[] = [];
+
+    if (/\b(byte|hash|checksum|integrity|content checksum|sha1)\b/.test(latest)) {
+      toolRequests.push({ toolType: 'content_hash_audit', input: {} });
+    }
+
+    if (/\b(sidecar|aae|xmp|json|rendered|edited pair|variant|original pair)\b/.test(latest)) {
+      toolRequests.push({ toolType: 'sidecar_pair_audit', input: {} });
+    }
+
+    if (/\b(mobile|iphone|ios|phone upload|desktop export|desktop original)\b/.test(latest)) {
+      toolRequests.push({
+        toolType: 'mobile_original_compare',
+        input: { desktopSourcePrefix: '/external/desktop-icloud-originals' },
+      });
+    }
+
+    if (toolRequests.length === 0 || toolRequests.length > 2) {
+      return [];
+    }
+
+    const results = await Promise.all(toolRequests.map((request) => this.runTool(auth, request)));
+    return results.map((result) => ({
+      toolType: result.toolType,
+      generatedAt: result.generatedAt,
+      summary: result.summary,
+      resultCount: result.resultCount ?? result.results.length,
+      errorCount: result.errorCount ?? result.errors.length,
+      logFilePath: result.logFilePath ?? null,
+      fullResultsAvailableByRunningToolAction: true,
+    }));
+  }
+
+  private async runContentHashAudit(
+    auth: AuthDto,
+    dto: AssistantToolRequestDto,
+  ): Promise<AssistantToolResponseDto> {
+    const filters = this.toAuditAssetSearch(dto.input);
+    const totalMatchingAssets = await this.assetRepository.getAssistantAuditAssetCount(auth.user.id, filters);
+    const scannedAssets = await this.assetRepository.getAssistantAuditAssets(auth.user.id, filters);
+    const errors: AssistantToolResponseDto['errors'] = [];
+    const hashedResults: Array<Record<string, unknown>> = [];
+    const duplicateGroups = new Map<string, Array<Record<string, unknown>>>();
+
+    for (const asset of scannedAssets) {
+      try {
+        const actualChecksumBuffer = await this.cryptoRepository.hashFile(asset.originalPath);
+        const actualChecksum = actualChecksumBuffer.toString('base64');
+        const storedChecksumMatches =
+          asset.checksumAlgorithm === 'sha1' && asset.storedChecksum ? actualChecksum === asset.storedChecksum : null;
+        const result = {
+          assetId: asset.id,
+          originalPath: asset.originalPath,
+          originalFileName: asset.originalFileName,
+          type: asset.type,
+          checksumAlgorithm: asset.checksumAlgorithm,
+          storedChecksum: asset.storedChecksum,
+          actualSha1: actualChecksum,
+          storedChecksumMatches,
+          fileSizeInByte: asset.fileSizeInByte,
+          width: asset.width,
+          height: asset.height,
+          dateTimeOriginal: asset.dateTimeOriginal,
+          make: asset.make,
+          model: asset.model,
+        };
+        hashedResults.push(result);
+        const group = duplicateGroups.get(actualChecksum) ?? [];
+        group.push({
+          assetId: asset.id,
+          originalPath: asset.originalPath,
+          fileSizeInByte: asset.fileSizeInByte,
+          width: asset.width,
+          height: asset.height,
+        });
+        duplicateGroups.set(actualChecksum, group);
+      } catch (error: unknown) {
+        errors.push({
+          assetId: asset.id,
+          originalPath: asset.originalPath,
+          reason: this.getErrorMessage(error),
+        });
+      }
+    }
+
+    const exactContentDuplicateGroups = [...duplicateGroups.entries()]
+      .filter(([, group]) => group.length > 1)
+      .map(([actualSha1, assets]) => ({ actualSha1, assetCount: assets.length, assets }));
+
+    return {
+      toolType: dto.toolType,
+      generatedAt: new Date().toISOString(),
+      summary: {
+        totalMatchingAssets,
+        scannedAssets: scannedAssets.length,
+        hashedAssets: hashedResults.length,
+        errorCount: errors.length,
+        complete: totalMatchingAssets === scannedAssets.length,
+        storedSha1ComparableAssets: hashedResults.filter((item) => item.storedChecksumMatches !== null).length,
+        storedSha1MismatchCount: hashedResults.filter((item) => item.storedChecksumMatches === false).length,
+        exactContentDuplicateGroupCount: exactContentDuplicateGroups.length,
+        note:
+          'This reads originalPath bytes from disk and computes fresh SHA1. sha1-path database checksums are not treated as byte-level evidence.',
+      },
+      results: [...exactContentDuplicateGroups, ...hashedResults],
+      errors,
+    };
+  }
+
+  private async runSidecarPairAudit(
+    auth: AuthDto,
+    dto: AssistantToolRequestDto,
+  ): Promise<AssistantToolResponseDto> {
+    const filters = this.toAuditAssetSearch(dto.input);
+    const totalMatchingAssets = await this.assetRepository.getAssistantAuditAssetCount(auth.user.id, filters);
+    const scannedAssets = await this.assetRepository.getAssistantAuditAssets(auth.user.id, filters);
+    const assetsByDirectory = new Map<string, AssistantAuditAsset[]>();
+    const sidecarExtensions = new Set(['.aae', '.xmp', '.json']);
+    const livePhotoExtensions = new Set(['.mov']);
+    const errors: AssistantToolResponseDto['errors'] = [];
+    const sidecarMatches: Array<Record<string, unknown>> = [];
+    const probableRenderedPairs: Array<Record<string, unknown>> = [];
+
+    for (const asset of scannedAssets) {
+      const directory = dirname(asset.originalPath);
+      const directoryAssets = assetsByDirectory.get(directory) ?? [];
+      directoryAssets.push(asset);
+      assetsByDirectory.set(directory, directoryAssets);
+    }
+
+    const directories = [...assetsByDirectory.keys()];
+    let sidecarFileCount = 0;
+    let orphanSidecarCount = 0;
+
+    for (const directory of directories) {
+      const directoryAssets = assetsByDirectory.get(directory) ?? [];
+      const assetBaseNames = new Map<string, AssistantAuditAsset[]>();
+      for (const asset of directoryAssets) {
+        const normalized = this.toNormalizedOriginalBase(asset.originalFileName);
+        const group = assetBaseNames.get(normalized) ?? [];
+        group.push(asset);
+        assetBaseNames.set(normalized, group);
+      }
+
+      try {
+        const entries = await readdir(directory, { withFileTypes: true });
+        for (const entry of entries) {
+          if (!entry.isFile()) {
+            continue;
+          }
+
+          const extension = extname(entry.name).toLowerCase();
+          if (!sidecarExtensions.has(extension) && !livePhotoExtensions.has(extension)) {
+            continue;
+          }
+
+          const normalized = this.toNormalizedOriginalBase(entry.name);
+          const entryPath = join(directory, entry.name);
+          const matchedAssets = (assetBaseNames.get(normalized) ?? []).filter((asset) =>
+            livePhotoExtensions.has(extension) ? asset.originalPath !== entryPath && asset.type !== 'VIDEO' : true,
+          );
+          if (sidecarExtensions.has(extension)) {
+            sidecarFileCount += 1;
+            if (matchedAssets.length === 0) {
+              orphanSidecarCount += 1;
+            }
+          }
+
+          if (matchedAssets.length > 0) {
+            sidecarMatches.push({
+              directory,
+              sidecarName: entry.name,
+              sidecarType: sidecarExtensions.has(extension) ? extension.slice(1).toUpperCase() : 'MOV paired media',
+              matchedAssets: matchedAssets.map((asset) => ({
+                assetId: asset.id,
+                originalPath: asset.originalPath,
+                originalFileName: asset.originalFileName,
+                type: asset.type,
+              })),
+            });
+          }
+        }
+      } catch (error: unknown) {
+        errors.push({ directory, reason: this.getErrorMessage(error) });
+      }
+
+      for (const [normalizedBase, group] of assetBaseNames) {
+        if (group.length <= 1) {
+          continue;
+        }
+
+        probableRenderedPairs.push({
+          directory,
+          normalizedBase,
+          assetCount: group.length,
+          assets: group.map((asset) => ({
+            assetId: asset.id,
+            originalFileName: asset.originalFileName,
+            originalPath: asset.originalPath,
+            fileSizeInByte: asset.fileSizeInByte,
+            width: asset.width,
+            height: asset.height,
+            dateTimeOriginal: asset.dateTimeOriginal,
+            isEdited: asset.isEdited,
+          })),
+        });
+      }
+    }
+
+    return {
+      toolType: dto.toolType,
+      generatedAt: new Date().toISOString(),
+      summary: {
+        totalMatchingAssets,
+        scannedAssets: scannedAssets.length,
+        complete: totalMatchingAssets === scannedAssets.length,
+        directoriesFound: assetsByDirectory.size,
+        directoriesScanned: directories.length,
+        sidecarFileCount,
+        sidecarMatchCount: sidecarMatches.length,
+        orphanSidecarCount,
+        probableRenderedPairCount: probableRenderedPairs.length,
+      },
+      results: [...sidecarMatches, ...probableRenderedPairs],
+      errors,
+    };
+  }
+
+  private async runMetadataSearch(
+    auth: AuthDto,
+    dto: AssistantToolRequestDto,
+  ): Promise<AssistantToolResponseDto> {
+    const filters = this.toAuditAssetSearch(dto.input);
+    const totalMatchingAssets = await this.assetRepository.getAssistantAuditAssetCount(auth.user.id, filters);
+    const scannedAssets = await this.assetRepository.getAssistantAuditAssets(auth.user.id, filters);
+
+    return {
+      toolType: dto.toolType,
+      generatedAt: new Date().toISOString(),
+      summary: {
+        totalMatchingAssets,
+        returnedAssets: scannedAssets.length,
+        complete: totalMatchingAssets === scannedAssets.length,
+        filters: dto.input ?? {},
+      },
+      results: scannedAssets.map((asset) => this.toAuditAssetResult(asset)),
+      errors: [],
+    };
+  }
+
+  private async runMobileOriginalCompare(
+    auth: AuthDto,
+    dto: AssistantToolRequestDto,
+  ): Promise<AssistantToolResponseDto> {
+    const input = dto.input ?? {};
+    const desktopSourcePrefix = input.desktopSourcePrefix ?? '/external/desktop-icloud-originals';
+    const results = await this.assetRepository.getAssistantMobileOriginalComparison(
+      auth.user.id,
+      desktopSourcePrefix,
+    );
+
+    return {
+      toolType: dto.toolType,
+      generatedAt: new Date().toISOString(),
+      summary: {
+        desktopSourcePrefix,
+        mobileCohortCount: results.length,
+        mobileAssetCount: results.reduce((sum, result) => sum + result.mobileAssetCount, 0),
+        referenceAssetCount: results.reduce((sum, result) => sum + result.referenceAssetCount, 0),
+        exactTraitMatchCount: results.reduce((sum, result) => sum + result.exactTraitMatchCount, 0),
+        sizeMismatchCount: results.reduce((sum, result) => sum + result.sizeMismatchCount, 0),
+        dimensionsMismatchCount: results.reduce((sum, result) => sum + result.dimensionsMismatchCount, 0),
+        dateMismatchCount: results.reduce((sum, result) => sum + result.dateMismatchCount, 0),
+        cameraMismatchCount: results.reduce((sum, result) => sum + result.cameraMismatchCount, 0),
+        note:
+          'Comparison is based on mobile-app metadata assets matched to desktop external-library references by filename, then file size, dimensions, EXIF date, make, and model.',
+      },
+      results: results as unknown as Array<Record<string, unknown>>,
+      errors: [],
+    };
+  }
+
+  private toAuditAssetSearch(input: AssistantToolRequestDto['input'] = {}): AssistantAuditAssetSearch {
+    return {
+      cohortType: input.cohortType,
+      cohortKey: input.cohortKey,
+      originalPathContains: this.toOptionalValue(input.originalPathContains),
+      originalFileNameContains: this.toOptionalValue(input.originalFileNameContains),
+      fileExtension: this.toOptionalValue(input.fileExtension),
+      checksumAlgorithm: this.toOptionalValue(input.checksumAlgorithm),
+      type: this.toOptionalValue(input.type),
+      takenAfter: this.toOptionalValue(input.takenAfter),
+      takenBefore: this.toOptionalValue(input.takenBefore),
+      make: this.toOptionalValue(input.make),
+      model: this.toOptionalValue(input.model),
+      country: this.toOptionalValue(input.country),
+      state: this.toOptionalValue(input.state),
+      city: this.toOptionalValue(input.city),
+      noGps: this.toOptionalValue(input.noGps),
+      unknownCamera: this.toOptionalValue(input.unknownCamera),
+      hasMobileMetadata: this.toOptionalValue(input.hasMobileMetadata),
+    };
+  }
+
+  private toOptionalValue<T>(value: T | null | undefined): T | undefined {
+    return value ?? undefined;
+  }
+
+  private toAuditAssetResult(asset: AssistantAuditAsset): Record<string, unknown> {
+    return {
+      assetId: asset.id,
+      type: asset.type,
+      originalPath: asset.originalPath,
+      originalFileName: asset.originalFileName,
+      checksumAlgorithm: asset.checksumAlgorithm,
+      storedChecksum: asset.storedChecksum,
+      isExternal: asset.isExternal,
+      isEdited: asset.isEdited,
+      fileSizeInByte: asset.fileSizeInByte,
+      width: asset.width,
+      height: asset.height,
+      duration: asset.duration,
+      localDateTime: asset.localDateTime,
+      dateTimeOriginal: asset.dateTimeOriginal,
+      make: asset.make,
+      model: asset.model,
+      latitude: asset.latitude,
+      longitude: asset.longitude,
+      city: asset.city,
+      state: asset.state,
+      country: asset.country,
+      mobileAppMetadata: asset.mobileAppMetadata,
+    };
+  }
+
+  private toNormalizedOriginalBase(filename: string) {
+    return basename(filename, extname(filename))
+      .toLowerCase()
+      .replace(/\s*\(\d+\)$/, '')
+      .replace(/[-_\s.]+(edited|edit|adjusted|rendered|copy|fullsizeoutput_[a-f0-9]+)$/i, '')
+      .replace(/^img_e(\d+)$/i, 'img_$1');
+  }
+
   private buildPrompt(
     dto: AssistantChatRequestDto,
     context: Awaited<ReturnType<AssistantService['getLibraryContext']>>,
   ) {
     return {
       instruction:
-        'You are an in-app Immich photo library assistant for organizing very large photo and video libraries. Help assess metadata, source cohorts, time ranges, locations, albums, folders, review queues, duplicates, video metadata, and original-file risks using the provided library context. Prefer deterministicAudits over the sampled assets when discussing whole-library counts, cohorts, duplicate candidates, videos, mobile upload audit coverage, and review-album candidates. When proposing a reversible review album from deterministicAudits, set action.cohortType and action.cohortKey to the exact cohort fields and leave assetIds empty unless the action is based on explicit sampled assets. Treat checksumAlgorithm=sha1 as file-content evidence and checksumAlgorithm=sha1-path as external-library path identity, not byte-level integrity. When a field is absent from the provided context, say it is not visible in the assistant context; do not claim it is missing from the source file or Immich database. Do not suggest tagging unless the user explicitly asks for tags. Do not claim any change has been applied. Prefer reversible, review-first organization. Never suggest deleting assets unless the user explicitly asks about deletion.',
+        'You are an in-app Immich photo library assistant for organizing very large photo and video libraries. Help assess metadata, source cohorts, time ranges, locations, albums, folders, review queues, duplicates, video metadata, and original-file risks using the provided library context. Prefer deterministicAudits over the sampled assets when discussing whole-library counts, cohorts, duplicate candidates, videos, mobile upload audit coverage, and review-album candidates. When deterministicAudits.requestedToolResults is present, treat it as server-run evidence from the current user request; it contains the full tool summary, result count, error count, and logFilePath when large row-level output was written to disk. Full row-level results remain available through a tool action and, when present, the JSON audit log. When proposing a reversible review album from deterministicAudits, set action.cohortType and action.cohortKey to the exact cohort fields and leave assetIds empty unless the action is based on explicit sampled assets. When more evidence is needed, include action.toolType and action.toolInput for one of the read-only Immich tools: content_hash_audit, sidecar_pair_audit, metadata_search, or mobile_original_compare. Treat checksumAlgorithm=sha1 as file-content evidence and checksumAlgorithm=sha1-path as external-library path identity, not byte-level integrity. When a field is absent from the provided context, say it is not visible in the assistant context; do not claim it is missing from the source file or Immich database. Do not suggest tagging unless the user explicitly asks for tags. Do not claim any change has been applied. Prefer reversible, review-first organization. Never suggest deleting assets unless the user explicitly asks about deletion.',
       userContent: JSON.stringify({
         libraryContext: context,
         conversation: dto.messages,
@@ -974,6 +1465,8 @@ export class AssistantService extends BaseService {
           : [],
         cohortType: this.toCohortType(action.cohortType),
         cohortKey: typeof action.cohortKey === 'string' ? action.cohortKey : null,
+        toolType: this.toToolType(action.toolType),
+        toolInput: this.toToolInput(action.toolInput),
         confidence: typeof action.confidence === 'number' ? action.confidence : 0.5,
       });
 
@@ -987,6 +1480,19 @@ export class AssistantService extends BaseService {
 
   private toCohortType(value: unknown) {
     return value === 'source_path' || value === 'date' || value === 'camera' || value === 'location' ? value : null;
+  }
+
+  private toToolType(value: unknown): AssistantToolType | null {
+    return value === 'content_hash_audit' ||
+      value === 'sidecar_pair_audit' ||
+      value === 'metadata_search' ||
+      value === 'mobile_original_compare'
+      ? value
+      : null;
+  }
+
+  private toToolInput(value: unknown) {
+    return this.isRecord(value) ? value : null;
   }
 
   private getErrorMessage(error: unknown): string {

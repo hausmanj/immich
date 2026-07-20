@@ -7,6 +7,8 @@ import {
   AssistantChatResponseDto,
   AssistantReviewAlbumRequestDto,
   AssistantReviewAlbumResponseDto,
+  AssistantToolRequestDto,
+  AssistantToolResponseDto,
 } from 'src/dtos/assistant.dto';
 import { AuthDto } from 'src/dtos/auth.dto';
 import { Permission } from 'src/enum';
@@ -39,6 +41,18 @@ export class AssistantController {
   })
   assistantChat(@Auth() auth: AuthDto, @Body() dto: AssistantChatRequestDto): Promise<AssistantChatResponseDto> {
     return this.service.chat(auth, dto);
+  }
+
+  @Post('tool')
+  @Authenticated({ permission: Permission.AssetRead })
+  @HttpCode(HttpStatus.OK)
+  @Endpoint({
+    summary: 'Run an assistant audit tool',
+    description: 'Run a read-only deterministic assistant audit or search against the authenticated user library.',
+    history: HistoryBuilder.v3(),
+  })
+  runTool(@Auth() auth: AuthDto, @Body() dto: AssistantToolRequestDto): Promise<AssistantToolResponseDto> {
+    return this.service.runTool(auth, dto);
   }
 
   @Post('review-album')
