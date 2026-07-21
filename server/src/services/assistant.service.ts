@@ -711,22 +711,71 @@ export class AssistantService extends BaseService {
       startedAt,
     });
 
+    void this.executeIndexRun(auth, dto, run.id, importPaths);
+    return this.toAssistantIndexRunResponse(run);
+  }
+
+  private async executeIndexRun(
+    auth: AuthDto,
+    dto: AssistantIndexRunRequestDto,
+    runId: string,
+    importPaths: string[],
+  ) {
     try {
-      const indexedAssets = await this.assistantIndexRepository.indexImportedAssets(run.id, auth.user.id, {
+      const indexedAssets = await this.assistantIndexRepository.indexImportedAssets(runId, auth.user.id, {
         libraryId: dto.libraryId ?? null,
         originalPathPrefix: dto.originalPathPrefix ?? null,
       });
+      await this.updateIndexRunProgress(runId, 'raw_inventory', {
+        indexedImportedAssets: indexedAssets,
+        indexedRawFiles: 0,
+        contentHashIndexedAssets: 0,
+        contentHashErrorCount: 0,
+      });
       const indexedRawFiles = (dto.includeRawFiles ?? true)
-        ? await this.indexRawFiles(auth, run.id, dto.libraryId ?? null, dto.originalPathPrefix, importPaths, {
-            includeSidecars: dto.includeSidecars ?? true,
-          })
+        ? await this.indexRawFiles(
+            auth,
+            runId,
+            dto.libraryId ?? null,
+            dto.originalPathPrefix,
+            importPaths,
+            {
+              includeSidecars: dto.includeSidecars ?? true,
+            },
+            async (indexedRawFiles) =>
+              this.updateIndexRunProgress(runId, 'raw_inventory', {
+                indexedImportedAssets: indexedAssets,
+                indexedRawFiles,
+                contentHashIndexedAssets: 0,
+                contentHashErrorCount: 0,
+              }),
+          )
         : 0;
+      await this.updateIndexRunProgress(runId, (dto.includeContentHash ?? true) ? 'content_hash' : 'grouping', {
+        indexedImportedAssets: indexedAssets,
+        indexedRawFiles,
+        contentHashIndexedAssets: 0,
+        contentHashErrorCount: 0,
+      });
       const hashResult = (dto.includeContentHash ?? true)
-        ? await this.hashAssistantIndexAssets(run.id)
+        ? await this.hashAssistantIndexAssets(runId, async (hashResult) =>
+            this.updateIndexRunProgress(runId, 'content_hash', {
+              indexedImportedAssets: indexedAssets,
+              indexedRawFiles,
+              contentHashIndexedAssets: hashResult.hashed,
+              contentHashErrorCount: hashResult.errors,
+            }),
+          )
         : { hashed: 0, errors: 0 };
-      const groupCount = await this.assistantIndexRepository.rebuildGroups(run.id);
-      const summary = await this.assistantIndexRepository.getRunSummary(run.id);
-      const completedRun = await this.assistantIndexRepository.updateRun(run.id, {
+      await this.updateIndexRunProgress(runId, 'grouping', {
+        indexedImportedAssets: indexedAssets,
+        indexedRawFiles,
+        contentHashIndexedAssets: hashResult.hashed,
+        contentHashErrorCount: hashResult.errors,
+      });
+      const groupCount = await this.assistantIndexRepository.rebuildGroups(runId);
+      const summary = await this.assistantIndexRepository.getRunSummary(runId);
+      await this.assistantIndexRepository.updateRun(runId, {
         status: 'completed',
         totalAssets: indexedAssets + indexedRawFiles,
         indexedAssets: indexedAssets + indexedRawFiles,
@@ -741,10 +790,8 @@ export class AssistantService extends BaseService {
         },
         finishedAt: new Date(),
       });
-      const groups = await this.assistantIndexRepository.getGroups(run.id);
-      return this.toAssistantIndexRunResponse(completedRun, groups);
     } catch (error: unknown) {
-      const failedRun = await this.assistantIndexRepository.updateRun(run.id, {
+      await this.assistantIndexRepository.updateRun(runId, {
         status: 'failed',
         errorCount: 1,
         summary: {
@@ -753,7 +800,6 @@ export class AssistantService extends BaseService {
         },
         finishedAt: new Date(),
       });
-      return this.toAssistantIndexRunResponse(failedRun);
     }
   }
 
@@ -764,6 +810,7 @@ export class AssistantService extends BaseService {
     originalPathPrefix: string | null | undefined,
     importPaths: string[],
     options: { includeSidecars: boolean },
+    onProgress?: (indexed: number) => Promise<void>,
   ) {
     const roots = this.toUniqueStrings(originalPathPrefix ? [originalPathPrefix] : importPaths).map((item) =>
       normalize(item),
@@ -772,6 +819,7 @@ export class AssistantService extends BaseService {
     const batch: AssistantRawIndexFile[] = [];
     const flush = async () => {
       indexed += await this.assistantIndexRepository.insertRawFileBatch(runId, auth.user.id, libraryId, batch.splice(0));
+      await onProgress?.(indexed);
     };
 
     for (const root of roots) {
@@ -878,7 +926,10 @@ export class AssistantService extends BaseService {
     return labels;
   }
 
-  private async hashAssistantIndexAssets(runId: string) {
+  private async hashAssistantIndexAssets(
+    runId: string,
+    onProgress?: (result: { hashed: number; errors: number }) => Promise<void>,
+  ) {
     let cursor: string | null = null;
     let hashed = 0;
     let errors = 0;
@@ -901,9 +952,35 @@ export class AssistantService extends BaseService {
           errors += 1;
         }
       }
+      await onProgress?.({ hashed, errors });
     }
 
     return { hashed, errors };
+  }
+
+  private async updateIndexRunProgress(
+    runId: string,
+    phase: 'raw_inventory' | 'content_hash' | 'grouping',
+    progress: {
+      indexedImportedAssets: number;
+      indexedRawFiles: number;
+      contentHashIndexedAssets: number;
+      contentHashErrorCount: number;
+    },
+  ) {
+    const indexedAssets = progress.indexedImportedAssets + progress.indexedRawFiles;
+    await this.assistantIndexRepository.updateRun(runId, {
+      totalAssets: indexedAssets,
+      indexedAssets,
+      errorCount: progress.contentHashErrorCount,
+      summary: {
+        phase,
+        ...progress,
+        indexedAssetCount: indexedAssets,
+        note:
+          'This assistant index run is executing in the background. Poll GET /assistant/index-runs/:id for progress.',
+      },
+    });
   }
 
   private toAssistantIndexRunResponse(

@@ -40,12 +40,12 @@ The local assistant prototype currently has these useful pieces:
 
 ## Major Gaps
 
-The assistant now has a persisted evidence index, but the execution model is still synchronous and the higher-level organization intelligence needs more durable planning state for 1M+ messy files.
+The assistant now has a persisted evidence index with non-blocking execution, but it still needs durable checkpoint/resume and higher-level organization intelligence for 1M+ messy files.
 
 Priority gaps:
 
 - Assistant-owned persisted inventory/index tables now exist for imported asset evidence, raw unimported file inventory, content hashes, duplicate signatures, and first-pass classifications, but not yet for final organization decisions.
-- The assistant-owned persisted index still runs synchronously. It needs checkpointed background execution, cancel/resume, progress reporting, and stale-index detection before very large 1M+ runs.
+- The assistant-owned persisted index now runs in the background after the API creates a run, but it is still in-process. It needs durable queue-backed execution, cancel/resume, restart recovery, and stale-index detection before very large 1M+ runs.
 - Content hash evidence is now stored as a reusable index field, but perceptual/near-duplicate signatures are not.
 - Raw inventory covers non-imported files under target import roots, but it still needs richer source-tree classification for backup/application/export roots.
 - No dedicated classifier for low-value or risky cohorts such as icons, thumbnails, tiny files, app caches, message attachment thumbnails, temporary files, stickers, screenshots, or rendered copies.
@@ -90,7 +90,7 @@ Build the index in staged, resumable passes:
 
 ## Immediate Implementation Order
 
-1. Convert the first assistant index pass from synchronous SQL execution into queued/resumable background jobs with cancel/resume.
+1. Convert the in-process background assistant index pass into queued/resumable jobs with cancel/resume and restart recovery.
 2. Convert current read-only audit tools into background jobs that write durable indexed evidence and logs.
 3. Expand the source-tree/noise classifier for the laptop-backup style library before importing or organizing everything.
 4. Add a coverage ledger so the assistant can prove what is covered, deferred, risky, or unclassified.
