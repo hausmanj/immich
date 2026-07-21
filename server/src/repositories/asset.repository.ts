@@ -143,6 +143,10 @@ export interface AssistantLibraryAuditBucket {
   cameraCount: number;
   generatedLikeCount: number;
   smallDimensionCount: number;
+  activeDayCount: number;
+  dateSpanDays: number | null;
+  distinctCameraCount: number;
+  distinctPlaceCount: number;
   mobileAppMetadataCount: number;
   dateStart: string | null;
   dateEnd: string | null;
@@ -624,6 +628,14 @@ export class AssetRepository {
         count(*) filter (where ae.make is not null or ae.model is not null)::int as "cameraCount",
         count(*) filter (where a."originalFileName" ~* '(-poster|-backdrop|-logo|-landscape|thumb|thumbnail|preview|cache|icon)')::int as "generatedLikeCount",
         count(*) filter (where a.width <= 512 and a.height <= 512)::int as "smallDimensionCount",
+        count(distinct (a."localDateTime" at time zone 'UTC')::date) filter (where a."localDateTime" is not null)::int as "activeDayCount",
+        (
+          max((a."localDateTime" at time zone 'UTC')::date) -
+          min((a."localDateTime" at time zone 'UTC')::date) +
+          1
+        )::int as "dateSpanDays",
+        count(distinct concat_ws(' ', nullif(ae.make, ''), nullif(ae.model, ''))) filter (where ae.make is not null or ae.model is not null)::int as "distinctCameraCount",
+        count(distinct concat_ws(' / ', nullif(ae.country, ''), nullif(ae.state, ''), nullif(ae.city, ''))) filter (where ae.country is not null or ae.state is not null or ae.city is not null)::int as "distinctPlaceCount",
         count(am."assetId")::int as "mobileAppMetadataCount",
         min(a."localDateTime")::text as "dateStart",
         max(a."localDateTime")::text as "dateEnd",
