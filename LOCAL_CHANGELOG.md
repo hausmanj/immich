@@ -66,6 +66,11 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - Source/runtime fix: compact-context serialization now treats missing arrays as empty arrays and limits only when arrays exist.
   - Reapplied the runtime patch in the running Synology container and restarted only `immich-server`.
   - Verification: `GET /api/server/ping` returned `{"res":"pong"}`, the Immich container successfully posted to `http://172.31.0.1:43737/codex`, and the fresh server log tail no longer showed the `slice` crash.
+- Runtime bridge error-output follow-up:
+  - Symptom: a later assistant attempt produced a very large UI error.
+  - Bridge fix: provider calls through `tools/assistant-cli-bridge.mjs` now write full stdout/stderr/status metadata to `assistant-agent-logs/*-provider-*.json` and return a bounded error with the log path instead of embedding a full CLI transcript in the HTTP error.
+  - Restarted the Mac bridge with `tools/start-assistant-cli-bridge.command`.
+  - Verification: the Immich container successfully posted to `http://172.31.0.1:43737/codex` and received parseable JSON with provider log `/Users/johnhausman/source/immich/assistant-agent-logs/2026-07-21T21-12-08-027Z-provider-c481778c-f8ff-45e0-9114-56961a5ec1fc.json`.
 
 ## 2026-07-19 - In-App Library Assistant Prototype
 
