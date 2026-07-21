@@ -106,7 +106,9 @@ const AssistantIndexRunRequestSchema = z
   .object({
     libraryId: z.uuidv4().nullable().optional(),
     originalPathPrefix: z.string().trim().min(1).max(1000).nullable().optional(),
-    includeContentHash: z.boolean().default(false).optional(),
+    includeContentHash: z.boolean().default(true).optional(),
+    includeRawFiles: z.boolean().default(true).optional(),
+    includeSidecars: z.boolean().default(true).optional(),
   })
   .meta({ id: 'AssistantIndexRunRequestDto' });
 

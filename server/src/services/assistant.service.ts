@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { spawn } from 'node:child_process';
-import { readdir } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import { basename, dirname, extname, join, normalize } from 'node:path';
 import { AlbumResponseDto } from 'src/dtos/album.dto';
 import { AssetResponseDto } from 'src/dtos/asset-response.dto';
@@ -36,12 +36,14 @@ import type {
   AssistantLibraryAuditSummary,
 } from 'src/repositories/asset.repository';
 import type { EnvData } from 'src/repositories/config.repository';
+import type { AssistantRawIndexFile } from 'src/repositories/assistant-index.repository';
 import { AlbumService } from 'src/services/album.service';
 import { AssetService } from 'src/services/asset.service';
 import { BaseService } from 'src/services/base.service';
 import { LibraryService } from 'src/services/library.service';
 import { SearchService } from 'src/services/search.service';
 import { StackService } from 'src/services/stack.service';
+import { mimeTypes } from 'src/utils/mime-types';
 
 type AssistantProvider = 'openai' | 'anthropic' | 'claude-cli' | 'codex-cli';
 type LlmProvider = AssistantProvider | 'local-cli';
@@ -669,21 +671,24 @@ export class AssistantService extends BaseService {
   }
 
   async createIndexRun(auth: AuthDto, dto: AssistantIndexRunRequestDto): Promise<AssistantIndexRunResponseDto> {
-    if (dto.includeContentHash) {
-      throw new BadRequestException(
-        'Content-hash indexing is not enabled yet. Run content_hash_audit for byte-level evidence until the persisted hash pass is implemented.',
-      );
-    }
-
+    let importPaths: string[] = [];
     if (dto.libraryId) {
       const library = await this.libraryRepository.get(dto.libraryId);
       if (!library || library.ownerId !== auth.user.id) {
         throw new BadRequestException('Assistant index library not found');
       }
+      importPaths = library.importPaths;
     }
 
     if (dto.originalPathPrefix && !dto.originalPathPrefix.startsWith('/')) {
       throw new BadRequestException('originalPathPrefix must be an absolute Immich/container path');
+    }
+
+    if (!dto.libraryId && (dto.includeRawFiles ?? true) && !dto.originalPathPrefix) {
+      const libraries = await this.libraryRepository.getAll();
+      importPaths = libraries
+        .filter((library) => library.ownerId === auth.user.id)
+        .flatMap((library) => library.importPaths);
     }
 
     const startedAt = new Date();
@@ -696,9 +701,11 @@ export class AssistantService extends BaseService {
       parameters: {
         libraryId: dto.libraryId ?? null,
         originalPathPrefix: dto.originalPathPrefix ?? null,
-        includeContentHash: false,
+        includeContentHash: dto.includeContentHash ?? true,
+        includeRawFiles: dto.includeRawFiles ?? true,
+        includeSidecars: dto.includeSidecars ?? true,
         indexedSource: 'imported_immich_assets',
-        classifierVersion: 1,
+        classifierVersion: 2,
       },
       summary: {},
       startedAt,
@@ -709,16 +716,28 @@ export class AssistantService extends BaseService {
         libraryId: dto.libraryId ?? null,
         originalPathPrefix: dto.originalPathPrefix ?? null,
       });
+      const indexedRawFiles = (dto.includeRawFiles ?? true)
+        ? await this.indexRawFiles(auth, run.id, dto.libraryId ?? null, dto.originalPathPrefix, importPaths, {
+            includeSidecars: dto.includeSidecars ?? true,
+          })
+        : 0;
+      const hashResult = (dto.includeContentHash ?? true)
+        ? await this.hashAssistantIndexAssets(run.id)
+        : { hashed: 0, errors: 0 };
       const groupCount = await this.assistantIndexRepository.rebuildGroups(run.id);
       const summary = await this.assistantIndexRepository.getRunSummary(run.id);
       const completedRun = await this.assistantIndexRepository.updateRun(run.id, {
         status: 'completed',
-        totalAssets: indexedAssets,
-        indexedAssets,
-        errorCount: 0,
+        totalAssets: indexedAssets + indexedRawFiles,
+        indexedAssets: indexedAssets + indexedRawFiles,
+        errorCount: hashResult.errors,
         summary: {
           ...summary,
           groupCount,
+          indexedImportedAssets: indexedAssets,
+          indexedRawFiles,
+          contentHashIndexedAssets: hashResult.hashed,
+          contentHashErrorCount: hashResult.errors,
         },
         finishedAt: new Date(),
       });
@@ -736,6 +755,155 @@ export class AssistantService extends BaseService {
       });
       return this.toAssistantIndexRunResponse(failedRun);
     }
+  }
+
+  private async indexRawFiles(
+    auth: AuthDto,
+    runId: string,
+    libraryId: string | null,
+    originalPathPrefix: string | null | undefined,
+    importPaths: string[],
+    options: { includeSidecars: boolean },
+  ) {
+    const roots = this.toUniqueStrings(originalPathPrefix ? [originalPathPrefix] : importPaths).map((item) =>
+      normalize(item),
+    );
+    let indexed = 0;
+    const batch: AssistantRawIndexFile[] = [];
+    const flush = async () => {
+      indexed += await this.assistantIndexRepository.insertRawFileBatch(runId, auth.user.id, libraryId, batch.splice(0));
+    };
+
+    for (const root of roots) {
+      for await (const file of this.walkRawFiles(root, options)) {
+        batch.push(file);
+        if (batch.length >= 1000) {
+          await flush();
+        }
+      }
+    }
+
+    await flush();
+    return indexed;
+  }
+
+  private async *walkRawFiles(
+    root: string,
+    options: { includeSidecars: boolean },
+  ): AsyncGenerator<AssistantRawIndexFile> {
+    let entries;
+    try {
+      entries = await readdir(root, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      const originalPath = join(root, entry.name);
+      if (entry.isDirectory()) {
+        yield* this.walkRawFiles(originalPath, options);
+        continue;
+      }
+
+      if (!entry.isFile()) {
+        continue;
+      }
+
+      const extension = extname(entry.name).toLowerCase();
+      if (!options.includeSidecars && mimeTypes.isSidecar(entry.name)) {
+        continue;
+      }
+
+      let fileStat;
+      try {
+        fileStat = await stat(originalPath);
+      } catch {
+        continue;
+      }
+
+      yield {
+        originalPath,
+        sourceDirectory: dirname(originalPath),
+        originalFileName: entry.name,
+        fileExtension: extension ? extension.slice(1) : null,
+        type: mimeTypes.assetType(entry.name),
+        fileSizeInByte: String(fileStat.size),
+        localDateTime: fileStat.mtime,
+        noiseLabels: this.toAssistantNoiseLabels(entry.name, originalPath, fileStat.size),
+        riskLabels: this.toAssistantRawRiskLabels(entry.name, originalPath),
+        evidence: {
+          inventoryKind: 'raw_file',
+          supportedByImmich: mimeTypes.isAsset(entry.name),
+          sidecar: mimeTypes.isSidecar(entry.name),
+          rawCameraFile: mimeTypes.isRaw(entry.name),
+          fileModifiedAt: fileStat.mtime,
+          fileCreatedAt: fileStat.birthtime,
+        },
+      };
+    }
+  }
+
+  private toAssistantNoiseLabels(fileName: string, originalPath: string, fileSize: number) {
+    const labels: string[] = [];
+    const haystack = `${originalPath}/${fileName}`.toLowerCase();
+    if (/(^|[_ .-])(thumb|thumbnail|preview|icon|avatar|sticker|tmp|temp|cache)([_ .-]|$)/i.test(fileName)) {
+      labels.push('filename_or_path_noise');
+    }
+    if (/\/(thumbs?|thumbnails?|previews?|cache|icons?)\//.test(haystack)) {
+      labels.push('filename_or_path_noise');
+    }
+    if (fileSize <= 100_000) {
+      labels.push('small_file');
+    }
+    if (/^(screenshot|screen shot)/i.test(fileName)) {
+      labels.push('screenshot');
+    }
+    if (/(message attachments|messages|imessage)/.test(haystack)) {
+      labels.push('message_attachment');
+    }
+    return this.toUniqueStrings(labels);
+  }
+
+  private toAssistantRawRiskLabels(fileName: string, originalPath: string) {
+    const labels: string[] = [];
+    if (!mimeTypes.isAsset(fileName)) {
+      labels.push(mimeTypes.isSidecar(fileName) ? 'sidecar_file' : 'unsupported_file');
+    }
+    if (mimeTypes.isRaw(fileName)) {
+      labels.push('raw_camera_file');
+    }
+    if (originalPath.startsWith('/external/')) {
+      labels.push('external_raw_inventory');
+    }
+    return labels;
+  }
+
+  private async hashAssistantIndexAssets(runId: string) {
+    let cursor: string | null = null;
+    let hashed = 0;
+    let errors = 0;
+
+    while (true) {
+      const targets = await this.assistantIndexRepository.getHashTargets(runId, cursor, 250);
+      if (targets.length === 0) {
+        break;
+      }
+
+      for (const target of targets) {
+        cursor = target.id;
+        try {
+          const contentSha1Buffer = await this.cryptoRepository.hashFile(target.originalPath);
+          const contentSha1 = contentSha1Buffer.toString('base64');
+          await this.assistantIndexRepository.updateHashSuccess(target.id, contentSha1);
+          hashed += 1;
+        } catch (error: unknown) {
+          await this.assistantIndexRepository.updateHashError(target.id, this.getErrorMessage(error));
+          errors += 1;
+        }
+      }
+    }
+
+    return { hashed, errors };
   }
 
   private toAssistantIndexRunResponse(

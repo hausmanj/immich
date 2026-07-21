@@ -17,13 +17,15 @@ This is enough for normal photo-library operation, but it is not enough for the 
 
 The local assistant prototype currently has these useful pieces:
 
-- Persisted assistant index foundation:
+- Persisted assistant index:
   - `assistant_index_run`
   - `assistant_index_asset`
   - `assistant_index_group`
   - `POST /assistant/index-runs`
   - `GET /assistant/index-runs`
   - `GET /assistant/index-runs/:id`
+  - imported asset evidence rows, raw filesystem inventory rows, content SHA1, hash status/errors, inventory kind, noise/risk labels, and evidence JSON;
+  - persisted groups for source directory, file extension, camera, location, noise/risk labels, inventory kind, exact content duplicates, file-trait duplicates, variant families, and coverage state.
 - `GET /assistant/assessment` loads live Immich metadata and deterministic SQL cohorts.
 - Deterministic cohorts include source folder, capture date, camera, location, checksum algorithm, video, mobile metadata, duplicate candidates, and event/trip cohorts.
 - `organizationCoveragePlan` covers whole libraries by selecting event cohorts first and then covering remaining source folders.
@@ -38,14 +40,14 @@ The local assistant prototype currently has these useful pieces:
 
 ## Major Gaps
 
-The current assistant still mostly reasons over live SQL aggregates and sampled asset context. For 1M+ messy files, it needs a persistent assistant-owned index rather than rerunning expensive tools or overloading the chat context.
+The assistant now has a persisted evidence index, but the execution model is still synchronous and the higher-level organization intelligence needs more durable planning state for 1M+ messy files.
 
 Priority gaps:
 
-- Assistant-owned persisted inventory/index tables now exist for imported asset evidence and first-pass classifications, but not yet for raw unimported file inventory, duplicate signatures, or final organization decisions.
-- The first assistant-owned persisted index exists, but it currently indexes already-imported Immich assets synchronously. It still needs checkpointed background execution, cancel/resume, and raw file inventory for not-yet-imported files.
-- Content hash evidence is generated in audit logs, but not stored as a reusable index.
-- Sidecar/variant scanning only examines directories for assets already imported by Immich; it does not inventory non-imported sidecars/noise across a raw folder tree.
+- Assistant-owned persisted inventory/index tables now exist for imported asset evidence, raw unimported file inventory, content hashes, duplicate signatures, and first-pass classifications, but not yet for final organization decisions.
+- The assistant-owned persisted index still runs synchronously. It needs checkpointed background execution, cancel/resume, progress reporting, and stale-index detection before very large 1M+ runs.
+- Content hash evidence is now stored as a reusable index field, but perceptual/near-duplicate signatures are not.
+- Raw inventory covers non-imported files under target import roots, but it still needs richer source-tree classification for backup/application/export roots.
 - No dedicated classifier for low-value or risky cohorts such as icons, thumbnails, tiny files, app caches, message attachment thumbnails, temporary files, stickers, screenshots, or rendered copies.
 - No coverage ledger that proves every indexed asset is assigned to exactly one proposed review bucket or explicitly marked as deferred/noise/risk.
 - No confidence model that combines folder provenance, file naming, EXIF, dimensions, file size, camera, GPS, content hash, perceptual similarity, and sidecars.
@@ -89,10 +91,10 @@ Build the index in staged, resumable passes:
 ## Immediate Implementation Order
 
 1. Convert the first assistant index pass from synchronous SQL execution into queued/resumable background jobs with cancel/resume.
-2. Add raw file inventory for not-yet-imported files under external paths, especially laptop-backup.
-3. Convert current read-only audit tools into background jobs that write durable indexed evidence and logs.
-4. Expand the source-tree/noise classifier for the laptop-backup style library before importing or organizing everything.
-5. Add a coverage ledger so the assistant can prove what is covered, deferred, risky, or unclassified.
+2. Convert current read-only audit tools into background jobs that write durable indexed evidence and logs.
+3. Expand the source-tree/noise classifier for the laptop-backup style library before importing or organizing everything.
+4. Add a coverage ledger so the assistant can prove what is covered, deferred, risky, or unclassified.
+5. Add perceptual or embedding-backed similarity groups for near duplicates, icons, renders, and thumbnails.
 6. Add typed undo for duplicate resolution, then enable duplicate apply only for high-confidence groups.
 7. Add typed undo for folder moves before any physical organization feature is enabled.
 8. Move assistant conversation/workflow state from browser localStorage to server-side persisted sessions.
