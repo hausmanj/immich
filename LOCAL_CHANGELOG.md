@@ -187,6 +187,9 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - Assistant chat runtime fix: corrected `BaseService.create()` to pass `ctx.assistantIndexRepository` in the constructor argument list. Without this, locally-created services had shifted dependencies and Assistant chat crashed in `AssistantService.getLibraryContext` with `this.libraryRepository.getAll is not a function`.
   - Verified assistant chat smoke after the fix: `POST /assistant/chat` returned HTTP 200 in about 10 seconds using the local bridge-backed auto provider path. The host assistant bridge health endpoint returned `{"status":"ok","providers":["claude","codex"]}`.
   - The laptop non-blocking smoke run was marked failed/superseded after the required server restart for this fix because in-process background index jobs do not yet survive restarts.
+  - Source-path organization detail fix: changed deterministic `sourcePathCohorts` from external-library root grouping to exact source directories. This decomposes the laptop backup into useful folders such as `Photo Copies`, `Pictures`, `Movies`, `Samsung SD Card Dec 2018`, `Photos`, Disney folders, and Desktop iCloud date folders instead of one broad `/external/laptop-backup/Raw Photo and Video Files` bucket.
+  - Added `generatedLikeCount` and `smallDimensionCount` to deterministic cohort evidence so the assistant can flag noise-heavy folders. Verification query showed `Pictures` has 1,963 assets with 1,064 generated-like names and `Movies` has 1,074 assets with 863 generated-like names.
+  - Verified assistant chat smoke after this change: the answer identified the laptop backup as the main organization problem, called for decomposing noisy folders, and did not collapse the whole raw library into one concrete review album.
 - Full `sidecar_pair_audit` over `/external/desktop-icloud-originals` completed:
   - `directoriesScanned=56`;
   - `sidecarFileCount=0`;
