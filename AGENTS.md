@@ -47,9 +47,21 @@
   - The previous running server image was tagged for rollback as `immich-server:pre-codex-20260721-140859`.
   - Synology compose backup before the image change: `/volume1/docker/immich/docker-compose.yml.pre-codex-20260721-124056`.
   - Synology assistant env backup before runtime config: `/volume1/docker/immich/.env.pre-assistant-20260721-141618`.
-  - Runtime config currently uses `IMMICH_LLM_PROVIDER=openai`, `IMMICH_ASSISTANT_PROVIDER=openai`, `IMMICH_SOURCE_REF=release`, and an OpenAI API key copied from local `docker/.env` without printing it.
+  - Runtime config was switched away from OpenAI API for assistant chat because the configured key reached OpenAI but returned `429 insufficient_quota`.
+  - Current Synology assistant chat path uses the Mac-hosted CLI bridge over a private SSH reverse tunnel:
+    - Mac bridge: `http://127.0.0.1:3737`, running from `tools/assistant-cli-bridge.mjs`.
+    - Synology tunnel listener: `0.0.0.0:43737` forwarding to Mac `127.0.0.1:3737`.
+    - Immich container reaches the bridge at `http://172.31.0.1:43737`.
+    - Synology `.env` currently sets `IMMICH_ASSISTANT_PROVIDER=codex-cli`, `IMMICH_ASSISTANT_CODEX_URL=http://172.31.0.1:43737/codex`, `IMMICH_ASSISTANT_CLAUDE_URL=http://172.31.0.1:43737/claude`, and 600-second CLI timeouts.
+    - `IMMICH_LLM_PROVIDER=openai` and the OpenAI key may still exist in `.env`, but assistant chat should prefer `codex-cli` through the bridge to avoid extra API billing/quota.
+    - The tunnel command from the Mac is `ssh -p 22222 -N -R 0.0.0.0:43737:127.0.0.1:3737 hausmanj@drhaus`.
+    - The Mac bridge health check is `curl -fsS http://127.0.0.1:3737/health`.
+    - The container bridge health check is `ssh -p 22222 hausmanj@drhaus '/usr/local/bin/docker exec immich-server node -e "fetch(\"http://172.31.0.1:43737/health\").then(r=>r.text()).then(console.log)"'`.
+    - Security: this is a command bridge. Keep it private to LAN/Tailscale/Docker; do not expose it to public internet without authentication.
   - Runtime issue fixed after deploy: the Assistant web page can persist a selected provider such as `codex-cli` in browser localStorage. If that explicit provider is not configured/reachable on Synology, older server code returned no providers and emitted "The assistant is not configured" even though OpenAI was configured. Source now falls back to configured providers when an explicit requested provider is unavailable, and the Synology running container was hot-patched at `/usr/src/app/server/dist/services/assistant.service.js`.
   - The Assistant UI now exposes `OpenAI` in the provider selector so Synology can use the configured API provider directly.
+  - Source default for `IMMICH_LLM_OPENAI_MODEL` was changed from the stale placeholder `gpt-5.6-luna` to `gpt-5.1`.
+  - Runtime issue fixed after OpenAI provider started working: assistant chat could return HTTP 400 `context_length_exceeded` because the full library context was too large for the model input. Source now compacts LLM context before provider calls: summaries are preserved, key deterministic audits are sliced, requested tool results keep summaries/log paths plus a small row sample, and full audit rows remain available from JSON log files/tool actions. The Synology running container was hot-patched with the same compact-context logic.
   - The custom build tar was copied to Synology as `/volume1/docker/immich/immich-server-codex-3196e93da51b-amd64.tar.gz`; gzip verification passed before `docker load`.
   - API verification after restart: `GET /api/server/version` returned `3.0.3`, `GET /api/server/ping` returned `{"res":"pong"}`, `/assistant` returned HTTP 200, and `immich-server` was healthy.
   - Compose initially recreated dependency containers when run without `--no-deps`; subsequent server-only restart used `docker compose up -d --no-deps immich-server`.
@@ -69,8 +81,9 @@
   - Current SSH path appears to be through Tailscale or a local forwarded route: `SSH_CONNECTION` on Synology showed `127.0.0.1 ... 127.0.0.1 22222`.
   - Synology DSM over Tailscale is available at `https://drhaus.taildd6bd4.ts.net:5001/#/signin`; treat this as the browser/admin DSM URL, not a replacement for the exact SSH command unless the user says otherwise.
   - Because of that, Synology could not connect back to the Mac bridge on Mac LAN/Tailscale addresses tested from Synology (`192.168.0.183`, `192.168.2.54`, `192.168.2.1`, `192.168.3.1`, `100.101.216.120` all failed for port `3738`).
-  - Synology remote SSH port forwarding also failed for tested loopback ports `3738` and `3740`. Do not assume reverse tunnels are available unless Synology SSH config changes.
-  - For now, Synology in-app assistant chat uses the OpenAI API provider directly instead of the Mac bridge. The Mac bridge remains useful for local Docker/dev and Codex-run workflows from this chat.
+  - Synology remote SSH port forwarding initially failed for tested loopback ports `3738` and `3740`.
+  - The user enabled SSH remote forwarding in DSM `/etc/ssh/sshd_config` on 2026-07-21 by adding forwarding settings before the active `Match User` blocks, including `AllowTcpForwarding yes`, `GatewayPorts clientspecified`, and a `Match User hausmanj` forwarding block.
+  - After the SSH restart, `ssh -p 22222 -N -R 0.0.0.0:43737:127.0.0.1:3737 hausmanj@drhaus` succeeded, and the Immich container successfully fetched `http://172.31.0.1:43737/health`.
   - If exposing a Mac/Synology agent endpoint later, prefer LAN/VPN-only access or an authenticated reverse proxy. Do not expose an unauthenticated command bridge to the public internet.
 - The user explicitly does not want repeated user prompts while implementing. Continue autonomously when safe, especially for local code changes, audits, and non-destructive verification. Ask only for true blockers.
 - The user explicitly objected to repeated lint checks before the capability is finished. Avoid lint loops during active implementation. Use focused TypeScript/runtime checks when the feature is coherent, then final validation before commit.

@@ -20,12 +20,18 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - Cause: Synology `.env` did not have assistant/LLM provider config.
   - Fix: copied the existing local OpenAI assistant provider configuration into Synology `.env` without printing the secret.
   - Env backup before assistant config: `/volume1/docker/immich/.env.pre-assistant-20260721-141618`
-  - Active non-secret config: `IMMICH_LLM_PROVIDER=openai`, `IMMICH_ASSISTANT_PROVIDER=openai`, `IMMICH_SOURCE_REF=release`.
+  - Active non-secret config: `IMMICH_LLM_PROVIDER=openai`, `IMMICH_ASSISTANT_PROVIDER=openai`, `IMMICH_LLM_OPENAI_MODEL=gpt-5.1`, `IMMICH_SOURCE_REF=release`.
 - Runtime config follow-up after the error persisted:
   - Cause: the Assistant page persisted the selected provider in browser localStorage. If the browser kept sending `provider=codex-cli`, older server code returned immediately with no providers because Synology does not currently have a reachable Codex bridge.
   - Source fix: explicit unavailable assistant providers now fall back to the configured provider chain instead of returning an empty provider list.
   - UI fix: the provider selector now includes `OpenAI`, matching Synology's currently configured assistant provider.
+  - Model fix: Synology `.env` now sets `IMMICH_LLM_OPENAI_MODEL=gpt-5.1`, and the source default was changed from stale `gpt-5.6-luna` to `gpt-5.1`.
   - Emergency runtime fix: hot-patched `/usr/src/app/server/dist/services/assistant.service.js` inside the running Synology `immich-server` container and restarted only `immich-server`.
+- Runtime 400 follow-up after OpenAI started responding:
+  - Symptom: Assistant request returned HTTP 400.
+  - Cause: OpenAI rejected the full prompt with `context_length_exceeded`; the assistant was sending too much full-library context.
+  - Source fix: assistant provider calls now use a compact LLM context that keeps the library summary, coverage plan, top cohorts, action ledger, mutation capabilities, and sampled tool rows while preserving full row-level audit data in log files.
+  - Emergency runtime fix: hot-patched the same compact-context logic into `/usr/src/app/server/dist/services/assistant.service.js` inside the running Synology container and restarted only `immich-server`.
 - Runtime verification after restart:
   - `immich-server` healthy on `immich-server:codex-3196e93da51b`.
   - `immich-machine-learning` healthy.
@@ -43,8 +49,17 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - The exact operational SSH path remains `ssh -p 22222 hausmanj@drhaus`.
   - Synology DSM Tailscale/admin URL: `https://drhaus.taildd6bd4.ts.net:5001/#/signin`.
   - SSH appears to arrive through a Tailscale/local-forwarded route; Synology reported `SSH_CONNECTION` as loopback-to-loopback.
-  - Synology could not connect back to the Mac bridge on tested Mac LAN/Tailscale addresses, and reverse SSH port forwarding failed on tested ports.
-  - For now Synology in-app assistant chat uses the OpenAI API provider directly. The Mac bridge remains for local Docker/dev and Codex-driven workflows from this conversation.
+  - Synology could not connect back to the Mac bridge on tested Mac LAN/Tailscale addresses.
+  - The user enabled SSH remote forwarding in `/etc/ssh/sshd_config` on DSM by adding forwarding settings before the active `Match User` blocks.
+  - After `sudo synosystemctl restart sshd`, the Mac successfully opened `ssh -p 22222 -N -R 0.0.0.0:43737:127.0.0.1:3737 hausmanj@drhaus`.
+  - Verified from the Synology host and from inside `immich-server` that `http://172.31.0.1:43737/health` reaches the Mac bridge and reports Claude/Codex providers.
+  - Synology `.env` now uses the no-extra-API-billing assistant path:
+    - `IMMICH_ASSISTANT_PROVIDER=codex-cli`
+    - `IMMICH_ASSISTANT_CODEX_URL=http://172.31.0.1:43737/codex`
+    - `IMMICH_ASSISTANT_CLAUDE_URL=http://172.31.0.1:43737/claude`
+    - 600-second CLI provider timeouts
+  - `immich-server` was recreated to load the bridge env, then hot-patched again with compact-context runtime logic and restarted.
+  - Current assistant failure before the switch was OpenAI `429 insufficient_quota`; the current intended provider is the Mac Codex CLI bridge, not OpenAI API.
 
 ## 2026-07-19 - In-App Library Assistant Prototype
 

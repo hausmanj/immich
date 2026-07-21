@@ -406,7 +406,7 @@ const getEnv = (): EnvData => {
       provider: dto.IMMICH_LLM_PROVIDER,
       openai: {
         apiKey: dto.IMMICH_LLM_OPENAI_API_KEY,
-        model: dto.IMMICH_LLM_OPENAI_MODEL || 'gpt-5.6-luna',
+        model: dto.IMMICH_LLM_OPENAI_MODEL || 'gpt-5.1',
       },
       anthropic: {
         apiKey: dto.IMMICH_LLM_ANTHROPIC_API_KEY,
