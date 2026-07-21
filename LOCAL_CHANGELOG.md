@@ -21,6 +21,11 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - Fix: copied the existing local OpenAI assistant provider configuration into Synology `.env` without printing the secret.
   - Env backup before assistant config: `/volume1/docker/immich/.env.pre-assistant-20260721-141618`
   - Active non-secret config: `IMMICH_LLM_PROVIDER=openai`, `IMMICH_ASSISTANT_PROVIDER=openai`, `IMMICH_SOURCE_REF=release`.
+- Runtime config follow-up after the error persisted:
+  - Cause: the Assistant page persisted the selected provider in browser localStorage. If the browser kept sending `provider=codex-cli`, older server code returned immediately with no providers because Synology does not currently have a reachable Codex bridge.
+  - Source fix: explicit unavailable assistant providers now fall back to the configured provider chain instead of returning an empty provider list.
+  - UI fix: the provider selector now includes `OpenAI`, matching Synology's currently configured assistant provider.
+  - Emergency runtime fix: hot-patched `/usr/src/app/server/dist/services/assistant.service.js` inside the running Synology `immich-server` container and restarted only `immich-server`.
 - Runtime verification after restart:
   - `immich-server` healthy on `immich-server:codex-3196e93da51b`.
   - `immich-machine-learning` healthy.

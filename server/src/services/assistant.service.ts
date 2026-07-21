@@ -1975,7 +1975,9 @@ export class AssistantService extends BaseService {
 
     if (requested) {
       pushProvider(this.toProviderConfig(requested, assistant, llm));
-      return providers;
+      if (providers.length > 0) {
+        return providers;
+      }
     }
 
     pushProvider(this.toProviderConfig(assistant.provider, assistant, llm));
