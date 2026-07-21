@@ -84,7 +84,15 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - Bridge health reports the available command targets, and every command log records `target` and `targetKind`.
   - This provides command/data transfer into the Immich container and out to Synology for large-library assessment, while Immich mutations still require typed journals and typed undo.
   - Operating preference recorded: the user's M4 Pro Mac is the preferred heavy-processing host when the dedicated fast Mac-to-Synology link provides acceptable data throughput; Synology remains the source-of-truth path and NAS-local probe target.
+  - Synology safety checkpoint: created backup `/volume1/docker/immich-backups/20260721-113059` with compose/env copies, a folder archive excluding unreadable raw Postgres directories, a compressed logical `pg_dumpall`, and SHA256 sums.
+  - No Synology image was deployed after the user clarified the database must not be impacted; a local amd64 `immich-server` image build was canceled before completion.
   - Temporarily commented the `/Volumes/laptop backup:/external/laptop-backup:ro` dev bind because the host volume was not mounted and Docker Desktop refused to recreate `immich-server` while the source path was absent. Re-enable it when the volume is mounted again.
+- Added `tools/photo-file-organizer.mjs` for physical photo organization outside Immich.
+  - Supports read-only `plan`, journaled `apply`, and journaled `undo`.
+  - Default destination layout uses Apple Photos export-style date folders such as `Oct 15, 2012`.
+  - Intended for moving/copying specific trips into originals-folder structures without relying on Immich import state.
+  - Refuses destination overwrites and refuses partial apply by default when the plan contains conflicts/skipped rows.
+  - Added `docs/external-photo-file-organization.md` with example commands.
 - Added an assistant provider selector in the web UI so chat can explicitly use Auto, Claude CLI, or Codex CLI.
   - Direct OpenAI and Anthropic API paths remain backend fallback plumbing, but are hidden from the Assistant UI to keep the tool focused on local Claude/Codex access.
 - Expanded the assistant asset sample context for imported-original audits.

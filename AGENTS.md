@@ -39,6 +39,12 @@
   - The Assistant web Agent terminal persists the selected target, cwd, command transcript, and log paths in browser storage.
   - Assistant `agent_command` actions may specify `target`, `cwd`, and `timeoutSeconds`; target defaults to `local`.
   - This is still an audited command bridge, not a full interactive terminal agent. Long-running/resumable PTY sessions remain future work.
+- Synology deployment safety checkpoint:
+  - A Synology Immich backup was created at `/volume1/docker/immich-backups/20260721-113059`.
+  - It contains `immich-folder-without-raw-postgres.tgz`, `immich-postgres-pg_dumpall.sql.gz`, copied `docker-compose.yml`, copied `.env`, and `SHA256SUMS`.
+  - Raw Postgres folders were not read or modified because the SSH user cannot read uid 999-owned database files without sudo. The database backup is a logical `pg_dumpall` taken through the running Postgres container.
+  - No custom Immich image was deployed to Synology. A local amd64 `immich-server` build was started and then canceled after the user clarified that the database must not be impacted.
+  - Do not update/restart the Synology `immich-server` image while the user requires zero database impact, because Immich startup may run migrations.
 - Exact Synology SSH access is critical and should not be inferred:
   - Use exactly `ssh -p 22222 hausmanj@drhaus`.
   - In this managed shell, SSH/network may require `sandbox_permissions: "require_escalated"`.
@@ -57,6 +63,12 @@
   - typed undo strategy,
   - clear current-state recording,
   - no silent skipping or destructive behavior.
+- The user also wants Codex-style photo organization outside Immich, including moving specific trips into dated folder structures that match Apple Photos unmodified-original exports. Use `tools/photo-file-organizer.mjs` for this class of work:
+  - `plan` is read-only and writes a complete JSON plan;
+  - `apply` writes a typed journal before any move/copy;
+  - `undo` reverses completed journaled operations;
+  - default output folders use Apple-style date labels such as `Oct 15, 2012`;
+  - do not use ad hoc `mv`/`cp` for large organization changes when this tool can provide a plan and undo path.
 - Laptop-backup context:
   - The user expects to "unleash picture hell": icons, thumbnails, movie art, copied folders, Google Takeout, iMazing backups, app folders, documents, raw photos, rendered copies, and real photos/videos all mixed together.
   - The organization engine must not make daily albums from broad folders or leave no-GPS assets unaddressed.
