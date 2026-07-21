@@ -2,6 +2,45 @@
 
 This file tracks local-only changes in this checkout that have not necessarily been pulled from upstream Immich.
 
+## 2026-07-21 - Synology Immich Assistant Deployment
+
+- Built and deployed the custom assistant-enabled Immich server image to Synology.
+  - Local image tag: `immich-server:codex-3196e93da51b`
+  - Image id: `sha256:436e8a0790bd0a9dee3a41ab97e44ed9a4ac59483b9686d658070ae5888d31d4`
+  - Synology loaded image tag: `immich-server:codex-3196e93da51b`
+  - Synology artifact: `/volume1/docker/immich/immich-server-codex-3196e93da51b-amd64.tar.gz`
+  - Gzip validation passed on Synology before `docker load`.
+- Updated only Synology `immich-server` compose image to the custom image.
+  - Compose backup before image change: `/volume1/docker/immich/docker-compose.yml.pre-codex-20260721-124056`
+  - Previous running server image rollback tag: `immich-server:pre-codex-20260721-140859`
+  - Current running server: `immich-server:codex-3196e93da51b`
+  - Other service images remain standard Immich/Postgres/Valkey release images.
+- Runtime config fix after the first deploy:
+  - Symptom: Assistant page returned `The assistant is not configured. Set IMMICH_ASSISTANT_CLAUDE_COMMAND, IMMICH_ASSISTANT_CODEX_COMMAND, or set IMMICH_LLM_PROVIDER with the matching provider API key.`
+  - Cause: Synology `.env` did not have assistant/LLM provider config.
+  - Fix: copied the existing local OpenAI assistant provider configuration into Synology `.env` without printing the secret.
+  - Env backup before assistant config: `/volume1/docker/immich/.env.pre-assistant-20260721-141618`
+  - Active non-secret config: `IMMICH_LLM_PROVIDER=openai`, `IMMICH_ASSISTANT_PROVIDER=openai`, `IMMICH_SOURCE_REF=release`.
+- Runtime verification after restart:
+  - `immich-server` healthy on `immich-server:codex-3196e93da51b`.
+  - `immich-machine-learning` healthy.
+  - `immich-postgres` eventually healthy after restart.
+  - `GET /api/server/version` returned `3.0.3`.
+  - `GET /api/server/ping` returned `{"res":"pong"}`.
+  - `/assistant` returned HTTP 200.
+- Version warning note:
+  - The yellow sidebar triangle was caused by `IMMICH_SOURCE_REF=main`; Immich shows an alert icon for main/custom source refs.
+  - Set `IMMICH_SOURCE_REF=release` in Synology `.env` to make the UI report normal release-style status for this local custom image.
+- Known deployment warning:
+  - Server logs currently warn: `Failed to import plugin from /build/plugins/immich-plugin-llm`.
+  - The custom Docker image did not contain `packages/plugin-llm` because that package is not present in the current checkout image context. This is separate from the in-app `/assistant` route and provider-backed assistant chat.
+- Networking note:
+  - The exact operational SSH path remains `ssh -p 22222 hausmanj@drhaus`.
+  - Synology DSM Tailscale/admin URL: `https://drhaus.taildd6bd4.ts.net:5001/#/signin`.
+  - SSH appears to arrive through a Tailscale/local-forwarded route; Synology reported `SSH_CONNECTION` as loopback-to-loopback.
+  - Synology could not connect back to the Mac bridge on tested Mac LAN/Tailscale addresses, and reverse SSH port forwarding failed on tested ports.
+  - For now Synology in-app assistant chat uses the OpenAI API provider directly. The Mac bridge remains for local Docker/dev and Codex-driven workflows from this conversation.
+
 ## 2026-07-19 - In-App Library Assistant Prototype
 
 - Added a comprehensive `AGENTS.md` current-memory checkpoint on 2026-07-21.
