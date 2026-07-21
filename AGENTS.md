@@ -11,6 +11,8 @@
 - The local patch is intentionally conservative: prefer unedited iOS Photos base files when available, log adjusted-asset decisions in detail, and fall back to the existing export path rather than silently skipping content.
 - The user's Desktop export at `/Users/johnhausman/Desktop/Exported ICloud Photos - DO NOT DELETE` is a known-good Apple Photos "Export Unmodified Original" reference set. Treat it as ground truth for comparing iPhone/mobile upload output.
 - The reference export is mounted read-only in the Immich dev server container at `/external/desktop-icloud-originals`.
+- The user's large laptop-backup Synology volume is mounted on macOS at `/Volumes/laptop backup` and should be exposed read-only in the Immich dev server container at `/external/laptop-backup`.
+- The laptop-backup tree is intentionally messy and large. Initial top-level examples include old Mac/Lenovo backups, `Raw Photo and Video Files`, Google Takeout folders, iMazing backups, app/document folders, icons, thumbnails, and other non-photo material. Do not recursively shell-scan it casually; build or use checkpointed assistant tools for inventory/classification/resume.
 - Observed reference export profile:
   - about 2.7 GB;
   - 56 date-named folders;
@@ -77,6 +79,11 @@
   - keep the mount read-only;
   - do not move, rename, delete, or normalize the source files as part of organization experiments;
   - use organization plans, review queues, albums, and metadata audits first.
+- For the laptop-backup external library:
+  - use `/external/laptop-backup` as the external-library import path;
+  - keep the mount read-only;
+  - expect huge scale and noisy content, including icons, thumbnails, caches, duplicate exports, app folders, document trees, and mixed originals/renders;
+  - prefer resumable inventory/classification tools before broad Immich import or album generation.
 - Simulator testing is useful for app flow, logging, and Photos import behavior. Physical-device testing is still preferable for iCloud Photos and Optimize iPhone Storage edge cases.
 
 ## Reopen Checkpoint

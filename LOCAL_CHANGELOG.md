@@ -4,6 +4,13 @@ This file tracks local-only changes in this checkout that have not necessarily b
 
 ## 2026-07-19 - In-App Library Assistant Prototype
 
+- Added the user's Synology-mounted laptop backup as a read-only dev-server external-library mount:
+  - Host path: `/Volumes/laptop backup`
+  - Container path for Immich external library import: `/external/laptop-backup`
+  - Purpose: starting point for indexing a much larger mixed backup tree, potentially over 1M assets.
+  - Initial observation: top-level content includes old Mac/Lenovo backups, `Raw Photo and Video Files`, Google Takeout folders, iMazing backups, app/document folders, icons, thumbnails, and other non-photo material.
+  - Scale warning: do not rely on ad hoc recursive shell scans; this needs checkpointed inventory/classification tooling before major organization actions.
+  - Verified inside `immich_server` after container recreation: mount appears at `/external/laptop-backup` as read-only and rejects test writes with `Read-only file system`.
 - Runtime follow-up after importing the Desktop originals:
   - Fixed assistant cohort SQL generation after chat produced `column "undefined" does not exist`.
   - Cause: Kysely raw SQL fragments used for dynamic full-library audit cohorts were interpolated incorrectly inside a larger raw query.
