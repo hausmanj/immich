@@ -89,6 +89,19 @@
     - `/volume1` exists
     - `/volume1/docker` exists
   - Do not substitute `localhost:22222`, inferred hostnames, Tailscale IPs, old known-host addresses, or `Host drhaus` assumptions unless the exact command above fails and the user explicitly changes the route.
+  - Known-good Mac-to-Synology file transfer pattern from this managed Codex shell:
+    - Use the exact SSH route and stdin redirection outside the sandbox:
+      - `ssh -p 22222 hausmanj@drhaus 'cat > /tmp/<filename>' < <local-file>`
+    - In this environment, the command may require `sandbox_permissions: "require_escalated"` because sandboxed stdin/redirection can fail with `Could not resolve hostname drhaus: -65563`.
+    - After the file is on Synology, copy into the Immich server container with:
+      - `ssh -p 22222 hausmanj@drhaus '/usr/local/bin/docker cp /tmp/<filename> immich-server:/tmp/<filename>'`
+    - Then run container-side commands with:
+      - `ssh -p 22222 hausmanj@drhaus '/usr/local/bin/docker exec immich-server sh -c '\''...'\'''`
+    - Avoid rediscovering these failed paths:
+      - `scp -P 22222 ...` connected but closed during transfer.
+      - `rsync -az -e "ssh -p 22222" ...` hit auth/EOF behavior.
+      - heredocs and piped SSH from the managed shell triggered the same `drhaus` resolver failure.
+    - For large deploy artifacts, first create a local tarball, transfer with the stdin-redirection SSH method above, then `docker cp` it into the container.
   - Current SSH path appears to be through Tailscale or a local forwarded route: `SSH_CONNECTION` on Synology showed `127.0.0.1 ... 127.0.0.1 22222`.
   - Synology DSM over Tailscale is available at `https://drhaus.taildd6bd4.ts.net:5001/#/signin`; treat this as the browser/admin DSM URL, not a replacement for the exact SSH command unless the user says otherwise.
   - Because of that, Synology could not connect back to the Mac bridge on Mac LAN/Tailscale addresses tested from Synology (`192.168.0.183`, `192.168.2.54`, `192.168.2.1`, `192.168.3.1`, `100.101.216.120` all failed for port `3738`).

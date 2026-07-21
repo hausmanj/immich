@@ -94,6 +94,19 @@ This file tracks local-only changes in this checkout that have not necessarily b
     - The temporary API key was deleted afterward; database cleanup check returned `0`.
     - Diagnostic log written: `/data/assistant-audits/assistant-chat/2026-07-21T22-51-30-975Z-assistant-chat-6adab623-e5b1-42e2-9558-c733d1d26c3d.json`.
   - Current assessment: backend/provider path is working. If the browser still shows a raw `DOCTYPE` dump, the likely remaining cause is a cached pre-patch immutable Assistant JS chunk rather than a backend/provider failure; the new server diagnostic log will show whether the request actually reached `/api/assistant/chat`.
+- Runtime web-bundle replacement after continued browser DOCTYPE error:
+  - Follow-up evidence: the user's browser retries reached `/api/assistant/chat` and succeeded server-side, writing diagnostics for requests with last-message previews `working?` and `hello?`; both returned success through `codex-cli`.
+  - Cause: the backend/provider path was working, but the Assistant page was still being driven by the old generated web bundle/route preload graph.
+  - Built the web app locally with `pnpm --dir web build` without running lint.
+  - Transferred `build/immich-web-build-20260721-1658.tgz` to Synology using the known-good SSH stdin-redirection transfer, then copied it into `immich-server` with `docker cp`.
+  - Backed up current container `/build/www` to `/tmp/immich-www-backup-20260721-173107.tgz` inside `immich-server`.
+  - Replaced `/build/www` assets with the fresh build and explicitly restarted only `immich-server`.
+  - Verification after restart:
+    - `GET /api/server/ping` returned `{"res":"pong"}`.
+    - `/assistant` now references new web entry assets `start.b4kEIaFM.js` and `app.DMHokrsy.js`.
+    - The new assistant route module is present and served: `/build/www/_app/immutable/nodes/16.depgXoCW.js`.
+    - The bridge remained reachable from inside `immich-server` at `http://172.31.0.1:43737/health`.
+    - A temporary API-key smoke test against `POST /api/assistant/chat` returned HTTP 200 with answer `assistant web bundle ok`; the temporary key was deleted afterward and cleanup returned `0`.
 
 ## 2026-07-19 - In-App Library Assistant Prototype
 
