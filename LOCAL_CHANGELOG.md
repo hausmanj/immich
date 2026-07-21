@@ -178,6 +178,12 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - Fixed file-trait duplicate grouping SQL and file-extension asset counts.
   - Final corrected desktop smoke run `2dcd2584-0852-499f-85b3-7718b2d4723a` completed with `indexedAssets=1825`, `indexedImportedAssets=1813`, `indexedRawFiles=12`, `contentHashIndexedAssets=1825`, `contentHashErrorCount=0`, `uniqueContentHashCount=1825`, `groupCount=105`, and `variant_family=8`.
   - The corrected run produced no exact-content duplicate groups. The 12 raw inventory entries are files present on disk but not imported as Immich assets, including `.DS_Store`, several `IMG_4596(1).JPG`-style variants, and nearby missed JPGs.
+  - Follow-up after laptop-backup scan: changed `POST /assistant/index-runs` to return immediately with `status=running` and execute imported-asset indexing, raw inventory, content hashing, and grouping in the background.
+  - Background index progress is persisted in the run summary with phases including `raw_inventory`, `content_hash`, and `grouping`.
+  - Laptop-backup non-blocking smoke run `31f094f6-c9cc-485f-a7e9-f695184b37f5` returned from POST in 48 ms, then showed persisted progress with `indexedImportedAssets=9637` while raw inventory continued.
+  - The prior blocking laptop run `8441415a-f1a5-4081-82aa-567bc78b41a0` exceeded the HTTP client's header timeout during raw inventory. It was marked failed/superseded as an assistant-owned evidence run only; no source files or media assets were modified by that manual cleanup.
+  - Laptop-backup diagnosis: the external library currently points only to `/external/laptop-backup/Raw Photo and Video Files`, not the whole `/external/laptop-backup` mount. Immich had 9,637 active assets there after 365 rows became soft-deleted/hidden. Deleted examples are concentrated in generated movie artwork: Movies (268), GoPro (41), Camcorder SD Card Dec (27), Library Images (14), Family Video (13), and Home Movies (2).
+  - Laptop-backup active imported-content profile at inspection: 9,238 images, 399 videos; largest folders are Photo Copies (2,859), Pictures (1,963), root Raw Photo and Video Files (1,434), Movies (1,074), Samsung SD Card Dec 2018 (649), and Photos (612). About 2,138 active imported filenames look generated (`poster`, `backdrop`, `logo`, `landscape`, thumbnail/cache/icon style), and 538 active imported assets are tiny by dimensions.
 - Full `sidecar_pair_audit` over `/external/desktop-icloud-originals` completed:
   - `directoriesScanned=56`;
   - `sidecarFileCount=0`;
