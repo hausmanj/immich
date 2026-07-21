@@ -48,6 +48,8 @@
   - Synology compose backup before the image change: `/volume1/docker/immich/docker-compose.yml.pre-codex-20260721-124056`.
   - Synology assistant env backup before runtime config: `/volume1/docker/immich/.env.pre-assistant-20260721-141618`.
   - Runtime config currently uses `IMMICH_LLM_PROVIDER=openai`, `IMMICH_ASSISTANT_PROVIDER=openai`, `IMMICH_SOURCE_REF=release`, and an OpenAI API key copied from local `docker/.env` without printing it.
+  - Runtime issue fixed after deploy: the Assistant web page can persist a selected provider such as `codex-cli` in browser localStorage. If that explicit provider is not configured/reachable on Synology, older server code returned no providers and emitted "The assistant is not configured" even though OpenAI was configured. Source now falls back to configured providers when an explicit requested provider is unavailable, and the Synology running container was hot-patched at `/usr/src/app/server/dist/services/assistant.service.js`.
+  - The Assistant UI now exposes `OpenAI` in the provider selector so Synology can use the configured API provider directly.
   - The custom build tar was copied to Synology as `/volume1/docker/immich/immich-server-codex-3196e93da51b-amd64.tar.gz`; gzip verification passed before `docker load`.
   - API verification after restart: `GET /api/server/version` returned `3.0.3`, `GET /api/server/ping` returned `{"res":"pong"}`, `/assistant` returned HTTP 200, and `immich-server` was healthy.
   - Compose initially recreated dependency containers when run without `--no-deps`; subsequent server-only restart used `docker compose up -d --no-deps immich-server`.

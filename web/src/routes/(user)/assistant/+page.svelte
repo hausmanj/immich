@@ -201,6 +201,7 @@
 
   const providerOptions: Array<{ value: AssistantProvider; label: string }> = [
     { value: 'auto', label: 'Auto' },
+    { value: 'openai', label: 'OpenAI' },
     { value: 'claude-cli', label: 'Claude' },
     { value: 'codex-cli', label: 'Codex' },
   ];
