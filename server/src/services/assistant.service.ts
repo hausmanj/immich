@@ -304,6 +304,8 @@ export class AssistantService extends BaseService {
   private readonly assistantToolInlineResultThreshold = 100;
   private readonly assistantToolLogDirectory = '/data/assistant-audits';
   private readonly assistantChangeJournalDirectory = '/data/assistant-audits/change-journal';
+  private readonly assistantAutoToolIterationLimit = 1;
+  private readonly assistantAutoToolActionLimit = 3;
 
   async assess(auth: AuthDto): Promise<AssistantAssessmentResponseDto> {
     const albumService = BaseService.create(AlbumService, this);
@@ -398,11 +400,18 @@ export class AssistantService extends BaseService {
       lastProviderConfig = providerConfig;
 
       try {
-        const output = this.isLocalCliProvider(providerConfig)
-          ? await this.callLocalAssistant(providerConfig, dto, context)
-          : providerConfig.provider === 'openai'
-            ? await this.callOpenAi(providerConfig, dto, context)
-            : await this.callAnthropic(providerConfig, dto, context);
+        let output = await this.callAssistantProvider(providerConfig, dto, context);
+        let responseContext = context;
+
+        for (let iteration = 0; iteration < this.assistantAutoToolIterationLimit; iteration++) {
+          const autoToolResults = await this.runAutoToolActions(auth, this.toActions(output));
+          if (autoToolResults.length === 0) {
+            break;
+          }
+
+          responseContext = this.withRequestedToolResults(responseContext, autoToolResults);
+          output = await this.callAssistantProvider(providerConfig, dto, responseContext);
+        }
 
         return {
           status: 'success',
@@ -410,7 +419,7 @@ export class AssistantService extends BaseService {
           model: providerConfig.model,
           answer: this.toAnswer(output),
           actions: this.toActions(output),
-          context: context.summary,
+          context: responseContext.summary,
         };
       } catch (error: unknown) {
         lastError = this.getErrorMessage(error);
@@ -684,6 +693,118 @@ export class AssistantService extends BaseService {
     }
 
     return this.withAssistantToolLog(auth, response);
+  }
+
+  private async callAssistantProvider(
+    providerConfig: ProviderConfig,
+    dto: AssistantChatRequestDto,
+    context: Awaited<ReturnType<AssistantService['getLibraryContext']>>,
+  ) {
+    return this.isLocalCliProvider(providerConfig)
+      ? await this.callLocalAssistant(providerConfig, dto, context)
+      : providerConfig.provider === 'openai'
+        ? await this.callOpenAi(providerConfig, dto, context)
+        : await this.callAnthropic(providerConfig, dto, context);
+  }
+
+  private async runAutoToolActions(auth: AuthDto, actions: AssistantChatResponseDto['actions']) {
+    const requests = this.toAutoToolRequests(actions);
+    const results = [];
+
+    for (const request of requests) {
+      try {
+        const result = await this.runTool(auth, {
+          toolType: request.toolType,
+          input: request.toolInput ?? {},
+        });
+        results.push(this.toRequestedToolResultContext(result, request.actionTitle));
+      } catch (error: unknown) {
+        results.push({
+          toolType: request.toolType,
+          generatedAt: new Date().toISOString(),
+          autoExecuted: true,
+          sourceActionTitle: request.actionTitle,
+          summary: { failed: true, error: this.getErrorMessage(error), input: request.toolInput ?? {} },
+          resultCount: 0,
+          errorCount: 1,
+          logFilePath: null,
+          fullResultsAvailableByRunningToolAction: false,
+        });
+      }
+    }
+
+    return results;
+  }
+
+  private toAutoToolRequests(actions: AssistantChatResponseDto['actions']) {
+    const requests: Array<{
+      actionTitle: string;
+      toolType: AssistantToolType;
+      toolInput: Record<string, unknown> | null;
+    }> = [];
+    const seen = new Set<string>();
+
+    for (const action of actions) {
+      if (
+        action.type !== 'metadata_audit' &&
+        action.type !== 'original_file_audit' &&
+        action.type !== 'search' &&
+        action.type !== 'album_plan'
+      ) {
+        continue;
+      }
+      if (!action.toolType || action.toolType === 'content_hash_audit' || action.toolType === 'mobile_original_compare') {
+        continue;
+      }
+
+      const key = JSON.stringify({ toolType: action.toolType, toolInput: action.toolInput ?? {} });
+      if (seen.has(key)) {
+        continue;
+      }
+
+      seen.add(key);
+      requests.push({
+        actionTitle: action.title,
+        toolType: action.toolType,
+        toolInput: action.toolInput ? { ...action.toolInput } : null,
+      });
+
+      if (requests.length >= this.assistantAutoToolActionLimit) {
+        break;
+      }
+    }
+
+    return requests;
+  }
+
+  private toRequestedToolResultContext(result: AssistantToolResponseDto, sourceActionTitle?: string) {
+    return {
+      toolType: result.toolType,
+      generatedAt: result.generatedAt,
+      autoExecuted: true,
+      sourceActionTitle: sourceActionTitle ?? null,
+      summary: result.summary,
+      resultCount: result.resultCount ?? result.results.length,
+      errorCount: result.errorCount ?? result.errors.length,
+      logFilePath: result.logFilePath ?? null,
+      inlineResultsOmitted: result.inlineResultsOmitted ?? false,
+      sampleResults: result.results.slice(0, 10),
+      sampleErrors: result.errors.slice(0, 5),
+      fullResultsAvailableByRunningToolAction: true,
+    };
+  }
+
+  private withRequestedToolResults(
+    context: Awaited<ReturnType<AssistantService['getLibraryContext']>>,
+    requestedToolResults: Array<Record<string, unknown>>,
+  ): Awaited<ReturnType<AssistantService['getLibraryContext']>> {
+    return {
+      ...context,
+      deterministicAudits: {
+        ...context.deterministicAudits,
+        requestedToolResults: [...context.deterministicAudits.requestedToolResults, ...requestedToolResults],
+      },
+    };
   }
 
   async getIndexRuns(auth: AuthDto): Promise<AssistantIndexRunsResponseDto> {
@@ -2307,7 +2428,10 @@ export class AssistantService extends BaseService {
     };
   }
 
-  private async getAutomaticToolResults(auth: AuthDto, dto: AssistantChatRequestDto) {
+  private async getAutomaticToolResults(
+    auth: AuthDto,
+    dto: AssistantChatRequestDto,
+  ): Promise<Array<Record<string, unknown>>> {
     const latest = dto.messages.toReversed().find((message) => message.role === 'user')?.content.toLowerCase() ?? '';
     const toolRequests: AssistantToolRequestDto[] = [];
 
@@ -2553,10 +2677,46 @@ export class AssistantService extends BaseService {
         returnedAssets: scannedAssets.length,
         complete: totalMatchingAssets === scannedAssets.length,
         filters: dto.input ?? {},
+        breakdown: this.toMetadataSearchBreakdown(scannedAssets),
       },
       results: scannedAssets.map((asset) => this.toAuditAssetResult(asset)),
       errors: [],
     };
+  }
+
+  private toMetadataSearchBreakdown(assets: AssistantAuditAsset[]) {
+    return {
+      dates: this.toAuditAssetBreakdown(assets, (asset) => asset.localDateTime?.slice(0, 10) ?? 'Unknown date'),
+      cameras: this.toAuditAssetBreakdown(
+        assets,
+        (asset) => `${asset.make || 'Unknown make'} ${asset.model || 'Unknown model'}`,
+      ),
+      places: this.toAuditAssetBreakdown(
+        assets,
+        (asset) =>
+          asset.country || asset.state || asset.city
+            ? [asset.country, asset.state, asset.city].filter(Boolean).join(' / ')
+            : 'No visible location',
+      ),
+      mediaTypes: this.toAuditAssetBreakdown(assets, (asset) => asset.type),
+      fileExtensions: this.toAuditAssetBreakdown(assets, (asset) => extname(asset.originalFileName).toLowerCase()),
+    };
+  }
+
+  private toAuditAssetBreakdown(assets: AssistantAuditAsset[], getKey: (asset: AssistantAuditAsset) => string) {
+    const buckets = new Map<string, { label: string; count: number; examples: string[] }>();
+
+    for (const asset of assets) {
+      const label = getKey(asset) || 'Unknown';
+      const bucket = buckets.get(label) ?? { label, count: 0, examples: [] };
+      bucket.count += 1;
+      if (bucket.examples.length < 3) {
+        bucket.examples.push(asset.originalPath);
+      }
+      buckets.set(label, bucket);
+    }
+
+    return [...buckets.values()].sort((a, b) => b.count - a.count || a.label.localeCompare(b.label)).slice(0, 25);
   }
 
   private async runMobileOriginalCompare(
