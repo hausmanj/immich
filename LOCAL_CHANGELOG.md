@@ -193,6 +193,12 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - Added `reviewStrategy` to organization coverage source-folder cohorts. `review_album` cohorts can be proposed as concrete reversible review actions; `decompose_first` cohorts must produce exact-folder read-only `metadata_search` or `sidecar_pair_audit` actions before album creation.
   - Updated assistant prompt guidance so noisy folders pass `toolInput.originalPathContains` with the exact source directory. Runtime smoke returned scoped audit actions for `Photo Copies` and `Pictures`, and concrete review actions for the French Polynesia trip, `Samsung SD Card Dec 2018`, and the cleaner raw-photos folder.
   - Temporary API key `Codex assistant review strategy smoke test` was deleted after the runtime probe.
+  - Added `coverageExecutionLedger` to `organizationCoveragePlan`.
+    - The ledger orders the whole-library workflow as event review albums, then noisy exact-folder decomposition audits, then cleaner exact-source-folder review albums.
+    - Ledger entries carry `ready_for_review_album` or `needs_decomposition_audit` status and a deterministic `nextAction`.
+    - Runtime smoke after this change returned a concrete coverage summary: 7,183 total assets, 7,181 covered by the ledger, 2 unplanned, 72 ready review-album cohorts covering 3,058 assets, and 4 decomposition-audit cohorts covering 4,123 assets.
+    - The smoke response proposed exact actions for French Polynesia, Photo Copies, Pictures, Movies, Random Cell Phone Videos, and Samsung SD Card Dec 2018.
+    - Temporary API key `Codex assistant coverage ledger smoke test` was deleted after the runtime probe.
 - Full `sidecar_pair_audit` over `/external/desktop-icloud-originals` completed:
   - `directoriesScanned=56`;
   - `sidecarFileCount=0`;
