@@ -74,6 +74,12 @@ const AssistantReviewAlbumRequestSchema = z
   })
   .meta({ id: 'AssistantReviewAlbumRequestDto' });
 
+const AssistantExecuteReviewPlanRequestSchema = z
+  .object({
+    albums: z.array(AssistantReviewAlbumRequestSchema).min(1).max(50),
+  })
+  .meta({ id: 'AssistantExecuteReviewPlanRequestDto' });
+
 const AssistantToolRequestSchema = z
   .object({
     toolType: AssistantToolTypeSchema,
@@ -107,6 +113,16 @@ const AssistantReviewAlbumResponseSchema = z
     undoAction: z.literal('delete_created_review_album'),
   })
   .meta({ id: 'AssistantReviewAlbumResponseDto' });
+
+const AssistantExecuteReviewPlanResponseSchema = z
+  .object({
+    status: z.enum(['applied']),
+    albumCount: z.number(),
+    assetCount: z.number(),
+    albums: z.array(AssistantReviewAlbumResponseSchema),
+    message: z.string(),
+  })
+  .meta({ id: 'AssistantExecuteReviewPlanResponseDto' });
 
 const AssistantUndoRequestSchema = z
   .object({
@@ -229,6 +245,8 @@ const AssistantChatResponseSchema = z
 
 export class AssistantChatRequestDto extends createZodDto(AssistantChatRequestSchema) {}
 export class AssistantChatResponseDto extends createZodDto(AssistantChatResponseSchema) {}
+export class AssistantExecuteReviewPlanRequestDto extends createZodDto(AssistantExecuteReviewPlanRequestSchema) {}
+export class AssistantExecuteReviewPlanResponseDto extends createZodDto(AssistantExecuteReviewPlanResponseSchema) {}
 export class AssistantReviewAlbumRequestDto extends createZodDto(AssistantReviewAlbumRequestSchema) {}
 export class AssistantReviewAlbumResponseDto extends createZodDto(AssistantReviewAlbumResponseSchema) {}
 export class AssistantToolRequestDto extends createZodDto(AssistantToolRequestSchema) {}

@@ -5,6 +5,8 @@ import {
   AssistantAssessmentResponseDto,
   AssistantChatRequestDto,
   AssistantChatResponseDto,
+  AssistantExecuteReviewPlanRequestDto,
+  AssistantExecuteReviewPlanResponseDto,
   AssistantMutationCapabilitiesResponseDto,
   AssistantMutationRequestDto,
   AssistantMutationResponseDto,
@@ -73,6 +75,22 @@ export class AssistantController {
     @Body() dto: AssistantReviewAlbumRequestDto,
   ): Promise<AssistantReviewAlbumResponseDto> {
     return this.service.createReviewAlbum(auth, dto);
+  }
+
+  @Post('review-plan')
+  @Authenticated({ permission: Permission.AlbumCreate })
+  @HttpCode(HttpStatus.OK)
+  @Endpoint({
+    summary: 'Execute an assistant review-album plan',
+    description:
+      'Create multiple reversible assistant review albums from approved concrete review actions. Each album writes its own assistant change journal and undo path.',
+    history: HistoryBuilder.v3(),
+  })
+  executeReviewPlan(
+    @Auth() auth: AuthDto,
+    @Body() dto: AssistantExecuteReviewPlanRequestDto,
+  ): Promise<AssistantExecuteReviewPlanResponseDto> {
+    return this.service.executeReviewPlan(auth, dto);
   }
 
   @Get('mutation-capabilities')

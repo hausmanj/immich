@@ -127,6 +127,11 @@
     - Treat GPS as an anchor/name signal for older content; use source folder, capture date, and camera cohorts as the primary backbone for no-GPS assets.
     - Event cohort `sourceDirectories` should represent all materialized review folders, including no-location support folders, so the coverage plan does not propose the same source folder again as a remaining review cohort.
     - Auto provider selection now tries configured providers in order and can fall through from a failing default provider to another configured provider. Explicit provider selections remain strict.
+  - Codex-style assistant workflow follow-up:
+    - The primary workflow should be plan in chat, user approves/edits in chat, then the assistant executes approved concrete steps without requiring button clicks.
+    - `POST /assistant/review-plan` executes multiple concrete review-album requests, with each album still writing its own persisted change journal and undo action.
+    - The web Assistant detects approval/execution feedback such as "go", "execute", "stage", or "create" and runs the latest concrete `review` actions from the prior assistant message.
+    - Broad `album_plan`, `metadata_audit`, `original_file_audit`, `folder_plan`, and `search` actions must not expose album creation unless decomposed into concrete `review` actions with one exact cohort or explicit asset IDs.
 - Temporary local Codex assistant smoke-test API keys were created only for probing and deleted afterward.
 - Mobile validation is still pending because `flutter` and `dart` were not on PATH in this shell. Do not claim the mobile upload patch is device-verified until it has run on iPhone or iOS Simulator.
 - Next practical test after import: ask the in-app Codex assistant to audit `/external/desktop-icloud-originals` for original-file evidence, then compare sampled external-library assets against the Desktop export by filename, size, dimensions, EXIF dates/GPS/camera fields, and checksum.
