@@ -211,6 +211,12 @@ This file tracks local-only changes in this checkout that have not necessarily b
     - Runtime smoke after this change returned 62 ready review-album cohorts covering 1,512 assets and 14 decomposition-audit cohorts covering 5,669 assets.
     - The smoke response correctly proposed `Raw Photo and Video Files` as a `metadata_search` decomposition action, not a review album or sidecar-first audit.
     - Temporary API keys `Codex assistant generic containers smoke test` and `Codex assistant generic container selector smoke test` were deleted after runtime probes.
+  - Added automatic read-only tool iteration to assistant chat.
+    - After the first model pass, the server now executes the first batch of proposed read-only `metadata_search` and `sidecar_pair_audit` actions, appends compact tool evidence to `requestedToolResults`, and runs a second model pass.
+    - Mutating actions are not auto-applied; review albums and other changes still use explicit journaled paths.
+    - `metadata_search` summaries now include compact date, camera, place, media type, and extension breakdowns so broad folder audits can produce useful next-step cohorts without dumping every row inline.
+    - Runtime smoke automatically ran the top three decomposition audits and the follow-up answer used that evidence: Photo Copies had no sidecars/rendered-pair groups, Pictures had MOV paired media and variant groups, and Movies reported an ENOENT directory scan issue that needs metadata/path follow-up.
+    - Temporary API key `Codex assistant auto tool loop smoke test` was deleted after the runtime probe.
 - Full `sidecar_pair_audit` over `/external/desktop-icloud-originals` completed:
   - `directoriesScanned=56`;
   - `sidecarFileCount=0`;
