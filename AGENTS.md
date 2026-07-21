@@ -65,6 +65,9 @@
   - no silent skipping or destructive behavior.
 - The user also wants Codex-style photo organization outside Immich, including moving specific trips into dated folder structures that match Apple Photos unmodified-original exports. Use `tools/photo-file-organizer.mjs` for this class of work:
   - `plan` is read-only and writes a complete JSON plan;
+  - `reconcile-plan` is read-only and compares backup folders against an existing originals tree with content SHA1 evidence;
+  - duplicate backup files should be planned into a duplicates quarantine, not deleted;
+  - new backup files should be planned into date-prefixed event folders matching the user's originals convention, such as `2001-08-30 Roatan Honduras - Anthony's Key Resort`;
   - `apply` writes a typed journal before any move/copy;
   - `undo` reverses completed journaled operations;
   - default output folders use Apple-style date labels such as `Oct 15, 2012`;

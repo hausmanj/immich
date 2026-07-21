@@ -89,6 +89,8 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - Temporarily commented the `/Volumes/laptop backup:/external/laptop-backup:ro` dev bind because the host volume was not mounted and Docker Desktop refused to recreate `immich-server` while the source path was absent. Re-enable it when the volume is mounted again.
 - Added `tools/photo-file-organizer.mjs` for physical photo organization outside Immich.
   - Supports read-only `plan`, journaled `apply`, and journaled `undo`.
+  - Added read-only `reconcile-plan` to compare backup folders against an existing originals tree by content SHA1.
+  - Reconcile plans route exact content duplicates to a duplicates quarantine and route new files into date-prefixed event folders matching the user's originals convention.
   - Default destination layout uses Apple Photos export-style date folders such as `Oct 15, 2012`.
   - Intended for moving/copying specific trips into originals-folder structures without relying on Immich import state.
   - Refuses destination overwrites and refuses partial apply by default when the plan contains conflicts/skipped rows.
