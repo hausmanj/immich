@@ -58,6 +58,17 @@
     - The Mac bridge health check is `curl -fsS http://127.0.0.1:3737/health`.
     - The container bridge health check is `ssh -p 22222 hausmanj@drhaus '/usr/local/bin/docker exec immich-server node -e "fetch(\"http://172.31.0.1:43737/health\").then(r=>r.text()).then(console.log)"'`.
     - Security: this is a command bridge. Keep it private to LAN/Tailscale/Docker; do not expose it to public internet without authentication.
+    - As of 2026-07-21, the Mac bridge and SSH reverse tunnel are launchd-managed:
+      - `~/Library/LaunchAgents/com.johnhausman.immich-assistant-bridge.plist`
+      - `~/Library/LaunchAgents/com.johnhausman.immich-assistant-tunnel.plist`
+      - Bridge command: `/opt/homebrew/bin/node /Users/johnhausman/source/immich/tools/assistant-cli-bridge.mjs`
+      - Tunnel command: `ssh -p 22222 -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -R 0.0.0.0:43737:127.0.0.1:3737 hausmanj@drhaus`
+      - `launchctl print gui/$(id -u)/com.johnhausman.immich-assistant-bridge` and `launchctl print gui/$(id -u)/com.johnhausman.immich-assistant-tunnel` showed both services running after the stale manual tunnel was removed.
+    - Assistant chat now writes per-request diagnostics under `/data/assistant-audits/assistant-chat` with request ID, provider attempts, timing, context summary, action count, and bounded error text.
+    - Latest verified API smoke test on Synology returned HTTP 200 from `POST /api/assistant/chat` using `provider=codex-cli`, answer `assistant diagnostics ok`, and wrote `/data/assistant-audits/assistant-chat/2026-07-21T22-51-30-975Z-assistant-chat-6adab623-e5b1-42e2-9558-c733d1d26c3d.json`.
+    - The smoke test used a temporary database API key and deleted it afterward; cleanup check returned `0`.
+    - The served Assistant UI bundle in the Synology container is hot-patched to bound HTML/DOCTYPE errors (`_err=async e=>` exists in `/build/www/_app/immutable/nodes/16.BqY9dj0p.js`, and the old raw `throw Error(await response.text())` pattern is absent).
+    - If the browser still shows a raw `DOCTYPE` dump after this point, first suspect cached pre-patch immutable JS/service-worker state. Confirm by checking whether a fresh `/data/assistant-audits/assistant-chat/*.json` was written for the failed attempt; if no diagnostic exists, the request likely did not reach the backend route.
   - Runtime issue fixed after deploy: the Assistant web page can persist a selected provider such as `codex-cli` in browser localStorage. If that explicit provider is not configured/reachable on Synology, older server code returned no providers and emitted "The assistant is not configured" even though OpenAI was configured. Source now falls back to configured providers when an explicit requested provider is unavailable, and the Synology running container was hot-patched at `/usr/src/app/server/dist/services/assistant.service.js`.
   - The Assistant UI now exposes `OpenAI` in the provider selector so Synology can use the configured API provider directly.
   - Source default for `IMMICH_LLM_OPENAI_MODEL` was changed from the stale placeholder `gpt-5.6-luna` to `gpt-5.1`.

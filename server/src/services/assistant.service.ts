@@ -357,6 +357,7 @@ export class AssistantService extends BaseService {
   private readonly assistantToolLogDirectory = '/data/assistant-audits';
   private readonly assistantChangeJournalDirectory = '/data/assistant-audits/change-journal';
   private readonly assistantAgentCommandLogDirectory = '/data/assistant-audits/agent-terminal';
+  private readonly assistantChatDiagnosticDirectory = '/data/assistant-audits/assistant-chat';
   private readonly assistantAutoToolIterationLimit = 1;
   private readonly assistantAutoToolActionLimit = 3;
 
@@ -434,23 +435,65 @@ export class AssistantService extends BaseService {
   }
 
   async chat(auth: AuthDto, dto: AssistantChatRequestDto): Promise<AssistantChatResponseDto> {
+    const requestId = this.cryptoRepository.randomUUID();
+    const startedAt = new Date().toISOString();
+    const diagnostic = {
+      requestId,
+      startedAt,
+      finishedAt: null as string | null,
+      durationMs: null as number | null,
+      status: 'started',
+      requestedProvider: dto.provider ?? null,
+      userId: auth.user.id,
+      messageCount: dto.messages.length,
+      lastMessagePreview: dto.messages.at(-1)?.content.slice(0, 500) ?? '',
+      contextSummary: null as AssistantChatResponseDto['context'] | null,
+      providerAttempts: [] as Array<{
+        provider: ProviderConfig['provider'];
+        model?: string;
+        startedAt: string;
+        finishedAt?: string;
+        durationMs?: number;
+        status: 'started' | 'success' | 'error';
+        actionCount?: number;
+        error?: string;
+      }>,
+      error: null as string | null,
+    };
+
     const context = await this.getLibraryContext(auth, dto);
+    diagnostic.contextSummary = context.summary;
     const providerConfigs = this.getLlmProviders(dto.provider);
+    this.logger.log(
+      `Assistant chat ${requestId} started provider=${dto.provider ?? 'auto'} providers=${providerConfigs
+        .map((provider) => provider.provider)
+        .join(',')}`,
+    );
 
     if (providerConfigs.length === 0) {
-      return {
+      const response = {
         status: 'disabled',
         answer:
           'The assistant is not configured. Set IMMICH_ASSISTANT_CLAUDE_COMMAND, IMMICH_ASSISTANT_CODEX_COMMAND, or set IMMICH_LLM_PROVIDER with the matching provider API key.',
         actions: [],
         context: context.summary,
-      };
+      } satisfies AssistantChatResponseDto;
+      await this.writeAssistantChatDiagnostic(diagnostic, response.status);
+      return response;
     }
 
     let lastProviderConfig: ProviderConfig | undefined;
     let lastError: string | undefined;
     for (const providerConfig of providerConfigs) {
       lastProviderConfig = providerConfig;
+      const providerStartedAt = new Date().toISOString();
+      const providerAttempt: (typeof diagnostic.providerAttempts)[number] = {
+        provider: providerConfig.provider,
+        model: providerConfig.model,
+        startedAt: providerStartedAt,
+        status: 'started',
+      };
+      diagnostic.providerAttempts.push(providerAttempt);
 
       try {
         let output = await this.callAssistantProvider(providerConfig, dto, context);
@@ -466,21 +509,35 @@ export class AssistantService extends BaseService {
           output = await this.callAssistantProvider(providerConfig, dto, responseContext);
         }
 
-        return {
+        const response = {
           status: 'success',
           provider: providerConfig.provider,
           model: providerConfig.model,
           answer: this.toAnswer(output),
           actions: this.toActions(output),
           context: responseContext.summary,
-        };
+        } satisfies AssistantChatResponseDto;
+        providerAttempt.status = 'success';
+        providerAttempt.finishedAt = new Date().toISOString();
+        providerAttempt.durationMs = new Date(providerAttempt.finishedAt).getTime() - new Date(providerStartedAt).getTime();
+        providerAttempt.actionCount = response.actions.length;
+        diagnostic.contextSummary = responseContext.summary;
+        await this.writeAssistantChatDiagnostic(diagnostic, response.status);
+        this.logger.log(
+          `Assistant chat ${requestId} succeeded provider=${providerConfig.provider} durationMs=${providerAttempt.durationMs} actions=${response.actions.length}`,
+        );
+        return response;
       } catch (error: unknown) {
         lastError = this.getErrorMessage(error);
+        providerAttempt.status = 'error';
+        providerAttempt.finishedAt = new Date().toISOString();
+        providerAttempt.durationMs = new Date(providerAttempt.finishedAt).getTime() - new Date(providerStartedAt).getTime();
+        providerAttempt.error = lastError.slice(0, 2000);
         this.logger.warn(`Assistant chat failed for ${providerConfig.provider}: ${lastError}`);
       }
     }
 
-    return {
+    const response = {
       status: 'error',
       provider: lastProviderConfig?.provider,
       model: lastProviderConfig?.model,
@@ -488,7 +545,10 @@ export class AssistantService extends BaseService {
       actions: [],
       error: lastError,
       context: context.summary,
-    };
+    } satisfies AssistantChatResponseDto;
+    diagnostic.error = lastError ?? null;
+    await this.writeAssistantChatDiagnostic(diagnostic, response.status);
+    return response;
   }
 
   async createReviewAlbum(
@@ -1352,6 +1412,38 @@ export class AssistantService extends BaseService {
 
     await this.storageRepository.createOrOverwriteFile(logFilePath, Buffer.from(JSON.stringify(payload)));
     return logFilePath;
+  }
+
+  private async writeAssistantChatDiagnostic(
+    diagnostic: {
+      requestId: string;
+      startedAt: string;
+      finishedAt: string | null;
+      durationMs: number | null;
+      status: string;
+      error: string | null;
+    } & Record<string, unknown>,
+    status: AssistantChatResponseDto['status'],
+  ) {
+    try {
+      const finishedAt = new Date().toISOString();
+      const payload = {
+        ...diagnostic,
+        status,
+        finishedAt,
+        durationMs: new Date(finishedAt).getTime() - new Date(diagnostic.startedAt).getTime(),
+      };
+      this.storageRepository.mkdirSync(this.assistantChatDiagnosticDirectory);
+      const timestamp = diagnostic.startedAt.replaceAll(':', '-').replaceAll('.', '-');
+      const logFilePath = join(
+        this.assistantChatDiagnosticDirectory,
+        `${timestamp}-assistant-chat-${diagnostic.requestId}.json`,
+      );
+      await this.storageRepository.createOrOverwriteFile(logFilePath, Buffer.from(JSON.stringify(payload, null, 2)));
+      this.logger.log(`Assistant chat ${diagnostic.requestId} diagnostic log: ${logFilePath}`);
+    } catch (error) {
+      this.logger.warn(`Failed to write assistant chat diagnostic: ${this.getErrorMessage(error)}`);
+    }
   }
 
   private toAssistantAgentCommandResponse(

@@ -76,6 +76,24 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - Source fix: assistant page fetch handling now normalizes non-OK responses, parses JSON errors when available, detects HTML responses, and truncates plain text errors to prevent full-page dumps.
   - Emergency runtime fix: hot-patched `/build/www/_app/immutable/nodes/16.BqY9dj0p.js` plus `.gz` and `.br` in the running Synology container with the same bounded error helper.
   - Browser cache note: the hot-patched file keeps the same immutable asset filename, so a hard refresh may be needed before the browser stops using the cached old chunk.
+- Runtime assistant diagnostic follow-up:
+  - Symptom: the Assistant appeared to hang and then showed the same large `DOCTYPE`-style error after a simple question.
+  - Source fix: `AssistantService.chat()` now writes a per-request diagnostic JSON log under `/data/assistant-audits/assistant-chat`.
+  - Each diagnostic records request ID, user ID, provider requested, message count, last-message preview, compact context summary, provider attempt start/finish/duration, action count, success/error status, and bounded error text.
+  - Runtime fix: hot-patched `/usr/src/app/server/dist/services/assistant.service.js` in the running Synology `immich-server` container and restarted only `immich-server`.
+  - Bridge persistence fix: added user LaunchAgents on the Mac for the assistant CLI bridge and SSH reverse tunnel:
+    - `~/Library/LaunchAgents/com.johnhausman.immich-assistant-bridge.plist`
+    - `~/Library/LaunchAgents/com.johnhausman.immich-assistant-tunnel.plist`
+  - The bridge LaunchAgent runs `/opt/homebrew/bin/node /Users/johnhausman/source/immich/tools/assistant-cli-bridge.mjs`.
+  - The tunnel LaunchAgent runs `ssh -p 22222 -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -R 0.0.0.0:43737:127.0.0.1:3737 hausmanj@drhaus`.
+  - Removed a stale manual reverse tunnel that was occupying remote port `43737`; launchd now owns the bridge/tunnel processes.
+  - Verification on 2026-07-21:
+    - `launchctl print` showed both LaunchAgents running.
+    - From inside `immich-server`, `http://172.31.0.1:43737/health` returned the Mac bridge health JSON with Claude/Codex providers.
+    - A temporary API key smoke test against `POST /api/assistant/chat` returned HTTP 200 with `provider=codex-cli`, answer `assistant diagnostics ok`, no actions, and context summary `albums=0`, `externalLibraries=2`, `sampledAssets=75`, `unorganizedAssets=55063`.
+    - The temporary API key was deleted afterward; database cleanup check returned `0`.
+    - Diagnostic log written: `/data/assistant-audits/assistant-chat/2026-07-21T22-51-30-975Z-assistant-chat-6adab623-e5b1-42e2-9558-c733d1d26c3d.json`.
+  - Current assessment: backend/provider path is working. If the browser still shows a raw `DOCTYPE` dump, the likely remaining cause is a cached pre-patch immutable Assistant JS chunk rather than a backend/provider failure; the new server diagnostic log will show whether the request actually reached `/api/assistant/chat`.
 
 ## 2026-07-19 - In-App Library Assistant Prototype
 
