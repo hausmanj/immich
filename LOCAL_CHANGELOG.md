@@ -17,6 +17,15 @@ This file tracks local-only changes in this checkout that have not necessarily b
 - Added `docs/assistant-indexing-capabilities-2026-07-21.md`.
   - Assesses current Immich indexing, current assistant audit/search capabilities, and the gaps for 1M+ mixed-file organization.
   - Recommends persisted assistant index runs, indexed asset/file evidence rows, source-tree/noise classifiers, duplicate/originality signatures, event/group findings, coverage ledgers, and server-side workflow persistence.
+- Implemented the first persisted assistant indexing pass.
+  - Added database tables `assistant_index_run`, `assistant_index_asset`, and `assistant_index_group`.
+  - Added `POST /assistant/index-runs` to create a read-only imported-asset index run.
+  - Added `GET /assistant/index-runs` and `GET /assistant/index-runs/:id` to inspect recent runs and top groups.
+  - The initial pass records source directory, file extension, type, file size, dimensions, dates, camera/location fields, checksum semantics, GPS/camera presence, noise labels, risk labels, and JSON evidence.
+  - Group generation currently covers source directories, file extensions, cameras, locations, noise labels, and risk labels.
+  - Content-hash persistence is intentionally blocked for now; byte-level hash evidence still uses `content_hash_audit`.
+  - Smoke test through the API against `/external/desktop-icloud-originals` completed with `indexedAssets=1813` and `groupCount=89`; top groups included `path_checksum_only`, `no_gps`, `SONY DSC-HX100V`, `OLYMPUS IMAGING CORP. uT8000,ST8000`, and `/external/desktop-icloud-originals/Feb 24, 2012`.
+  - A temporary API key named `Codex assistant index smoke test` was created for the smoke test and deleted afterward.
 - Runtime follow-up after importing the Desktop originals:
   - Fixed assistant cohort SQL generation after chat produced `column "undefined" does not exist`.
   - Cause: Kysely raw SQL fragments used for dynamic full-library audit cohorts were interpolated incorrectly inside a larger raw query.

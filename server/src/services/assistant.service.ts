@@ -11,6 +11,9 @@ import {
   AssistantChatResponseDto,
   AssistantExecuteReviewPlanRequestDto,
   AssistantExecuteReviewPlanResponseDto,
+  AssistantIndexRunRequestDto,
+  AssistantIndexRunResponseDto,
+  AssistantIndexRunsResponseDto,
   AssistantMutationCapabilitiesResponseDto,
   AssistantMutationRequestDto,
   AssistantMutationResponseDto,
@@ -68,6 +71,35 @@ type ProviderConfig = RemoteProviderConfig | LocalCliProviderConfig;
 type AssistantModelOutput = {
   answer?: unknown;
   actions?: unknown;
+};
+
+type AssistantIndexRunRecord = {
+  id: string;
+  ownerId: string;
+  libraryId: string | null;
+  mode: string;
+  status: string;
+  originalPathPrefix: string | null;
+  totalAssets: number | string;
+  indexedAssets: number | string;
+  errorCount: number | string;
+  parameters: Record<string, unknown>;
+  summary: Record<string, unknown>;
+  logFilePath: string | null;
+  startedAt: Date | string | null;
+  finishedAt: Date | string | null;
+  createdAt: Date | string;
+  updatedAt: Date | string;
+};
+
+type AssistantIndexGroupRecord = {
+  id: string;
+  groupType: string;
+  groupKey: string;
+  label: string;
+  assetCount: number | string;
+  confidence: number | string;
+  evidence: Record<string, unknown>;
 };
 
 type AssistantOrganizationCoverageItem = {
@@ -619,6 +651,140 @@ export class AssistantService extends BaseService {
     }
 
     return this.withAssistantToolLog(auth, response);
+  }
+
+  async getIndexRuns(auth: AuthDto): Promise<AssistantIndexRunsResponseDto> {
+    const runs = await this.assistantIndexRepository.getRuns(auth.user.id);
+    return { runs: runs.map((run) => this.toAssistantIndexRunResponse(run)) };
+  }
+
+  async getIndexRun(auth: AuthDto, id: string): Promise<AssistantIndexRunResponseDto> {
+    const run = await this.assistantIndexRepository.getRun(auth.user.id, id);
+    if (!run) {
+      throw new BadRequestException('Assistant index run not found');
+    }
+
+    const groups = await this.assistantIndexRepository.getGroups(id);
+    return this.toAssistantIndexRunResponse(run, groups);
+  }
+
+  async createIndexRun(auth: AuthDto, dto: AssistantIndexRunRequestDto): Promise<AssistantIndexRunResponseDto> {
+    if (dto.includeContentHash) {
+      throw new BadRequestException(
+        'Content-hash indexing is not enabled yet. Run content_hash_audit for byte-level evidence until the persisted hash pass is implemented.',
+      );
+    }
+
+    if (dto.libraryId) {
+      const library = await this.libraryRepository.get(dto.libraryId);
+      if (!library || library.ownerId !== auth.user.id) {
+        throw new BadRequestException('Assistant index library not found');
+      }
+    }
+
+    if (dto.originalPathPrefix && !dto.originalPathPrefix.startsWith('/')) {
+      throw new BadRequestException('originalPathPrefix must be an absolute Immich/container path');
+    }
+
+    const startedAt = new Date();
+    const run = await this.assistantIndexRepository.createRun({
+      ownerId: auth.user.id,
+      libraryId: dto.libraryId ?? null,
+      mode: 'inventory',
+      status: 'running',
+      originalPathPrefix: dto.originalPathPrefix ?? null,
+      parameters: {
+        libraryId: dto.libraryId ?? null,
+        originalPathPrefix: dto.originalPathPrefix ?? null,
+        includeContentHash: false,
+        indexedSource: 'imported_immich_assets',
+        classifierVersion: 1,
+      },
+      summary: {},
+      startedAt,
+    });
+
+    try {
+      const indexedAssets = await this.assistantIndexRepository.indexImportedAssets(run.id, auth.user.id, {
+        libraryId: dto.libraryId ?? null,
+        originalPathPrefix: dto.originalPathPrefix ?? null,
+      });
+      const groupCount = await this.assistantIndexRepository.rebuildGroups(run.id);
+      const summary = await this.assistantIndexRepository.getRunSummary(run.id);
+      const completedRun = await this.assistantIndexRepository.updateRun(run.id, {
+        status: 'completed',
+        totalAssets: indexedAssets,
+        indexedAssets,
+        errorCount: 0,
+        summary: {
+          ...summary,
+          groupCount,
+        },
+        finishedAt: new Date(),
+      });
+      const groups = await this.assistantIndexRepository.getGroups(run.id);
+      return this.toAssistantIndexRunResponse(completedRun, groups);
+    } catch (error: unknown) {
+      const failedRun = await this.assistantIndexRepository.updateRun(run.id, {
+        status: 'failed',
+        errorCount: 1,
+        summary: {
+          error: this.getErrorMessage(error),
+          note: 'The assistant index run failed before mutating any source assets. Index rows are assistant-owned evidence only.',
+        },
+        finishedAt: new Date(),
+      });
+      return this.toAssistantIndexRunResponse(failedRun);
+    }
+  }
+
+  private toAssistantIndexRunResponse(
+    run: AssistantIndexRunRecord,
+    groups: AssistantIndexGroupRecord[] = [],
+  ): AssistantIndexRunResponseDto {
+    return {
+      id: run.id,
+      ownerId: run.ownerId,
+      libraryId: run.libraryId ?? null,
+      mode: run.mode,
+      status: this.toAssistantIndexRunStatus(run.status),
+      originalPathPrefix: run.originalPathPrefix ?? null,
+      totalAssets: Number(run.totalAssets ?? 0),
+      indexedAssets: Number(run.indexedAssets ?? 0),
+      errorCount: Number(run.errorCount ?? 0),
+      parameters: run.parameters ?? {},
+      summary: run.summary ?? {},
+      logFilePath: run.logFilePath ?? null,
+      startedAt: this.toIsoString(run.startedAt),
+      finishedAt: this.toIsoString(run.finishedAt),
+      createdAt: this.toIsoString(run.createdAt) ?? new Date().toISOString(),
+      updatedAt: this.toIsoString(run.updatedAt) ?? new Date().toISOString(),
+      groups: groups.map((group) => ({
+        id: group.id,
+        groupType: group.groupType,
+        groupKey: group.groupKey,
+        label: group.label,
+        assetCount: Number(group.assetCount ?? 0),
+        confidence: Number(group.confidence ?? 0),
+        evidence: group.evidence ?? {},
+      })),
+    };
+  }
+
+  private toIsoString(value: unknown): string | null {
+    if (!value) {
+      return null;
+    }
+    if (value instanceof Date) {
+      return value.toISOString();
+    }
+    return String(value);
+  }
+
+  private toAssistantIndexRunStatus(status: string): 'pending' | 'running' | 'completed' | 'failed' {
+    return status === 'pending' || status === 'running' || status === 'completed' || status === 'failed'
+      ? status
+      : 'failed';
   }
 
   private async withAssistantToolLog(

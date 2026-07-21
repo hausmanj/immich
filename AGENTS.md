@@ -14,6 +14,12 @@
 - The user's large laptop-backup Synology volume is mounted on macOS at `/Volumes/laptop backup` and should be exposed read-only in the Immich dev server container at `/external/laptop-backup`.
 - The laptop-backup tree is intentionally messy and large. Initial top-level examples include old Mac/Lenovo backups, `Raw Photo and Video Files`, Google Takeout folders, iMazing backups, app/document folders, icons, thumbnails, and other non-photo material. Do not recursively shell-scan it casually; build or use checkpointed assistant tools for inventory/classification/resume.
 - Current laptop-backup scan observation: Immich accepted `/external/laptop-backup/Raw Photo and Video Files` as an external library path and the crawler logged at least 30,000 candidate files in 10,000-file batches, but the library still had zero committed asset rows at inspection time. Active BullMQ library jobs held huge `LibrarySyncFiles` payloads including thumbnails/message attachments. Treat this as evidence that assistant indexing needs smaller resumable batches and classification before broad organization work.
+- First persisted assistant indexing pass is implemented:
+  - database tables: `assistant_index_run`, `assistant_index_asset`, `assistant_index_group`;
+  - endpoints: `GET /assistant/index-runs`, `GET /assistant/index-runs/:id`, `POST /assistant/index-runs`;
+  - current pass indexes already-imported Immich assets only and records source folder, file extension, type, size, dimensions, dates, camera/location fields, checksum semantics, GPS/camera presence, noise labels, risk labels, and evidence JSON;
+  - group output includes source-directory, file-extension, camera, location, noise-label, and risk-label cohorts;
+  - content-hash persistence is intentionally blocked for this first pass; use `content_hash_audit` until a persisted hash pass is implemented.
 - Observed reference export profile:
   - about 2.7 GB;
   - 56 date-named folders;
@@ -87,12 +93,10 @@
   - expect huge scale and noisy content, including icons, thumbnails, caches, duplicate exports, app folders, document trees, and mixed originals/renders;
   - prefer resumable inventory/classification tools before broad Immich import or album generation.
 - Next assistant indexing implementation should prioritize persisted, resumable assistant-owned index runs over live prompt context:
-  - index run status/progress/logging;
-  - indexed asset/file evidence rows;
-  - source-tree and noise classifications;
-  - duplicate/originality signatures;
-  - event/group findings;
-  - coverage ledger proving every item is covered, deferred, risky, or unclassified.
+  - improve index runs from synchronous SQL pass to queued/resumable background jobs with cancel/resume;
+  - add raw file inventory for not-yet-imported files;
+  - persist content hashes and duplicate/originality signatures;
+  - add event/group findings and coverage ledger proving every item is covered, deferred, risky, or unclassified.
 - Simulator testing is useful for app flow, logging, and Photos import behavior. Physical-device testing is still preferable for iCloud Photos and Optimize iPhone Storage edge cases.
 
 ## Reopen Checkpoint

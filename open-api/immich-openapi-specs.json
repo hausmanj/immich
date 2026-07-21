@@ -5200,6 +5200,146 @@
         "x-immich-permission": "asset.read"
       }
     },
+    "/assistant/index-runs": {
+      "get": {
+        "description": "List recent persisted assistant indexing runs for the authenticated user.",
+        "operationId": "getIndexRuns",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssistantIndexRunsResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "List assistant index runs",
+        "tags": [
+          "Assistant"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          }
+        ],
+        "x-immich-permission": "asset.read"
+      },
+      "post": {
+        "description": "Create a read-only persisted assistant index over imported Immich assets. The initial pass records source, metadata, noise, and risk evidence without mutating assets.",
+        "operationId": "createIndexRun",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssistantIndexRunRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssistantIndexRunResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Create an assistant index run",
+        "tags": [
+          "Assistant"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          }
+        ],
+        "x-immich-permission": "asset.read"
+      }
+    },
+    "/assistant/index-runs/{id}": {
+      "get": {
+        "description": "Get persisted assistant indexing status, summary, and top groups for one run.",
+        "operationId": "getIndexRun",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssistantIndexRunResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Get an assistant index run",
+        "tags": [
+          "Assistant"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          }
+        ],
+        "x-immich-permission": "asset.read"
+      }
+    },
     "/assistant/mutation": {
       "post": {
         "description": "Plan or apply a supported assistant library mutation. Every request writes a persisted change journal before applying changes.",
@@ -19050,6 +19190,175 @@
           "assetCount",
           "message",
           "status"
+        ],
+        "type": "object"
+      },
+      "AssistantIndexGroupDto": {
+        "properties": {
+          "assetCount": {
+            "type": "number"
+          },
+          "confidence": {
+            "type": "number"
+          },
+          "evidence": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "groupKey": {
+            "type": "string"
+          },
+          "groupType": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "assetCount",
+          "confidence",
+          "evidence",
+          "groupKey",
+          "groupType",
+          "id",
+          "label"
+        ],
+        "type": "object"
+      },
+      "AssistantIndexRunRequestDto": {
+        "properties": {
+          "includeContentHash": {
+            "default": false,
+            "type": "boolean"
+          },
+          "libraryId": {
+            "format": "uuid",
+            "nullable": true,
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+            "type": "string"
+          },
+          "originalPathPrefix": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "AssistantIndexRunResponseDto": {
+        "properties": {
+          "createdAt": {
+            "type": "string"
+          },
+          "errorCount": {
+            "type": "number"
+          },
+          "finishedAt": {
+            "nullable": true,
+            "type": "string"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/AssistantIndexGroupDto"
+            },
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+            "type": "string"
+          },
+          "indexedAssets": {
+            "type": "number"
+          },
+          "libraryId": {
+            "format": "uuid",
+            "nullable": true,
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+            "type": "string"
+          },
+          "logFilePath": {
+            "nullable": true,
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "originalPathPrefix": {
+            "nullable": true,
+            "type": "string"
+          },
+          "ownerId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+            "type": "string"
+          },
+          "parameters": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "startedAt": {
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "running",
+              "completed",
+              "failed"
+            ],
+            "type": "string"
+          },
+          "summary": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "totalAssets": {
+            "type": "number"
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "createdAt",
+          "errorCount",
+          "finishedAt",
+          "id",
+          "indexedAssets",
+          "libraryId",
+          "logFilePath",
+          "mode",
+          "originalPathPrefix",
+          "ownerId",
+          "parameters",
+          "startedAt",
+          "status",
+          "summary",
+          "totalAssets",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
+      "AssistantIndexRunsResponseDto": {
+        "properties": {
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/AssistantIndexRunResponseDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "runs"
         ],
         "type": "object"
       },

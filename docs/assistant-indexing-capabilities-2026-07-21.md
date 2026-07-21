@@ -17,6 +17,13 @@ This is enough for normal photo-library operation, but it is not enough for the 
 
 The local assistant prototype currently has these useful pieces:
 
+- Persisted assistant index foundation:
+  - `assistant_index_run`
+  - `assistant_index_asset`
+  - `assistant_index_group`
+  - `POST /assistant/index-runs`
+  - `GET /assistant/index-runs`
+  - `GET /assistant/index-runs/:id`
 - `GET /assistant/assessment` loads live Immich metadata and deterministic SQL cohorts.
 - Deterministic cohorts include source folder, capture date, camera, location, checksum algorithm, video, mobile metadata, duplicate candidates, and event/trip cohorts.
 - `organizationCoveragePlan` covers whole libraries by selecting event cohorts first and then covering remaining source folders.
@@ -35,8 +42,8 @@ The current assistant still mostly reasons over live SQL aggregates and sampled 
 
 Priority gaps:
 
-- No assistant-owned persisted inventory/index tables for file-level evidence, classifications, duplicate signatures, or organization decisions.
-- No resumable assistant indexing job with checkpoint, progress, status, cancel, resume, and log file paths.
+- Assistant-owned persisted inventory/index tables now exist for imported asset evidence and first-pass classifications, but not yet for raw unimported file inventory, duplicate signatures, or final organization decisions.
+- The first assistant-owned persisted index exists, but it currently indexes already-imported Immich assets synchronously. It still needs checkpointed background execution, cancel/resume, and raw file inventory for not-yet-imported files.
 - Content hash evidence is generated in audit logs, but not stored as a reusable index.
 - Sidecar/variant scanning only examines directories for assets already imported by Immich; it does not inventory non-imported sidecars/noise across a raw folder tree.
 - No dedicated classifier for low-value or risky cohorts such as icons, thumbnails, tiny files, app caches, message attachment thumbnails, temporary files, stickers, screenshots, or rendered copies.
@@ -81,13 +88,14 @@ Build the index in staged, resumable passes:
 
 ## Immediate Implementation Order
 
-1. Add a resumable assistant inventory/index run model and API.
-2. Convert current read-only audit tools into background jobs that write durable indexed evidence and logs.
-3. Add a source-tree/noise classifier for the laptop-backup style library before importing or organizing everything.
-4. Add a coverage ledger so the assistant can prove what is covered, deferred, risky, or unclassified.
-5. Add typed undo for duplicate resolution, then enable duplicate apply only for high-confidence groups.
-6. Add typed undo for folder moves before any physical organization feature is enabled.
-7. Move assistant conversation/workflow state from browser localStorage to server-side persisted sessions.
+1. Convert the first assistant index pass from synchronous SQL execution into queued/resumable background jobs with cancel/resume.
+2. Add raw file inventory for not-yet-imported files under external paths, especially laptop-backup.
+3. Convert current read-only audit tools into background jobs that write durable indexed evidence and logs.
+4. Expand the source-tree/noise classifier for the laptop-backup style library before importing or organizing everything.
+5. Add a coverage ledger so the assistant can prove what is covered, deferred, risky, or unclassified.
+6. Add typed undo for duplicate resolution, then enable duplicate apply only for high-confidence groups.
+7. Add typed undo for folder moves before any physical organization feature is enabled.
+8. Move assistant conversation/workflow state from browser localStorage to server-side persisted sessions.
 
 ## Laptop-Backup Observation
 
