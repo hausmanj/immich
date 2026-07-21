@@ -13,6 +13,7 @@
 - The reference export is mounted read-only in the Immich dev server container at `/external/desktop-icloud-originals`.
 - The user's large laptop-backup Synology volume is mounted on macOS at `/Volumes/laptop backup` and should be exposed read-only in the Immich dev server container at `/external/laptop-backup`.
 - The laptop-backup tree is intentionally messy and large. Initial top-level examples include old Mac/Lenovo backups, `Raw Photo and Video Files`, Google Takeout folders, iMazing backups, app/document folders, icons, thumbnails, and other non-photo material. Do not recursively shell-scan it casually; build or use checkpointed assistant tools for inventory/classification/resume.
+- Current laptop-backup scan observation: Immich accepted `/external/laptop-backup/Raw Photo and Video Files` as an external library path and the crawler logged at least 30,000 candidate files in 10,000-file batches, but the library still had zero committed asset rows at inspection time. Active BullMQ library jobs held huge `LibrarySyncFiles` payloads including thumbnails/message attachments. Treat this as evidence that assistant indexing needs smaller resumable batches and classification before broad organization work.
 - Observed reference export profile:
   - about 2.7 GB;
   - 56 date-named folders;
@@ -60,6 +61,7 @@
 - Relevant notes:
   - `mobile/ios/unedited-original-upload-investigation.md`
   - `mobile/ios/open-pr-triage-2026-07-19.md`
+  - `docs/assistant-indexing-capabilities-2026-07-21.md`
 - Runtime log markers to preserve/search:
   - `iOS asset has Photos adjustments; attempting unedited base export`
   - `Using unedited base file for adjusted iOS asset`
@@ -84,6 +86,13 @@
   - keep the mount read-only;
   - expect huge scale and noisy content, including icons, thumbnails, caches, duplicate exports, app folders, document trees, and mixed originals/renders;
   - prefer resumable inventory/classification tools before broad Immich import or album generation.
+- Next assistant indexing implementation should prioritize persisted, resumable assistant-owned index runs over live prompt context:
+  - index run status/progress/logging;
+  - indexed asset/file evidence rows;
+  - source-tree and noise classifications;
+  - duplicate/originality signatures;
+  - event/group findings;
+  - coverage ledger proving every item is covered, deferred, risky, or unclassified.
 - Simulator testing is useful for app flow, logging, and Photos import behavior. Physical-device testing is still preferable for iCloud Photos and Optimize iPhone Storage edge cases.
 
 ## Reopen Checkpoint

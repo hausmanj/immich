@@ -11,6 +11,12 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - Initial observation: top-level content includes old Mac/Lenovo backups, `Raw Photo and Video Files`, Google Takeout folders, iMazing backups, app/document folders, icons, thumbnails, and other non-photo material.
   - Scale warning: do not rely on ad hoc recursive shell scans; this needs checkpointed inventory/classification tooling before major organization actions.
   - Verified inside `immich_server` after container recreation: mount appears at `/external/laptop-backup` as read-only and rejects test writes with `Read-only file system`.
+  - Follow-up observation: Immich accepted `/external/laptop-backup/Raw Photo and Video Files` as an external library path and the crawler logged at least 30,000 candidate files in 10,000-file batches, but the library still had zero committed asset rows at inspection time.
+  - Active BullMQ library jobs contained large `LibrarySyncFiles` payloads with 10,000 paths each, including obvious noisy cohorts such as thumbnails and message attachments.
+  - This reinforces the need for assistant-owned resumable inventory/classification/indexing before relying on broad external-library organization for the laptop-backup data set.
+- Added `docs/assistant-indexing-capabilities-2026-07-21.md`.
+  - Assesses current Immich indexing, current assistant audit/search capabilities, and the gaps for 1M+ mixed-file organization.
+  - Recommends persisted assistant index runs, indexed asset/file evidence rows, source-tree/noise classifiers, duplicate/originality signatures, event/group findings, coverage ledgers, and server-side workflow persistence.
 - Runtime follow-up after importing the Desktop originals:
   - Fixed assistant cohort SQL generation after chat produced `column "undefined" does not exist`.
   - Cause: Kysely raw SQL fragments used for dynamic full-library audit cohorts were interpolated incorrectly inside a larger raw query.
