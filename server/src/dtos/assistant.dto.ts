@@ -102,6 +102,54 @@ const AssistantToolResponseSchema = z
   })
   .meta({ id: 'AssistantToolResponseDto' });
 
+const AssistantIndexRunRequestSchema = z
+  .object({
+    libraryId: z.uuidv4().nullable().optional(),
+    originalPathPrefix: z.string().trim().min(1).max(1000).nullable().optional(),
+    includeContentHash: z.boolean().default(false).optional(),
+  })
+  .meta({ id: 'AssistantIndexRunRequestDto' });
+
+const AssistantIndexGroupSchema = z
+  .object({
+    id: z.uuidv4(),
+    groupType: z.string(),
+    groupKey: z.string(),
+    label: z.string(),
+    assetCount: z.number(),
+    confidence: z.number(),
+    evidence: z.record(z.string(), z.unknown()),
+  })
+  .meta({ id: 'AssistantIndexGroupDto' });
+
+const AssistantIndexRunResponseSchema = z
+  .object({
+    id: z.uuidv4(),
+    ownerId: z.uuidv4(),
+    libraryId: z.uuidv4().nullable(),
+    mode: z.string(),
+    status: z.enum(['pending', 'running', 'completed', 'failed']),
+    originalPathPrefix: z.string().nullable(),
+    totalAssets: z.number(),
+    indexedAssets: z.number(),
+    errorCount: z.number(),
+    parameters: z.record(z.string(), z.unknown()),
+    summary: z.record(z.string(), z.unknown()),
+    logFilePath: z.string().nullable(),
+    startedAt: z.string().nullable(),
+    finishedAt: z.string().nullable(),
+    createdAt: z.string(),
+    updatedAt: z.string(),
+    groups: z.array(AssistantIndexGroupSchema).optional(),
+  })
+  .meta({ id: 'AssistantIndexRunResponseDto' });
+
+const AssistantIndexRunsResponseSchema = z
+  .object({
+    runs: z.array(AssistantIndexRunResponseSchema),
+  })
+  .meta({ id: 'AssistantIndexRunsResponseDto' });
+
 const AssistantReviewAlbumResponseSchema = z
   .object({
     albumId: z.uuidv4(),
@@ -251,6 +299,9 @@ export class AssistantReviewAlbumRequestDto extends createZodDto(AssistantReview
 export class AssistantReviewAlbumResponseDto extends createZodDto(AssistantReviewAlbumResponseSchema) {}
 export class AssistantToolRequestDto extends createZodDto(AssistantToolRequestSchema) {}
 export class AssistantToolResponseDto extends createZodDto(AssistantToolResponseSchema) {}
+export class AssistantIndexRunRequestDto extends createZodDto(AssistantIndexRunRequestSchema) {}
+export class AssistantIndexRunResponseDto extends createZodDto(AssistantIndexRunResponseSchema) {}
+export class AssistantIndexRunsResponseDto extends createZodDto(AssistantIndexRunsResponseSchema) {}
 export class AssistantUndoRequestDto extends createZodDto(AssistantUndoRequestSchema) {}
 export class AssistantUndoResponseDto extends createZodDto(AssistantUndoResponseSchema) {}
 export class AssistantMutationRequestDto extends createZodDto(AssistantMutationSchema) {}

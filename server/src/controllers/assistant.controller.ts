@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { Endpoint, HistoryBuilder } from 'src/decorators';
 import {
@@ -7,6 +7,9 @@ import {
   AssistantChatResponseDto,
   AssistantExecuteReviewPlanRequestDto,
   AssistantExecuteReviewPlanResponseDto,
+  AssistantIndexRunRequestDto,
+  AssistantIndexRunResponseDto,
+  AssistantIndexRunsResponseDto,
   AssistantMutationCapabilitiesResponseDto,
   AssistantMutationRequestDto,
   AssistantMutationResponseDto,
@@ -60,6 +63,44 @@ export class AssistantController {
   })
   runTool(@Auth() auth: AuthDto, @Body() dto: AssistantToolRequestDto): Promise<AssistantToolResponseDto> {
     return this.service.runTool(auth, dto);
+  }
+
+  @Get('index-runs')
+  @Authenticated({ permission: Permission.AssetRead })
+  @Endpoint({
+    summary: 'List assistant index runs',
+    description: 'List recent persisted assistant indexing runs for the authenticated user.',
+    history: HistoryBuilder.v3(),
+  })
+  getIndexRuns(@Auth() auth: AuthDto): Promise<AssistantIndexRunsResponseDto> {
+    return this.service.getIndexRuns(auth);
+  }
+
+  @Get('index-runs/:id')
+  @Authenticated({ permission: Permission.AssetRead })
+  @Endpoint({
+    summary: 'Get an assistant index run',
+    description: 'Get persisted assistant indexing status, summary, and top groups for one run.',
+    history: HistoryBuilder.v3(),
+  })
+  getIndexRun(@Auth() auth: AuthDto, @Param('id') id: string): Promise<AssistantIndexRunResponseDto> {
+    return this.service.getIndexRun(auth, id);
+  }
+
+  @Post('index-runs')
+  @Authenticated({ permission: Permission.AssetRead })
+  @HttpCode(HttpStatus.OK)
+  @Endpoint({
+    summary: 'Create an assistant index run',
+    description:
+      'Create a read-only persisted assistant index over imported Immich assets. The initial pass records source, metadata, noise, and risk evidence without mutating assets.',
+    history: HistoryBuilder.v3(),
+  })
+  createIndexRun(
+    @Auth() auth: AuthDto,
+    @Body() dto: AssistantIndexRunRequestDto,
+  ): Promise<AssistantIndexRunResponseDto> {
+    return this.service.createIndexRun(auth, dto);
   }
 
   @Post('review-album')
