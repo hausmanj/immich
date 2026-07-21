@@ -168,6 +168,16 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - Each album created by a review plan still writes its own change journal and undo action before/after mutation.
   - The web Assistant now detects approval/execution feedback in chat and executes the latest concrete `review` actions without requiring button clicks.
   - Album creation buttons are now restricted to concrete `review` actions only. Broad planning/audit/search cards no longer expose album creation just because they have a cohort-shaped payload.
+- Persisted assistant indexing capability follow-up:
+  - Enabled content-hash persistence in `POST /assistant/index-runs`; it now computes SHA1 from bytes on disk and stores the result on assistant index rows.
+  - Enabled raw filesystem inventory in index runs; the pass walks the target library import roots and records sidecars, unsupported files, raw-camera files, and missed media files that are not already represented by imported Immich assets.
+  - Changed index-run defaults to `includeContentHash=true`, `includeRawFiles=true`, and `includeSidecars=true`.
+  - Added assistant index row fields for `inventoryKind`, `contentSha1`, `contentHashStatus`, `contentHashError`, and `contentHashComputedAt`.
+  - Added persisted group types for `inventory_kind`, `exact_content_duplicate`, `file_trait_duplicate`, `variant_family`, and `coverage_state`.
+  - Fixed raw inventory double-counting by batch-filtering raw filesystem paths against already-indexed imported asset `originalPath` values before insertion.
+  - Fixed file-trait duplicate grouping SQL and file-extension asset counts.
+  - Final corrected desktop smoke run `2dcd2584-0852-499f-85b3-7718b2d4723a` completed with `indexedAssets=1825`, `indexedImportedAssets=1813`, `indexedRawFiles=12`, `contentHashIndexedAssets=1825`, `contentHashErrorCount=0`, `uniqueContentHashCount=1825`, `groupCount=105`, and `variant_family=8`.
+  - The corrected run produced no exact-content duplicate groups. The 12 raw inventory entries are files present on disk but not imported as Immich assets, including `.DS_Store`, several `IMG_4596(1).JPG`-style variants, and nearby missed JPGs.
 - Full `sidecar_pair_audit` over `/external/desktop-icloud-originals` completed:
   - `directoriesScanned=56`;
   - `sidecarFileCount=0`;

@@ -19124,7 +19124,15 @@
       "AssistantIndexRunRequestDto": {
         "properties": {
           "includeContentHash": {
-            "default": false,
+            "default": true,
+            "type": "boolean"
+          },
+          "includeRawFiles": {
+            "default": true,
+            "type": "boolean"
+          },
+          "includeSidecars": {
+            "default": true,
             "type": "boolean"
           },
           "libraryId": {

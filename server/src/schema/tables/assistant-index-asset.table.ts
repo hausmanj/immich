@@ -20,6 +20,9 @@ import { UserTable } from 'src/schema/tables/user.table';
 @Index({ columns: ['ownerId', 'libraryId'] })
 @Index({ columns: ['sourceDirectory'] })
 @Index({ columns: ['fileExtension'] })
+@Index({ columns: ['contentSha1'] })
+@Index({ columns: ['inventoryKind'] })
+@Index({ columns: ['runId', 'originalPath'], unique: true })
 @Index({
   columns: ['runId', 'assetId'],
   unique: true,
@@ -49,6 +52,9 @@ export class AssistantIndexAssetTable {
 
   @Column()
   originalFileName!: string;
+
+  @Column({ type: 'character varying', default: 'asset' })
+  inventoryKind!: Generated<string>;
 
   @Column({ type: 'character varying', nullable: true })
   fileExtension!: string | null;
@@ -91,6 +97,18 @@ export class AssistantIndexAssetTable {
 
   @Column({ type: 'character varying' })
   checksumAlgorithm!: string;
+
+  @Column({ type: 'character varying', nullable: true })
+  contentSha1!: string | null;
+
+  @Column({ type: 'character varying', nullable: true })
+  contentHashStatus!: string | null;
+
+  @Column({ type: 'character varying', nullable: true })
+  contentHashError!: string | null;
+
+  @Column({ type: 'timestamp with time zone', nullable: true })
+  contentHashComputedAt!: Timestamp | null;
 
   @Column({ type: 'boolean' })
   isExternal!: boolean;

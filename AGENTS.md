@@ -14,12 +14,14 @@
 - The user's large laptop-backup Synology volume is mounted on macOS at `/Volumes/laptop backup` and should be exposed read-only in the Immich dev server container at `/external/laptop-backup`.
 - The laptop-backup tree is intentionally messy and large. Initial top-level examples include old Mac/Lenovo backups, `Raw Photo and Video Files`, Google Takeout folders, iMazing backups, app/document folders, icons, thumbnails, and other non-photo material. Do not recursively shell-scan it casually; build or use checkpointed assistant tools for inventory/classification/resume.
 - Current laptop-backup scan observation: Immich accepted `/external/laptop-backup/Raw Photo and Video Files` as an external library path and the crawler logged at least 30,000 candidate files in 10,000-file batches, but the library still had zero committed asset rows at inspection time. Active BullMQ library jobs held huge `LibrarySyncFiles` payloads including thumbnails/message attachments. Treat this as evidence that assistant indexing needs smaller resumable batches and classification before broad organization work.
-- First persisted assistant indexing pass is implemented:
+- Persisted assistant indexing is implemented and should be treated as the main path for large-library evidence gathering:
   - database tables: `assistant_index_run`, `assistant_index_asset`, `assistant_index_group`;
   - endpoints: `GET /assistant/index-runs`, `GET /assistant/index-runs/:id`, `POST /assistant/index-runs`;
-  - current pass indexes already-imported Immich assets only and records source folder, file extension, type, size, dimensions, dates, camera/location fields, checksum semantics, GPS/camera presence, noise labels, risk labels, and evidence JSON;
-  - group output includes source-directory, file-extension, camera, location, noise-label, and risk-label cohorts;
-  - content-hash persistence is intentionally blocked for this first pass; use `content_hash_audit` until a persisted hash pass is implemented.
+  - index runs default to content hashing, raw filesystem inventory, and sidecar visibility unless explicitly disabled;
+  - imported Immich assets record source folder, file extension, type, size, dimensions, dates, camera/location fields, checksum semantics, GPS/camera presence, noise labels, risk labels, content SHA1, and evidence JSON;
+  - raw filesystem inventory records files under the target import roots that are not already represented by an imported Immich asset, including sidecars, unsupported files, raw-camera files, and missed media files;
+  - group output includes source-directory, file-extension, camera, location, noise-label, risk-label, inventory-kind, exact-content-duplicate, file-trait-duplicate, variant-family, and coverage-state cohorts;
+  - exact-content duplicate groups are byte-level evidence from freshly computed SHA1 values, not `sha1-path` database checksums.
 - Observed reference export profile:
   - about 2.7 GB;
   - 56 date-named folders;
@@ -92,10 +94,8 @@
   - keep the mount read-only;
   - expect huge scale and noisy content, including icons, thumbnails, caches, duplicate exports, app folders, document trees, and mixed originals/renders;
   - prefer resumable inventory/classification tools before broad Immich import or album generation.
-- Next assistant indexing implementation should prioritize persisted, resumable assistant-owned index runs over live prompt context:
+- Next assistant indexing implementation should prioritize making persisted index runs resumable/backgrounded over live synchronous execution:
   - improve index runs from synchronous SQL pass to queued/resumable background jobs with cancel/resume;
-  - add raw file inventory for not-yet-imported files;
-  - persist content hashes and duplicate/originality signatures;
   - add event/group findings and coverage ledger proving every item is covered, deferred, risky, or unclassified.
 - Simulator testing is useful for app flow, logging, and Photos import behavior. Physical-device testing is still preferable for iCloud Photos and Optimize iPhone Storage edge cases.
 
@@ -152,6 +152,11 @@
     - `POST /assistant/review-plan` executes multiple concrete review-album requests, with each album still writing its own persisted change journal and undo action.
     - The web Assistant detects approval/execution feedback such as "go", "execute", "stage", or "create" and runs the latest concrete `review` actions from the prior assistant message.
     - Broad `album_plan`, `metadata_audit`, `original_file_audit`, `folder_plan`, and `search` actions must not expose album creation unless decomposed into concrete `review` actions with one exact cohort or explicit asset IDs.
+  - Persisted assistant index capability follow-up:
+    - `POST /assistant/index-runs` now defaults `includeContentHash=true`, `includeRawFiles=true`, and `includeSidecars=true`.
+    - Raw inventory is batch-filtered against already-indexed `originalPath` values, so imported media is not double-counted as raw files.
+    - Verified corrected Desktop-originals smoke run `2dcd2584-0852-499f-85b3-7718b2d4723a`: `indexedAssets=1825`, `indexedImportedAssets=1813`, `indexedRawFiles=12`, `contentHashIndexedAssets=1825`, `contentHashErrorCount=0`, `uniqueContentHashCount=1825`, `groupCount=105`, `variant_family=8`, and no exact-content duplicate groups.
+    - The 12 raw inventory entries under `/external/desktop-icloud-originals` are evidence of files present on disk but not imported as assets, including `.DS_Store`, several `IMG_4596(1).JPG`-style variant names, and nearby missed JPGs.
 - Temporary local Codex assistant smoke-test API keys were created only for probing and deleted afterward.
 - Mobile validation is still pending because `flutter` and `dart` were not on PATH in this shell. Do not claim the mobile upload patch is device-verified until it has run on iPhone or iOS Simulator.
 - Next practical test after import: ask the in-app Codex assistant to audit `/external/desktop-icloud-originals` for original-file evidence, then compare sampled external-library assets against the Desktop export by filename, size, dimensions, EXIF dates/GPS/camera fields, and checksum.
