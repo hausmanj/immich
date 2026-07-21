@@ -1336,10 +1336,48 @@
     </div>
 
     <div class="rounded-lg border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-900">
+      <Textarea
+        bind:value={prompt}
+        rows={3}
+        placeholder="Ask about organizing your photos"
+        disabled={loading}
+        onkeydown={onKeydown}
+      />
+      <div class="mt-3 flex items-center justify-between gap-3">
+        <label class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+          Provider
+          <select
+            bind:value={provider}
+            class="rounded-md border border-gray-300 bg-white px-2 py-1 text-sm text-gray-900 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100"
+            disabled={loading}
+          >
+            {#each providerOptions as option (option.value)}
+              <option value={option.value}>{option.label}</option>
+            {/each}
+          </select>
+        </label>
+        <div class="flex items-center gap-2">
+          <Button type="button" color="secondary" variant="outline" onclick={clearAssistantState} disabled={loading}>
+            <div class="flex items-center gap-2">
+              <Icon icon={mdiTrashCanOutline} size="16" />
+              Clear
+            </div>
+          </Button>
+          <Button type="button" onclick={() => void send()} disabled={loading || !prompt.trim()}>
+            <div class="flex items-center gap-2">
+              <Icon icon={mdiSend} size="16" />
+              Send
+            </div>
+          </Button>
+        </div>
+      </div>
+    </div>
+
+    <div class="rounded-lg border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-900">
       <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
         <div class="flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-gray-100">
           <Icon icon={mdiConsoleLine} size="18" />
-          Agent terminal
+          Shell terminal
         </div>
         <div class="flex flex-wrap items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
           <label class="flex items-center gap-2">
@@ -1380,7 +1418,7 @@
       <Textarea
         bind:value={terminalCommand}
         rows={3}
-        placeholder="Run an audited command, for example: exiftool -ver"
+        placeholder="Shell command, for example: exiftool -ver"
         disabled={runningAgentCommand}
         onkeydown={onTerminalKeydown}
       />
@@ -1425,42 +1463,5 @@
       {/if}
     </div>
 
-    <div class="rounded-lg border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-900">
-      <Textarea
-        bind:value={prompt}
-        rows={3}
-        placeholder="Ask about organizing your photos"
-        disabled={loading}
-        onkeydown={onKeydown}
-      />
-      <div class="mt-3 flex items-center justify-between gap-3">
-        <label class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
-          Provider
-          <select
-            bind:value={provider}
-            class="rounded-md border border-gray-300 bg-white px-2 py-1 text-sm text-gray-900 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100"
-            disabled={loading}
-          >
-            {#each providerOptions as option (option.value)}
-              <option value={option.value}>{option.label}</option>
-            {/each}
-          </select>
-        </label>
-        <div class="flex items-center gap-2">
-          <Button type="button" color="secondary" variant="outline" onclick={clearAssistantState} disabled={loading}>
-            <div class="flex items-center gap-2">
-              <Icon icon={mdiTrashCanOutline} size="16" />
-              Clear
-            </div>
-          </Button>
-          <Button type="button" onclick={() => void send()} disabled={loading || !prompt.trim()}>
-            <div class="flex items-center gap-2">
-              <Icon icon={mdiSend} size="16" />
-              Send
-            </div>
-          </Button>
-        </div>
-      </div>
-    </div>
   </div>
 </UserPageLayout>
