@@ -67,6 +67,12 @@ export const envData: EnvData = {
       url: undefined,
       timeoutSeconds: 240,
     },
+    agent: {
+      terminalEnabled: false,
+      url: undefined,
+      timeoutSeconds: 600,
+      maxOutputBytes: 512 * 1024,
+    },
   },
 
   llm: {

@@ -10,6 +10,7 @@ docker/upload
 docker/library
 uploads
 coverage
+assistant-agent-logs
 
 mobile/generated
 mobile/gradle.properties

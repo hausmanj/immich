@@ -73,7 +73,8 @@ services:
     volumes:
       - ${UPLOAD_LOCATION}/photos:/data
       - /Users/johnhausman/Desktop/Exported ICloud Photos - DO NOT DELETE:/external/desktop-icloud-originals:ro
-      - /Volumes/laptop backup:/external/laptop-backup:ro
+      # Re-enable when the host volume is mounted; Docker Desktop fails service startup if this path is absent.
+      # - /Volumes/laptop backup:/external/laptop-backup:ro
       - /etc/localtime:/etc/localtime:ro
       - ../packages/plugin-core:/build/plugins/immich-plugin-core
       - ../packages/plugin-llm:/build/plugins/immich-plugin-llm
