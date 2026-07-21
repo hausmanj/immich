@@ -18787,6 +18787,16 @@
           "rationale": {
             "type": "string"
           },
+          "target": {
+            "enum": [
+              "local",
+              "synology",
+              "immich",
+              null
+            ],
+            "nullable": true,
+            "type": "string"
+          },
           "timeoutSeconds": {
             "maximum": 3600,
             "minimum": 1,
@@ -18856,6 +18866,15 @@
             "minimum": 1024,
             "type": "integer"
           },
+          "target": {
+            "default": "local",
+            "enum": [
+              "local",
+              "synology",
+              "immich"
+            ],
+            "type": "string"
+          },
           "timeoutSeconds": {
             "maximum": 3600,
             "minimum": 1,
@@ -18921,6 +18940,20 @@
           },
           "stdoutTruncated": {
             "type": "boolean"
+          },
+          "target": {
+            "enum": [
+              "local",
+              "synology",
+              "immich",
+              null
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "targetKind": {
+            "nullable": true,
+            "type": "string"
           }
         },
         "required": [
@@ -18936,7 +18969,9 @@
           "stderr",
           "stderrTruncated",
           "stdout",
-          "stdoutTruncated"
+          "stdoutTruncated",
+          "target",
+          "targetKind"
         ],
         "type": "object"
       },

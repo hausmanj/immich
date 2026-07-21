@@ -70,6 +70,7 @@ const AssistantActionSchema = z
     toolType: AssistantToolTypeSchema.nullable().optional(),
     toolInput: AssistantToolInputSchema.nullable().optional(),
     command: z.string().nullable().optional(),
+    target: z.enum(['local', 'synology', 'immich']).nullable().optional(),
     cwd: z.string().nullable().optional(),
     timeoutSeconds: z.number().int().min(1).max(3600).nullable().optional(),
     confidence: z.number().min(0).max(1),
@@ -166,6 +167,7 @@ const AssistantIndexRunsResponseSchema = z
 const AssistantAgentCommandRequestSchema = z
   .object({
     command: z.string().trim().min(1).max(20 * 1000),
+    target: z.enum(['local', 'synology', 'immich']).default('local').optional(),
     cwd: z.string().trim().min(1).max(2 * 1000).optional(),
     timeoutSeconds: z.number().int().min(1).max(3600).optional(),
     maxOutputBytes: z.number().int().min(1024).max(10 * 1024 * 1024).optional(),
@@ -176,6 +178,8 @@ const AssistantAgentCommandResponseSchema = z
   .object({
     status: z.enum(['disabled', 'completed', 'failed', 'timed_out', 'error']),
     command: z.string(),
+    target: z.enum(['local', 'synology', 'immich']).nullable(),
+    targetKind: z.string().nullable(),
     cwd: z.string().nullable(),
     exitCode: z.number().nullable(),
     stdout: z.string(),
