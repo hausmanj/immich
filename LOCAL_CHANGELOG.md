@@ -217,6 +217,11 @@ This file tracks local-only changes in this checkout that have not necessarily b
     - `metadata_search` summaries now include compact date, camera, place, media type, and extension breakdowns so broad folder audits can produce useful next-step cohorts without dumping every row inline.
     - Runtime smoke automatically ran the top three decomposition audits and the follow-up answer used that evidence: Photo Copies had no sidecars/rendered-pair groups, Pictures had MOV paired media and variant groups, and Movies reported an ENOENT directory scan issue that needs metadata/path follow-up.
     - Temporary API key `Codex assistant auto tool loop smoke test` was deleted after the runtime probe.
+  - Improved Assistant web follow-through after action execution.
+    - Running a read-only tool action now appends the compact result and immediately asks the assistant to continue from that evidence.
+    - Executing approved review-album plans now asks the assistant for the next plan after the journaled album creation completes.
+    - Earlier action cards become stale after any later assistant/tool result, preventing old buttons from being reused after context has changed.
+    - Metadata-search tool output now formats top date/place/camera/media/extension breakdowns instead of dumping the large JSON `breakdown` object into the conversation.
 - Full `sidecar_pair_audit` over `/external/desktop-icloud-originals` completed:
   - `directoriesScanned=56`;
   - `sidecarFileCount=0`;
