@@ -206,6 +206,11 @@ This file tracks local-only changes in this checkout that have not necessarily b
     - Runtime smoke after this change returned 71 ready review-album cohorts covering 2,442 assets and 5 decomposition-audit cohorts covering 4,739 assets.
     - The smoke response correctly changed `Samsung SD Card Dec 2018` from a direct review-album action to a `metadata_search` decomposition action, while keeping noisy folders on `sidecar_pair_audit`.
     - Temporary API keys `Codex assistant container breadth smoke test`, `Codex assistant conservative containers smoke test`, and `Codex assistant broad folder smoke test` were deleted after runtime probes.
+  - Added semantic generic-container detection for source folder names.
+    - Folder basenames such as `Raw Photo and Video Files`, `Photos`, `Pictures`, `Pictures (2)`, `Ancestry`, `GoPro`, and broad `Disney...` folders are now `decompose_first` even when count/noise metrics alone might have allowed review-album creation.
+    - Runtime smoke after this change returned 62 ready review-album cohorts covering 1,512 assets and 14 decomposition-audit cohorts covering 5,669 assets.
+    - The smoke response correctly proposed `Raw Photo and Video Files` as a `metadata_search` decomposition action, not a review album or sidecar-first audit.
+    - Temporary API keys `Codex assistant generic containers smoke test` and `Codex assistant generic container selector smoke test` were deleted after runtime probes.
 - Full `sidecar_pair_audit` over `/external/desktop-icloud-originals` completed:
   - `directoriesScanned=56`;
   - `sidecarFileCount=0`;
