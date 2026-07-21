@@ -3010,47 +3010,50 @@ export class AssistantService extends BaseService {
 
   private toCompactLibraryContext(context: Awaited<ReturnType<AssistantService['getLibraryContext']>>) {
     const audits = context.deterministicAudits;
+    const duplicateCandidates = audits.duplicateCandidates;
     return {
       summary: context.summary,
       statistics: context.statistics,
       externalLibraries: context.externalLibraries,
       mutationCapabilities: context.mutationCapabilities,
-      topYears: context.topYears.slice(0, 20),
-      cameraMakes: context.cameraMakes.slice(0, 20),
-      cameraModels: context.cameraModels.slice(0, 20),
-      countries: context.countries.slice(0, 20),
-      cities: context.cities.slice(0, 20),
+      topYears: this.toCompactList(context.topYears, 20),
+      cameraMakes: this.toCompactList(context.cameraMakes, 20),
+      cameraModels: this.toCompactList(context.cameraModels, 20),
+      countries: this.toCompactList(context.countries, 20),
+      cities: this.toCompactList(context.cities, 20),
       metadataCoverage: context.metadataCoverage,
-      recentAssets: context.recentAssets.slice(0, 10),
-      unorganizedAssets: context.unorganizedAssets.slice(0, 10),
+      recentAssets: this.toCompactList(context.recentAssets, 10),
+      unorganizedAssets: this.toCompactList(context.unorganizedAssets, 10),
       deterministicAudits: {
         checksumSemantics: audits.checksumSemantics,
         librarySummary: audits.librarySummary,
         checksumAlgorithmCohorts: audits.checksumAlgorithmCohorts,
         organizationCoveragePlan: this.toCompactCoveragePlan(audits.organizationCoveragePlan),
-        eventCohorts: audits.eventCohorts.slice(0, 15),
-        sourcePathCohorts: audits.sourcePathCohorts.slice(0, 35),
-        dateCohorts: audits.dateCohorts.slice(0, 25),
-        cameraCohorts: audits.cameraCohorts.slice(0, 20),
-        locationCohorts: audits.locationCohorts.slice(0, 20),
+        eventCohorts: this.toCompactList(audits.eventCohorts, 15),
+        sourcePathCohorts: this.toCompactList(audits.sourcePathCohorts, 35),
+        dateCohorts: this.toCompactList(audits.dateCohorts, 25),
+        cameraCohorts: this.toCompactList(audits.cameraCohorts, 20),
+        locationCohorts: this.toCompactList(audits.locationCohorts, 20),
         duplicateCandidates: {
-          exactContentChecksum: audits.duplicateCandidates.exactContentChecksum.slice(0, 20),
-          matchingFileTraits: audits.duplicateCandidates.matchingFileTraits.slice(0, 20),
+          exactContentChecksum: this.toCompactList(duplicateCandidates?.exactContentChecksum, 20),
+          matchingFileTraits: this.toCompactList(duplicateCandidates?.matchingFileTraits, 20),
         },
-        videoCohorts: audits.videoCohorts.slice(0, 20),
-        mobileAppMetadataCohorts: audits.mobileAppMetadataCohorts.slice(0, 20),
-        requestedToolResults: audits.requestedToolResults.map((result) => this.toCompactToolResult(result)),
+        videoCohorts: this.toCompactList(audits.videoCohorts, 20),
+        mobileAppMetadataCohorts: this.toCompactList(audits.mobileAppMetadataCohorts, 20),
+        requestedToolResults: this.toCompactList(audits.requestedToolResults, 20).map((result) =>
+          this.toCompactToolResult(result),
+        ),
         actionGuidance: audits.actionGuidance,
       },
     };
   }
 
-  private toCompactCoveragePlan(plan: AssistantOrganizationCoveragePlan) {
+  private toCompactCoveragePlan(plan: AssistantOrganizationCoveragePlan | null | undefined) {
     return {
-      ...plan,
-      selectedEventReviewCohorts: plan.selectedEventReviewCohorts.slice(0, 8),
-      remainingSourcePathReviewCohorts: plan.remainingSourcePathReviewCohorts.slice(0, 35),
-      coverageExecutionLedger: plan.coverageExecutionLedger.slice(0, 30),
+      ...(plan ?? {}),
+      selectedEventReviewCohorts: this.toCompactList(plan?.selectedEventReviewCohorts, 8),
+      remainingSourcePathReviewCohorts: this.toCompactList(plan?.remainingSourcePathReviewCohorts, 35),
+      coverageExecutionLedger: this.toCompactList(plan?.coverageExecutionLedger, 30),
     };
   }
 
@@ -3064,9 +3067,13 @@ export class AssistantService extends BaseService {
       logFilePath: result.logFilePath,
       logFileFormat: result.logFileFormat,
       inlineResultsOmitted: result.inlineResultsOmitted,
-      results: result.results.slice(0, 10),
-      errors: result.errors.slice(0, 5),
+      results: this.toCompactList(result.results, 10),
+      errors: this.toCompactList(result.errors, 5),
     };
+  }
+
+  private toCompactList<T>(value: T[] | null | undefined, limit: number): T[] {
+    return Array.isArray(value) ? value.slice(0, limit) : [];
   }
 
   private buildOpenAiInput(

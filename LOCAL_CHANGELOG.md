@@ -60,6 +60,12 @@ This file tracks local-only changes in this checkout that have not necessarily b
     - 600-second CLI provider timeouts
   - `immich-server` was recreated to load the bridge env, then hot-patched again with compact-context runtime logic and restarted.
   - Current assistant failure before the switch was OpenAI `429 insufficient_quota`; the current intended provider is the Mac Codex CLI bridge, not OpenAI API.
+- Runtime CLI-bridge follow-up:
+  - Symptom after switching to `codex-cli`: assistant chat failed with `Cannot read properties of undefined (reading 'slice')`.
+  - Cause: the compact-context patch assumed optional deterministic audit arrays were always present.
+  - Source/runtime fix: compact-context serialization now treats missing arrays as empty arrays and limits only when arrays exist.
+  - Reapplied the runtime patch in the running Synology container and restarted only `immich-server`.
+  - Verification: `GET /api/server/ping` returned `{"res":"pong"}`, the Immich container successfully posted to `http://172.31.0.1:43737/codex`, and the fresh server log tail no longer showed the `slice` crash.
 
 ## 2026-07-19 - In-App Library Assistant Prototype
 
