@@ -15,6 +15,7 @@
   - The assistant must be able to use Mac host tools when that is fastest or required.
   - The assistant must also be able to run commands directly on Synology over SSH for the largest folders, especially when data lives on the NAS and should not be copied over a slower path.
   - A dedicated 10Gbps Mac-to-Synology path is acceptable. The user cares about capability and throughput, not whether the agent is strictly in Docker.
+  - The user's Mac is an M4 Pro and should be treated as the preferred heavy-processing machine when the NAS data is available over the dedicated fast Mac-to-Synology link. Default to Mac-side processing for CPU-heavy hashing, EXIF extraction, clustering, indexing, report generation, and purpose-built scripts when throughput is acceptable. Use the Synology target mainly for NAS-local path truth, mount/readability checks, direct `/volume1` inventory, and cases where running near the data clearly avoids unnecessary transfer.
 - I previously implemented and committed a host-side audited command bridge, but that is not yet "100% terminal agent functionality" and should not be described as such.
   - Committed bridge/API/UI work:
     - `fd5d034 Add audited assistant agent terminal`
