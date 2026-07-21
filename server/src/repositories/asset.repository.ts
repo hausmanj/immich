@@ -141,6 +141,8 @@ export interface AssistantLibraryAuditBucket {
   fileSizeCount: number;
   dimensionsCount: number;
   cameraCount: number;
+  generatedLikeCount: number;
+  smallDimensionCount: number;
   mobileAppMetadataCount: number;
   dateStart: string | null;
   dateEnd: string | null;
@@ -620,6 +622,8 @@ export class AssetRepository {
         count(*) filter (where ae."fileSizeInByte" is not null)::int as "fileSizeCount",
         count(*) filter (where a.width is not null and a.height is not null)::int as "dimensionsCount",
         count(*) filter (where ae.make is not null or ae.model is not null)::int as "cameraCount",
+        count(*) filter (where a."originalFileName" ~* '(-poster|-backdrop|-logo|-landscape|thumb|thumbnail|preview|cache|icon)')::int as "generatedLikeCount",
+        count(*) filter (where a.width <= 512 and a.height <= 512)::int as "smallDimensionCount",
         count(am."assetId")::int as "mobileAppMetadataCount",
         min(a."localDateTime")::text as "dateStart",
         max(a."localDateTime")::text as "dateEnd",
@@ -1271,6 +1275,8 @@ export class AssetRepository {
         count(*) filter (where ae."fileSizeInByte" is not null)::int as "fileSizeCount",
         count(*) filter (where a.width is not null and a.height is not null)::int as "dimensionsCount",
         count(*) filter (where ae.make is not null or ae.model is not null)::int as "cameraCount",
+        count(*) filter (where a."originalFileName" ~* '(-poster|-backdrop|-logo|-landscape|thumb|thumbnail|preview|cache|icon)')::int as "generatedLikeCount",
+        count(*) filter (where a.width <= 512 and a.height <= 512)::int as "smallDimensionCount",
         count(am."assetId")::int as "mobileAppMetadataCount",
         min(a."localDateTime")::text as "dateStart",
         max(a."localDateTime")::text as "dateEnd",
@@ -1315,11 +1321,7 @@ export class AssetRepository {
 
   private getAssistantSourcePathCohortSql() {
     return String.raw`
-      case
-        when a."originalPath" like '/external/%'
-          then regexp_replace(a."originalPath", '^(/external/[^/]+/[^/]+).*$', '\1')
-        else regexp_replace(a."originalPath", '/[^/]+$', '')
-      end
+      regexp_replace(a."originalPath", '/[^/]+$', '')
     `;
   }
 
