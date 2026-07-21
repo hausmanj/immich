@@ -203,6 +203,7 @@ export class BaseService {
       ctx.albumUserRepository,
       ctx.apiKeyRepository,
       ctx.appRepository,
+      ctx.assistantIndexRepository,
       ctx.assetRepository,
       ctx.assetEditRepository,
       ctx.assetJobRepository,
