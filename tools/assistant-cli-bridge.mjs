@@ -110,8 +110,9 @@ function readJson(request) {
   });
 }
 
-function runProvider(provider, input, timeoutSeconds) {
-  return new Promise((resolve, reject) => {
+function runProvider(providerName, provider, input, timeoutSeconds) {
+  return new Promise((resolve) => {
+    const startedAt = new Date().toISOString();
     const child = spawn(provider.command, provider.args, {
       env: process.env,
       shell: false,
@@ -119,27 +120,72 @@ function runProvider(provider, input, timeoutSeconds) {
     });
     const stdout = [];
     const stderr = [];
+    let timedOut = false;
     const timer = setTimeout(() => {
+      timedOut = true;
       child.kill('SIGTERM');
-      reject(new Error(`Assistant bridge command timed out after ${timeoutSeconds} seconds`));
     }, timeoutSeconds * 1000);
 
     child.stdout.on('data', (chunk) => stdout.push(chunk));
     child.stderr.on('data', (chunk) => stderr.push(chunk));
-    child.on('error', (error) => {
+    child.on('error', async (error) => {
       clearTimeout(timer);
-      reject(error);
+      const finishedAt = new Date().toISOString();
+      const logFilePath = await writeProviderLog({
+        provider: providerName,
+        command: provider.command,
+        args: provider.args,
+        status: 'error',
+        inputBytes: Buffer.byteLength(input, 'utf8'),
+        timeoutSeconds,
+        exitCode: null,
+        stdout: '',
+        stderr: error instanceof Error ? error.message : String(error),
+        startedAt,
+        finishedAt,
+        durationMs: new Date(finishedAt).getTime() - new Date(startedAt).getTime(),
+      });
+      resolve({
+        statusCode: 500,
+        payload: {
+          error: `Assistant bridge provider ${providerName} failed to start. Full provider log: ${logFilePath}`,
+          logFilePath,
+        },
+      });
     });
-    child.on('close', (code) => {
+    child.on('close', async (code) => {
       clearTimeout(timer);
       const output = Buffer.concat(stdout).toString('utf8').trim();
       const errorOutput = Buffer.concat(stderr).toString('utf8').trim();
+      const finishedAt = new Date().toISOString();
+      const logFilePath = await writeProviderLog({
+        provider: providerName,
+        command: provider.command,
+        args: provider.args,
+        status: timedOut ? 'timed_out' : code === 0 ? 'completed' : 'failed',
+        inputBytes: Buffer.byteLength(input, 'utf8'),
+        timeoutSeconds,
+        exitCode: code,
+        stdout: output,
+        stderr: errorOutput,
+        startedAt,
+        finishedAt,
+        durationMs: new Date(finishedAt).getTime() - new Date(startedAt).getTime(),
+      });
       if (code !== 0) {
-        reject(new Error(`Assistant bridge command exited with ${code}: ${errorOutput || output}`));
+        resolve({
+          statusCode: 500,
+          payload: {
+            error: timedOut
+              ? `Assistant bridge provider ${providerName} timed out after ${timeoutSeconds} seconds. Full provider log: ${logFilePath}`
+              : `Assistant bridge provider ${providerName} exited with ${code}. Full provider log: ${logFilePath}`,
+            logFilePath,
+          },
+        });
         return;
       }
 
-      resolve({ stdout: output, stderr: errorOutput });
+      resolve({ statusCode: 200, payload: { stdout: output, stderr: errorOutput, logFilePath } });
     });
 
     child.stdin.end(input);
@@ -190,6 +236,15 @@ async function writeAgentCommandLog(payload, logDirectory = agentLogDirectory) {
   await mkdir(logDirectory, { recursive: true });
   const startedAt = typeof payload.startedAt === 'string' ? payload.startedAt : new Date().toISOString();
   const logFilePath = join(logDirectory, `${toSafeLogName(startedAt)}-agent-command-${randomUUID()}.json`);
+  await mkdir(dirname(logFilePath), { recursive: true });
+  await writeFile(logFilePath, JSON.stringify({ ...payload, hostLogFilePath: logFilePath }, null, 2));
+  return logFilePath;
+}
+
+async function writeProviderLog(payload) {
+  await mkdir(agentLogDirectory, { recursive: true });
+  const startedAt = typeof payload.startedAt === 'string' ? payload.startedAt : new Date().toISOString();
+  const logFilePath = join(agentLogDirectory, `${toSafeLogName(startedAt)}-provider-${randomUUID()}.json`);
   await mkdir(dirname(logFilePath), { recursive: true });
   await writeFile(logFilePath, JSON.stringify({ ...payload, hostLogFilePath: logFilePath }, null, 2));
   return logFilePath;
@@ -398,10 +453,13 @@ const server = http.createServer(async (request, response) => {
       typeof body.timeoutSeconds === 'number' && Number.isFinite(body.timeoutSeconds)
         ? Math.min(Math.max(Math.trunc(body.timeoutSeconds), 1), 600)
         : provider.timeoutSeconds;
-    const output = await runProvider(provider, body.input, timeoutSeconds);
-    sendJson(response, 200, output);
+    const providerName = request.url.slice(1);
+    const { statusCode, payload } = await runProvider(providerName, provider, body.input, timeoutSeconds);
+    sendJson(response, statusCode, payload);
   } catch (error) {
-    sendJson(response, error.statusCode ?? 500, { error: error instanceof Error ? error.message : String(error) });
+    sendJson(response, error.statusCode ?? 500, {
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 });
 
