@@ -51,7 +51,15 @@ const AssistantToolInputSchema = z
 
 const AssistantActionSchema = z
   .object({
-    type: z.enum(['search', 'album_plan', 'folder_plan', 'metadata_audit', 'original_file_audit', 'review']),
+    type: z.enum([
+      'search',
+      'album_plan',
+      'folder_plan',
+      'metadata_audit',
+      'original_file_audit',
+      'review',
+      'agent_command',
+    ]),
     title: z.string(),
     rationale: z.string(),
     query: z.string().nullable(),
@@ -61,6 +69,9 @@ const AssistantActionSchema = z
     cohortKey: z.string().nullable().optional(),
     toolType: AssistantToolTypeSchema.nullable().optional(),
     toolInput: AssistantToolInputSchema.nullable().optional(),
+    command: z.string().nullable().optional(),
+    cwd: z.string().nullable().optional(),
+    timeoutSeconds: z.number().int().min(1).max(3600).nullable().optional(),
     confidence: z.number().min(0).max(1),
   })
   .meta({ id: 'AssistantActionDto' });
@@ -151,6 +162,34 @@ const AssistantIndexRunsResponseSchema = z
     runs: z.array(AssistantIndexRunResponseSchema),
   })
   .meta({ id: 'AssistantIndexRunsResponseDto' });
+
+const AssistantAgentCommandRequestSchema = z
+  .object({
+    command: z.string().trim().min(1).max(20 * 1000),
+    cwd: z.string().trim().min(1).max(2 * 1000).optional(),
+    timeoutSeconds: z.number().int().min(1).max(3600).optional(),
+    maxOutputBytes: z.number().int().min(1024).max(10 * 1024 * 1024).optional(),
+  })
+  .meta({ id: 'AssistantAgentCommandRequestDto' });
+
+const AssistantAgentCommandResponseSchema = z
+  .object({
+    status: z.enum(['disabled', 'completed', 'failed', 'timed_out', 'error']),
+    command: z.string(),
+    cwd: z.string().nullable(),
+    exitCode: z.number().nullable(),
+    stdout: z.string(),
+    stderr: z.string(),
+    stdoutTruncated: z.boolean(),
+    stderrTruncated: z.boolean(),
+    startedAt: z.string(),
+    finishedAt: z.string(),
+    durationMs: z.number(),
+    hostLogFilePath: z.string().nullable(),
+    serverLogFilePath: z.string().nullable(),
+    message: z.string().optional(),
+  })
+  .meta({ id: 'AssistantAgentCommandResponseDto' });
 
 const AssistantReviewAlbumResponseSchema = z
   .object({
@@ -304,6 +343,8 @@ export class AssistantToolResponseDto extends createZodDto(AssistantToolResponse
 export class AssistantIndexRunRequestDto extends createZodDto(AssistantIndexRunRequestSchema) {}
 export class AssistantIndexRunResponseDto extends createZodDto(AssistantIndexRunResponseSchema) {}
 export class AssistantIndexRunsResponseDto extends createZodDto(AssistantIndexRunsResponseSchema) {}
+export class AssistantAgentCommandRequestDto extends createZodDto(AssistantAgentCommandRequestSchema) {}
+export class AssistantAgentCommandResponseDto extends createZodDto(AssistantAgentCommandResponseSchema) {}
 export class AssistantUndoRequestDto extends createZodDto(AssistantUndoRequestSchema) {}
 export class AssistantUndoResponseDto extends createZodDto(AssistantUndoResponseSchema) {}
 export class AssistantMutationRequestDto extends createZodDto(AssistantMutationSchema) {}

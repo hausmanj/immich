@@ -10,6 +10,7 @@ docker/upload
 docker/library
 uploads
 coverage
+assistant-agent-logs
 
 mobile/gradle.properties
 mobile/openapi/pubspec.lock

@@ -65,6 +65,15 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - Reason: host-installed `claude` and `codex` are macOS binaries and cannot run directly inside the Linux Immich server container.
   - Bridge endpoints: `/claude`, `/codex`, and `/health` on port `3737`.
   - Local `docker/.env` now points Claude and Codex assistant providers at `host.docker.internal:3737`.
+- Added an audited agent terminal path for deeper large-library work.
+  - `tools/assistant-cli-bridge.mjs` now exposes `POST /command`, running host shell commands from an allowed workspace root and writing full host-side JSON command logs.
+  - Added server env config for `IMMICH_ASSISTANT_AGENT_TERMINAL_ENABLED`, `IMMICH_ASSISTANT_AGENT_URL`, `IMMICH_ASSISTANT_AGENT_TIMEOUT_SECONDS`, and `IMMICH_ASSISTANT_AGENT_MAX_OUTPUT_BYTES`.
+  - Added authenticated `POST /assistant/agent-command`, which forwards commands to the host bridge and writes a second server-side audit log under `/data/assistant-audits/agent-terminal`.
+  - Added an "Agent terminal" panel to the Assistant web page with persisted command transcript state, cwd/timeout controls, inline stdout/stderr, and host/server log paths.
+  - Added structured assistant `agent_command` actions so Claude/Codex can propose concrete audited shell commands. The web UI can run them from action cards or auto-execute them after approval text such as "go", "do it", or "execute", then feed the command result back into the conversation.
+  - Purpose: give the in-app assistant workflow access to real local/Synology operations for EXIF tools, osxphotos probes, inventory, checksum/dedupe commands, and other 1M+ file assessment work while keeping source files untouched unless a command explicitly changes them.
+  - Verified runtime smoke: a temporary `asset.read` API key ran `pwd && exiftool -ver || true` through `/api/assistant/agent-command`, returned exit code `0`, showed `exiftool` version `13.55`, wrote host and server command logs, and the temporary key was deleted.
+  - Temporarily commented the `/Volumes/laptop backup:/external/laptop-backup:ro` dev bind because the host volume was not mounted and Docker Desktop refused to recreate `immich-server` while the source path was absent. Re-enable it when the volume is mounted again.
 - Added an assistant provider selector in the web UI so chat can explicitly use Auto, Claude CLI, or Codex CLI.
   - Direct OpenAI and Anthropic API paths remain backend fallback plumbing, but are hidden from the Assistant UI to keep the tool focused on local Claude/Codex access.
 - Expanded the assistant asset sample context for imported-original audits.

@@ -5107,6 +5107,57 @@
         "x-immich-state": "Alpha"
       }
     },
+    "/assistant/agent-command": {
+      "post": {
+        "description": "Run a local host/Synology command through the configured assistant bridge and write audited execution logs. This does not mutate Immich assets unless the command itself does so.",
+        "operationId": "runAgentCommand",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssistantAgentCommandRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssistantAgentCommandResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Run an audited assistant agent command",
+        "tags": [
+          "Assistant"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          }
+        ],
+        "x-immich-permission": "asset.read"
+      }
+    },
     "/assistant/assessment": {
       "get": {
         "description": "Read library metadata and return organization findings without mutating assets.",
@@ -18716,10 +18767,18 @@
             "nullable": true,
             "type": "string"
           },
+          "command": {
+            "nullable": true,
+            "type": "string"
+          },
           "confidence": {
             "maximum": 1,
             "minimum": 0,
             "type": "number"
+          },
+          "cwd": {
+            "nullable": true,
+            "type": "string"
           },
           "query": {
             "nullable": true,
@@ -18727,6 +18786,12 @@
           },
           "rationale": {
             "type": "string"
+          },
+          "timeoutSeconds": {
+            "maximum": 3600,
+            "minimum": 1,
+            "nullable": true,
+            "type": "integer"
           },
           "title": {
             "type": "string"
@@ -18757,7 +18822,8 @@
               "folder_plan",
               "metadata_audit",
               "original_file_audit",
-              "review"
+              "review",
+              "agent_command"
             ],
             "type": "string"
           }
@@ -18770,6 +18836,107 @@
           "rationale",
           "title",
           "type"
+        ],
+        "type": "object"
+      },
+      "AssistantAgentCommandRequestDto": {
+        "properties": {
+          "command": {
+            "maxLength": 20000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "cwd": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxOutputBytes": {
+            "maximum": 10485760,
+            "minimum": 1024,
+            "type": "integer"
+          },
+          "timeoutSeconds": {
+            "maximum": 3600,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "type": "object"
+      },
+      "AssistantAgentCommandResponseDto": {
+        "properties": {
+          "command": {
+            "type": "string"
+          },
+          "cwd": {
+            "nullable": true,
+            "type": "string"
+          },
+          "durationMs": {
+            "type": "number"
+          },
+          "exitCode": {
+            "nullable": true,
+            "type": "number"
+          },
+          "finishedAt": {
+            "type": "string"
+          },
+          "hostLogFilePath": {
+            "nullable": true,
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "serverLogFilePath": {
+            "nullable": true,
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "disabled",
+              "completed",
+              "failed",
+              "timed_out",
+              "error"
+            ],
+            "type": "string"
+          },
+          "stderr": {
+            "type": "string"
+          },
+          "stderrTruncated": {
+            "type": "boolean"
+          },
+          "stdout": {
+            "type": "string"
+          },
+          "stdoutTruncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "command",
+          "cwd",
+          "durationMs",
+          "exitCode",
+          "finishedAt",
+          "hostLogFilePath",
+          "serverLogFilePath",
+          "startedAt",
+          "status",
+          "stderr",
+          "stderrTruncated",
+          "stdout",
+          "stdoutTruncated"
         ],
         "type": "object"
       },

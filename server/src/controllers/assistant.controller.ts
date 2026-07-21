@@ -2,6 +2,8 @@ import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post } from '@nestj
 import { ApiTags } from '@nestjs/swagger';
 import { Endpoint, HistoryBuilder } from 'src/decorators';
 import {
+  AssistantAgentCommandRequestDto,
+  AssistantAgentCommandResponseDto,
   AssistantAssessmentResponseDto,
   AssistantChatRequestDto,
   AssistantChatResponseDto,
@@ -101,6 +103,22 @@ export class AssistantController {
     @Body() dto: AssistantIndexRunRequestDto,
   ): Promise<AssistantIndexRunResponseDto> {
     return this.service.createIndexRun(auth, dto);
+  }
+
+  @Post('agent-command')
+  @Authenticated({ permission: Permission.AssetRead })
+  @HttpCode(HttpStatus.OK)
+  @Endpoint({
+    summary: 'Run an audited assistant agent command',
+    description:
+      'Run a local host/Synology command through the configured assistant bridge and write audited execution logs. This does not mutate Immich assets unless the command itself does so.',
+    history: HistoryBuilder.v3(),
+  })
+  runAgentCommand(
+    @Auth() auth: AuthDto,
+    @Body() dto: AssistantAgentCommandRequestDto,
+  ): Promise<AssistantAgentCommandResponseDto> {
+    return this.service.runAgentCommand(auth, dto);
   }
 
   @Post('review-album')

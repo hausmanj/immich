@@ -3,14 +3,30 @@
   import UserPageLayout from '$lib/components/layouts/UserPageLayout.svelte';
   import { Route } from '$lib/route';
   import { Button, Icon, Textarea, toastManager } from '@immich/ui';
-  import { mdiArrowRight, mdiMagnify, mdiPlusBoxOutline, mdiRobotOutline, mdiSend, mdiTrashCanOutline } from '@mdi/js';
+  import {
+    mdiArrowRight,
+    mdiConsoleLine,
+    mdiMagnify,
+    mdiPlay,
+    mdiPlusBoxOutline,
+    mdiRobotOutline,
+    mdiSend,
+    mdiTrashCanOutline,
+  } from '@mdi/js';
   import { onMount, tick } from 'svelte';
   import type { PageData } from './$types';
 
   type AssistantProvider = 'auto' | 'claude-cli' | 'codex-cli' | 'openai' | 'anthropic';
 
   type AssistantAction = {
-    type: 'search' | 'album_plan' | 'folder_plan' | 'metadata_audit' | 'original_file_audit' | 'review';
+    type:
+      | 'search'
+      | 'album_plan'
+      | 'folder_plan'
+      | 'metadata_audit'
+      | 'original_file_audit'
+      | 'review'
+      | 'agent_command';
     title: string;
     rationale: string;
     query: string | null;
@@ -20,6 +36,9 @@
     cohortKey?: string | null;
     toolType?: 'content_hash_audit' | 'sidecar_pair_audit' | 'metadata_search' | 'mobile_original_compare' | null;
     toolInput?: Record<string, unknown> | null;
+    command?: string | null;
+    cwd?: string | null;
+    timeoutSeconds?: number | null;
     confidence: number;
   };
 
@@ -36,6 +55,9 @@
     prompt: string;
     messages: ChatMessage[];
     assessment: Assessment | null;
+    terminalCommand?: string;
+    terminalCwd?: string;
+    terminalEntries?: AgentTerminalEntry[];
   };
 
   type AssistantResponse = {
@@ -74,6 +96,27 @@
     resultCount?: number;
     errorCount?: number;
     inlineResultsOmitted?: boolean;
+  };
+
+  type AssistantAgentCommandResponse = {
+    status: 'disabled' | 'completed' | 'failed' | 'timed_out' | 'error';
+    command: string;
+    cwd: string | null;
+    exitCode: number | null;
+    stdout: string;
+    stderr: string;
+    stdoutTruncated: boolean;
+    stderrTruncated: boolean;
+    startedAt: string;
+    finishedAt: string;
+    durationMs: number;
+    hostLogFilePath: string | null;
+    serverLogFilePath: string | null;
+    message?: string;
+  };
+
+  type AgentTerminalEntry = AssistantAgentCommandResponse & {
+    id: string;
   };
 
   type AssessmentBucket = {
@@ -122,6 +165,11 @@
   let loadingAssessment = $state(false);
   let applyingActionKey = $state<string | null>(null);
   let runningToolActionKey = $state<string | null>(null);
+  let runningAgentCommand = $state(false);
+  let terminalCommand = $state('');
+  let terminalCwd = $state('/Users/johnhausman/source/immich');
+  let terminalTimeoutSeconds = $state(600);
+  let terminalEntries = $state<AgentTerminalEntry[]>([]);
   let assessment = $state<Assessment | null>(null);
   let assistantStateLoaded = $state(false);
   let messagesContainer: HTMLDivElement | null = null;
@@ -141,6 +189,7 @@
     metadata_audit: 'Metadata audit',
     original_file_audit: 'Original audit',
     review: 'Review',
+    agent_command: 'Command',
   };
 
   const providerOptions: Array<{ value: AssistantProvider; label: string }> = [
@@ -152,6 +201,7 @@
   const assistantStateStorageKey = 'immich-assistant-conversation-v1';
   const assistantStateVersion = 1;
   const assistantStateMaxMessages = 80;
+  const assistantTerminalMaxEntries = 25;
 
   onMount(() => {
     loadAssistantState();
@@ -201,6 +251,9 @@
       prompt = typeof state.prompt === 'string' ? state.prompt : '';
       messages = state.messages.length > 0 ? state.messages : messages;
       assessment = state.assessment ?? null;
+      terminalCommand = typeof state.terminalCommand === 'string' ? state.terminalCommand : '';
+      terminalCwd = typeof state.terminalCwd === 'string' ? state.terminalCwd : terminalCwd;
+      terminalEntries = Array.isArray(state.terminalEntries) ? state.terminalEntries : [];
     } catch {
       localStorage.removeItem(assistantStateStorageKey);
     }
@@ -218,6 +271,9 @@
       prompt,
       messages: messages.slice(-assistantStateMaxMessages),
       assessment,
+      terminalCommand,
+      terminalCwd,
+      terminalEntries: terminalEntries.slice(-assistantTerminalMaxEntries).map((entry) => toPersistedTerminalEntry(entry)),
     };
 
     try {
@@ -238,6 +294,8 @@
     ];
     prompt = '';
     assessment = null;
+    terminalCommand = '';
+    terminalEntries = [];
     if (browser) {
       localStorage.removeItem(assistantStateStorageKey);
     }
@@ -265,7 +323,7 @@
   const isStaleActionMessage = (messageIndex: number) => messages.slice(messageIndex + 1).length > 0;
 
   const hasExecutableAction = (action: AssistantAction) => {
-    return !!action.toolType || isConcreteReviewAction(action);
+    return !!action.toolType || isConcreteReviewAction(action) || isConcreteAgentCommandAction(action);
   };
 
   const canCreateReviewAlbum = (action: AssistantAction, messageIndex: number) => {
@@ -276,6 +334,12 @@
   };
 
   const canRunTool = (action: AssistantAction, messageIndex: number) => !!action.toolType && !isStaleActionMessage(messageIndex);
+
+  const isConcreteAgentCommandAction = (action: AssistantAction) =>
+    action.type === 'agent_command' && typeof action.command === 'string' && action.command.trim().length > 0;
+
+  const canRunAgentCommandAction = (action: AssistantAction, messageIndex: number) =>
+    isConcreteAgentCommandAction(action) && !isStaleActionMessage(messageIndex);
 
   const getRunToolLabel = (action: AssistantAction) => {
     switch (action.toolType) {
@@ -349,6 +413,16 @@
 
     return getLatestAssistantActions()
       .filter((action) => isConcreteReviewAction(action))
+      .filter((action) => actionMatchesFeedback(action, content));
+  };
+
+  const getApprovedAgentCommandActions = (content: string) => {
+    if (!isPlanExecutionFeedback(content)) {
+      return [];
+    }
+
+    return getLatestAssistantActions()
+      .filter((action) => isConcreteAgentCommandAction(action))
       .filter((action) => actionMatchesFeedback(action, content));
   };
 
@@ -532,6 +606,115 @@
     } finally {
       runningToolActionKey = null;
     }
+  };
+
+  const executeAgentCommand = async (commandInput: string, cwdInput?: string | null, timeoutSecondsInput?: number | null) => {
+    const command = commandInput.trim();
+    if (!command || runningAgentCommand) {
+      return null;
+    }
+
+    runningAgentCommand = true;
+    try {
+      const response = await fetch('/api/assistant/agent-command', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          command,
+          cwd: cwdInput?.trim() || terminalCwd.trim() || undefined,
+          timeoutSeconds: timeoutSecondsInput ?? terminalTimeoutSeconds,
+          maxOutputBytes: 1024 * 1024,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+
+      const result = (await response.json()) as AssistantAgentCommandResponse;
+      terminalEntries = [
+        ...terminalEntries,
+        {
+          ...result,
+          id: `${result.startedAt}-${terminalEntries.length}`,
+        },
+      ].slice(-assistantTerminalMaxEntries);
+
+      if (result.status !== 'completed') {
+        toastManager.warning(result.message ?? `Command finished with status ${result.status}.`);
+      }
+      return result;
+    } catch (error) {
+      toastManager.danger(error instanceof Error ? error.message : String(error));
+      return null;
+    } finally {
+      runningAgentCommand = false;
+    }
+  };
+
+  const runAgentCommand = async () => {
+    await executeAgentCommand(terminalCommand, terminalCwd, terminalTimeoutSeconds);
+  };
+
+  const runAgentCommandAction = async (action: AssistantAction) => {
+    if (!isConcreteAgentCommandAction(action) || !action.command) {
+      toastManager.warning('This command action does not include a runnable command.');
+      return;
+    }
+
+    const result = await executeAgentCommand(action.command, action.cwd, action.timeoutSeconds);
+    if (!result) {
+      return;
+    }
+
+    messages = [
+      ...messages,
+      {
+        role: 'assistant',
+        content: formatAgentCommandResult(result),
+        actions: [],
+      },
+    ];
+    await continueFromCurrentState('Continue from this completed audited command. Use the command output and log paths as evidence, and propose the next exact action.');
+  };
+
+  const onTerminalKeydown = (event: KeyboardEvent) => {
+    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      void runAgentCommand();
+    }
+  };
+
+  const toPersistedTerminalEntry = (entry: AgentTerminalEntry): AgentTerminalEntry => ({
+    ...entry,
+    stdout: truncateTerminalText(entry.stdout),
+    stderr: truncateTerminalText(entry.stderr),
+  });
+
+  const truncateTerminalText = (value: string, maxLength = 16_000) => {
+    return value.length > maxLength ? `${value.slice(0, maxLength)}\n... truncated in browser state ...` : value;
+  };
+
+  const formatAgentStatus = (entry: AgentTerminalEntry) => {
+    const exit = entry.exitCode === null ? 'n/a' : String(entry.exitCode);
+    return `${entry.status} | exit ${exit} | ${(entry.durationMs / 1000).toFixed(1)}s`;
+  };
+
+  const formatAgentCommandResult = (result: AssistantAgentCommandResponse) => {
+    return [
+      `Agent command completed with status ${result.status}.`,
+      `Command: ${result.command}`,
+      `cwd: ${result.cwd ?? 'cwd unavailable'}`,
+      `exitCode: ${result.exitCode === null ? 'n/a' : result.exitCode}`,
+      result.hostLogFilePath ? `Host log: ${result.hostLogFilePath}` : '',
+      result.serverLogFilePath ? `Server log: ${result.serverLogFilePath}` : '',
+      result.stdout ? `\nstdout:\n${truncateTerminalText(result.stdout, 4000)}` : '',
+      result.stderr ? `\nstderr:\n${truncateTerminalText(result.stderr, 4000)}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
   };
 
   const formatToolResult = (result: AssistantToolResponse) => {
@@ -823,6 +1006,30 @@
     loading = true;
 
     try {
+      const approvedAgentCommandActions = getApprovedAgentCommandActions(content);
+      if (approvedAgentCommandActions.length > 0) {
+        const commandResults: AssistantAgentCommandResponse[] = [];
+        for (const action of approvedAgentCommandActions) {
+          if (action.command) {
+            const result = await executeAgentCommand(action.command, action.cwd, action.timeoutSeconds);
+            if (result) {
+              commandResults.push(result);
+            }
+          }
+        }
+
+        messages = [
+          ...nextMessages,
+          {
+            role: 'assistant',
+            content: commandResults.map(formatAgentCommandResult).join('\n\n'),
+            actions: [],
+          },
+        ];
+        await continueFromCurrentState('Continue from these completed audited commands. Use the command output and log paths as evidence, and propose the next exact action.');
+        return;
+      }
+
       const approvedReviewActions = getApprovedReviewActions(content);
       if (approvedReviewActions.length > 0) {
         const result = await executeApprovedReviewActions(approvedReviewActions);
@@ -1016,6 +1223,11 @@
                         <div class="text-xs text-gray-500">{Math.round(action.confidence * 100)}%</div>
                       </div>
                       <div class="mt-1 text-sm text-gray-600 dark:text-gray-300">{action.rationale}</div>
+                      {#if action.type === 'agent_command' && action.command}
+                        <pre
+                          class="mt-2 overflow-x-auto rounded-md bg-gray-950 p-2 font-mono text-xs whitespace-pre-wrap text-gray-100"
+                        >{action.command}</pre>
+                      {/if}
                       <div class="mt-3 flex flex-wrap items-center gap-3">
                         {#if action.query}
                           <a class="inline-flex items-center gap-2 text-sm font-medium text-primary" href={getSearchHref(action)}>
@@ -1050,6 +1262,19 @@
                             </div>
                           </Button>
                         {/if}
+                        {#if canRunAgentCommandAction(action, messageIndex)}
+                          <Button
+                            type="button"
+                            size="small"
+                            onclick={() => void runAgentCommandAction(action)}
+                            disabled={runningAgentCommand}
+                          >
+                            <div class="flex items-center gap-2">
+                              <Icon icon={mdiConsoleLine} size="16" />
+                              {runningAgentCommand ? 'Running...' : 'Run command'}
+                            </div>
+                          </Button>
+                        {/if}
                         {#if isStaleActionMessage(messageIndex) && hasExecutableAction(action)}
                           <span class="text-xs text-gray-500">Outdated action</span>
                         {/if}
@@ -1075,6 +1300,83 @@
           </div>
         {/if}
       </div>
+    </div>
+
+    <div class="rounded-lg border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-900">
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div class="flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-gray-100">
+          <Icon icon={mdiConsoleLine} size="18" />
+          Agent terminal
+        </div>
+        <div class="flex flex-wrap items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
+          <label class="flex items-center gap-2">
+            cwd
+            <input
+              bind:value={terminalCwd}
+              class="w-72 rounded-md border border-gray-300 bg-white px-2 py-1 text-xs text-gray-900 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100"
+              disabled={runningAgentCommand}
+            />
+          </label>
+          <label class="flex items-center gap-2">
+            timeout
+            <input
+              bind:value={terminalTimeoutSeconds}
+              type="number"
+              min="1"
+              max="3600"
+              class="w-20 rounded-md border border-gray-300 bg-white px-2 py-1 text-xs text-gray-900 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100"
+              disabled={runningAgentCommand}
+            />
+          </label>
+        </div>
+      </div>
+
+      <Textarea
+        bind:value={terminalCommand}
+        rows={3}
+        placeholder="Run an audited local command, for example: exiftool -ver"
+        disabled={runningAgentCommand}
+        onkeydown={onTerminalKeydown}
+      />
+      <div class="mt-3 flex justify-end">
+        <Button type="button" onclick={() => void runAgentCommand()} disabled={runningAgentCommand || !terminalCommand.trim()}>
+          <div class="flex items-center gap-2">
+            <Icon icon={mdiPlay} size="16" />
+            {runningAgentCommand ? 'Running...' : 'Run command'}
+          </div>
+        </Button>
+      </div>
+
+      {#if terminalEntries.length > 0}
+        <div class="mt-3 max-h-72 overflow-y-auto rounded-md bg-gray-950 p-3 font-mono text-xs text-gray-100">
+          {#each terminalEntries as entry (entry.id)}
+            <div class="border-b border-gray-800 py-3 first:pt-0 last:border-b-0 last:pb-0">
+              <div class="text-gray-400">
+                $ {entry.command}
+              </div>
+              <div class="mt-1 text-gray-500">
+                {entry.cwd ?? 'cwd unavailable'} | {formatAgentStatus(entry)}
+              </div>
+              {#if entry.stdout}
+                <pre class="mt-2 overflow-x-auto whitespace-pre-wrap text-gray-100">{entry.stdout}{entry.stdoutTruncated ? '\n... stdout truncated inline; see log ...' : ''}</pre>
+              {/if}
+              {#if entry.stderr}
+                <pre class="mt-2 overflow-x-auto whitespace-pre-wrap text-red-300">{entry.stderr}{entry.stderrTruncated ? '\n... stderr truncated inline; see log ...' : ''}</pre>
+              {/if}
+              {#if entry.hostLogFilePath || entry.serverLogFilePath}
+                <div class="mt-2 whitespace-pre-wrap text-gray-500">
+                  {entry.hostLogFilePath ? `Host log: ${entry.hostLogFilePath}` : ''}
+                  {entry.hostLogFilePath && entry.serverLogFilePath ? '\n' : ''}
+                  {entry.serverLogFilePath ? `Server log: ${entry.serverLogFilePath}` : ''}
+                </div>
+              {/if}
+              {#if entry.message}
+                <div class="mt-2 text-yellow-300">{entry.message}</div>
+              {/if}
+            </div>
+          {/each}
+        </div>
+      {/if}
     </div>
 
     <div class="rounded-lg border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-900">

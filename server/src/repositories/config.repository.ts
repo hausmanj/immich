@@ -107,6 +107,12 @@ export interface EnvData {
       url?: string;
       timeoutSeconds: number;
     };
+    agent: {
+      terminalEnabled: boolean;
+      url?: string;
+      timeoutSeconds: number;
+      maxOutputBytes: number;
+    };
   };
 
   llm: {
@@ -387,6 +393,12 @@ const getEnv = (): EnvData => {
         args: parseCsv(dto.IMMICH_ASSISTANT_CODEX_ARGS),
         url: dto.IMMICH_ASSISTANT_CODEX_URL,
         timeoutSeconds: dto.IMMICH_ASSISTANT_CODEX_TIMEOUT_SECONDS ?? 240,
+      },
+      agent: {
+        terminalEnabled: dto.IMMICH_ASSISTANT_AGENT_TERMINAL_ENABLED ?? false,
+        url: dto.IMMICH_ASSISTANT_AGENT_URL,
+        timeoutSeconds: dto.IMMICH_ASSISTANT_AGENT_TIMEOUT_SECONDS ?? 600,
+        maxOutputBytes: dto.IMMICH_ASSISTANT_AGENT_MAX_OUTPUT_BYTES ?? 512 * 1024,
       },
     },
 

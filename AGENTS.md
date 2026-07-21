@@ -105,6 +105,15 @@
 - The local dev Docker stack has been used successfully with Docker Desktop running.
 - The host CLI bridge for in-app Claude/Codex assistance is `tools/assistant-cli-bridge.mjs`, expected on `http://127.0.0.1:3737`; `docker/.env` points the Claude and Codex assistant providers at `host.docker.internal:3737`.
 - Never print or commit secrets from `docker/.env`.
+- The host CLI bridge also exposes an audited agent command endpoint at `POST /command`; local Docker config enables it with `IMMICH_ASSISTANT_AGENT_TERMINAL_ENABLED=true` and an agent URL on the same host bridge.
+  - Immich exposes this through authenticated `POST /assistant/agent-command`.
+  - The Assistant web page includes an "Agent terminal" panel with persisted browser transcript state.
+  - Assistant chat can also return `agent_command` actions with `command`, `cwd`, and `timeoutSeconds`; the web UI can run them from action cards or automatically after approval language such as "go", "do it", or "execute", then feeds the command result back into the chat.
+  - Host-side full command logs are written under `assistant-agent-logs` next to the bridge working directory by default; server-side command logs are written under `/data/assistant-audits/agent-terminal`.
+  - This is the general local/Synology operations path for filesystem inventory, EXIF tools, osxphotos/exiftool probes, checksum/dedupe commands, and other large-library assessment work.
+  - Treat it as an audited operator console. Immich-native impactful library changes still require typed assistant change journals and typed undo before apply; do not use shell commands to bypass the existing journal/undo rule.
+  - Verified smoke after implementation: `POST /assistant/agent-command` ran `pwd && exiftool -ver || true` through the host bridge with exit code 0, reported `exiftool` version `13.55`, wrote a host log under `/Users/johnhausman/source/immich/assistant-agent-logs`, wrote a server log under `/data/assistant-audits/agent-terminal`, and the temporary smoke API key was deleted afterward.
+  - Current dev compose has the `/Volumes/laptop backup:/external/laptop-backup:ro` bind temporarily commented out because `/Volumes/laptop backup` was not mounted and Docker Desktop refused to start the server with the missing source path. Re-enable that line after mounting the volume again.
 - The assistant UI intentionally exposes only Auto, Claude CLI, and Codex CLI; direct OpenAI/Anthropic API providers are kept as backend fallback plumbing.
 - Current server validation passed with:
   - `/Users/johnhausman/.local/pnpm/node_modules/.bin/pnpm --filter immich run check`
