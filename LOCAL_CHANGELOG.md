@@ -83,6 +83,7 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - Assistant `agent_command` actions and the manual Agent terminal can now choose a target; the selected target is persisted with the conversation.
   - Bridge health reports the available command targets, and every command log records `target` and `targetKind`.
   - This provides command/data transfer into the Immich container and out to Synology for large-library assessment, while Immich mutations still require typed journals and typed undo.
+  - Operating preference recorded: the user's M4 Pro Mac is the preferred heavy-processing host when the dedicated fast Mac-to-Synology link provides acceptable data throughput; Synology remains the source-of-truth path and NAS-local probe target.
   - Temporarily commented the `/Volumes/laptop backup:/external/laptop-backup:ro` dev bind because the host volume was not mounted and Docker Desktop refused to recreate `immich-server` while the source path was absent. Re-enable it when the volume is mounted again.
 - Added an assistant provider selector in the web UI so chat can explicitly use Auto, Claude CLI, or Codex CLI.
   - Direct OpenAI and Anthropic API paths remain backend fallback plumbing, but are hidden from the Assistant UI to keep the tool focused on local Claude/Codex access.
