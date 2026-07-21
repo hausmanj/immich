@@ -63,7 +63,8 @@
   - typed undo strategy,
   - clear current-state recording,
   - no silent skipping or destructive behavior.
-- The user also wants Codex-style photo organization outside Immich, including moving specific trips into dated folder structures that match Apple Photos unmodified-original exports. Use `tools/photo-file-organizer.mjs` for this class of work:
+- The user wants non-Immich filesystem organization to be run from this Codex conversation, not from the Immich Assistant UI. Treat this chat as the operator front end for backup-folder reconciliation, duplicate quarantine moves, originals-folder creation, and other physical file organization. Do not hand the user placeholder commands and expect them to run them manually.
+- The user also wants Codex-style photo organization outside Immich, including moving specific trips into dated folder structures that match Apple Photos unmodified-original exports. Use `tools/photo-file-organizer.mjs` from this Codex session for this class of work:
   - `plan` is read-only and writes a complete JSON plan;
   - `reconcile-plan` is read-only and compares backup folders against an existing originals tree with content SHA1 evidence;
   - duplicate backup files should be planned into a duplicates quarantine, not deleted;
@@ -72,6 +73,7 @@
   - `undo` reverses completed journaled operations;
   - default output folders use Apple-style date labels such as `Oct 15, 2012`;
   - do not use ad hoc `mv`/`cp` for large organization changes when this tool can provide a plan and undo path.
+- Immich may still be queried as a reference surface, and Immich duplicate tooling may be called when useful, but Immich is not the workflow front end for non-Immich file organization.
 - Laptop-backup context:
   - The user expects to "unleash picture hell": icons, thumbnails, movie art, copied folders, Google Takeout, iMazing backups, app folders, documents, raw photos, rendered copies, and real photos/videos all mixed together.
   - The organization engine must not make daily albums from broad folders or leave no-GPS assets unaddressed.

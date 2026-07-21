@@ -88,6 +88,7 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - No Synology image was deployed after the user clarified the database must not be impacted; a local amd64 `immich-server` image build was canceled before completion.
   - Temporarily commented the `/Volumes/laptop backup:/external/laptop-backup:ro` dev bind because the host volume was not mounted and Docker Desktop refused to recreate `immich-server` while the source path was absent. Re-enable it when the volume is mounted again.
 - Added `tools/photo-file-organizer.mjs` for physical photo organization outside Immich.
+  - Operating model clarified: non-Immich filesystem reconciliation and organization should be driven from the Codex conversation, not from the Immich Assistant UI. Codex runs the plan/apply/undo commands and reports the results.
   - Supports read-only `plan`, journaled `apply`, and journaled `undo`.
   - Added read-only `reconcile-plan` to compare backup folders against an existing originals tree by content SHA1.
   - Reconcile plans route exact content duplicates to a duplicates quarantine and route new files into date-prefixed event folders matching the user's originals convention.
