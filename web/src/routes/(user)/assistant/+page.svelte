@@ -221,6 +221,31 @@
     return value === 'local' || value === 'synology' || value === 'immich';
   };
 
+  const getResponseError = async (response: Response) => {
+    const contentType = response.headers.get('content-type') ?? '';
+    const text = await response.text();
+
+    if (contentType.includes('application/json')) {
+      try {
+        const payload = JSON.parse(text) as { message?: unknown; error?: unknown };
+        const message = typeof payload.message === 'string' ? payload.message : undefined;
+        const error = typeof payload.error === 'string' ? payload.error : undefined;
+        return message ?? error ?? `Request failed with HTTP ${response.status}`;
+      } catch {
+        return `Request failed with HTTP ${response.status}`;
+      }
+    }
+
+    if (/^\s*<!doctype html/i.test(text) || /^\s*<html/i.test(text)) {
+      return `Request failed with HTTP ${response.status}. The server returned an HTML page instead of JSON. Check the Immich server logs for the underlying error.`;
+    }
+
+    const normalized = text.replace(/\s+/g, ' ').trim();
+    return normalized
+      ? `${normalized.slice(0, 600)}${normalized.length > 600 ? '...' : ''}`
+      : `Request failed with HTTP ${response.status}`;
+  };
+
   const setTerminalTarget = (value: AgentCommandTarget) => {
     terminalTarget = value;
     terminalCwd = agentTargetOptions.find((option) => option.value === value)?.defaultCwd ?? terminalCwd;
@@ -484,7 +509,7 @@
       });
 
       if (!response.ok) {
-        throw new Error(await response.text());
+        throw new Error(await getResponseError(response));
       }
 
       const result = (await response.json()) as AssistantReviewAlbumResponse;
@@ -535,7 +560,7 @@
     });
 
     if (!response.ok) {
-      throw new Error(await response.text());
+      throw new Error(await getResponseError(response));
     }
 
     return (await response.json()) as AssistantExecuteReviewPlanResponse;
@@ -557,7 +582,7 @@
     });
 
     if (!response.ok) {
-      throw new Error(await response.text());
+      throw new Error(await getResponseError(response));
     }
 
     const result = (await response.json()) as AssistantResponse;
@@ -614,7 +639,7 @@
       });
 
       if (!response.ok) {
-        throw new Error(await response.text());
+        throw new Error(await getResponseError(response));
       }
 
       const result = (await response.json()) as AssistantToolResponse;
@@ -663,7 +688,7 @@
       });
 
       if (!response.ok) {
-        throw new Error(await response.text());
+        throw new Error(await getResponseError(response));
       }
 
       const result = (await response.json()) as AssistantAgentCommandResponse;
@@ -1017,7 +1042,7 @@
     try {
       const response = await fetch('/api/assistant/assessment');
       if (!response.ok) {
-        throw new Error(await response.text());
+        throw new Error(await getResponseError(response));
       }
 
       assessment = (await response.json()) as Assessment;
@@ -1091,7 +1116,7 @@
       });
 
       if (!response.ok) {
-        throw new Error(await response.text());
+        throw new Error(await getResponseError(response));
       }
 
       const result = (await response.json()) as AssistantResponse;
