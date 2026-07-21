@@ -14,7 +14,7 @@ import {
   unlink,
   writeFile,
 } from 'node:fs/promises';
-import { basename, dirname, extname, join, resolve } from 'node:path';
+import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 
 const mediaExtensions = new Set([
   '.3gp',
@@ -51,6 +51,10 @@ try {
   switch (command) {
     case 'plan': {
       await plan();
+      break;
+    }
+    case 'reconcile-plan': {
+      await reconcilePlan();
       break;
     }
     case 'apply': {
@@ -112,6 +116,7 @@ function addArg(parsed, key, value) {
 function usage() {
   console.error(`Usage:
   node tools/photo-file-organizer.mjs plan --source PATH --dest PATH [--event-name NAME] [--start YYYY-MM-DD] [--end YYYY-MM-DD] [--plan-file PATH] [--folder-format apple-date|year-apple-date|iso-date|year-iso-date] [--mode move|copy] [--hash]
+  node tools/photo-file-organizer.mjs reconcile-plan --source PATH --originals PATH --duplicates PATH [--plan-file PATH] [--event-name NAME] [--start YYYY-MM-DD] [--end YYYY-MM-DD]
   node tools/photo-file-organizer.mjs apply --plan-file PATH [--journal-dir PATH]
   node tools/photo-file-organizer.mjs undo --journal-file PATH
 
@@ -143,7 +148,7 @@ async function plan() {
 
   const files = [];
   for (const source of sources) {
-    files.push(...(await walkFiles(source, extensions, maxDepth)));
+    files.push(...(await walkFiles(source, extensions, maxDepth, source)));
   }
 
   const metadata = await readExifMetadata(files.map((file) => file.path));
@@ -210,6 +215,157 @@ async function plan() {
   printJson({
     status: 'planned',
     planFile,
+    summary,
+  });
+}
+
+async function reconcilePlan() {
+  const sources = toArray(args.source).map((value) => resolve(String(value)));
+  const originalsRoot = args.originals ? resolve(String(args.originals)) : null;
+  const duplicatesRoot = args.duplicates ? resolve(String(args.duplicates)) : null;
+  if (sources.length === 0 || !originalsRoot || !duplicatesRoot) {
+    throw new Error('reconcile-plan requires --source, --originals, and --duplicates');
+  }
+
+  const mode = args.mode === 'copy' ? 'copy' : 'move';
+  const eventName = typeof args['event-name'] === 'string' ? args['event-name'].trim() : null;
+  const startDate = args.start ? parseDateOnly(String(args.start)) : null;
+  const endDate = args.end ? parseDateOnly(String(args.end), true) : null;
+  const extensions = args.extensions
+    ? new Set(String(args.extensions).split(',').map((item) => normalizeExtension(item.trim())).filter(Boolean))
+    : mediaExtensions;
+  const maxDepth = args['max-depth'] === undefined ? null : Number(args['max-depth']);
+  const generatedAt = new Date().toISOString();
+  const planFile =
+    typeof args['plan-file'] === 'string'
+      ? resolve(args['plan-file'])
+      : resolve(`photo-file-reconcile-plan-${toSafeName(generatedAt)}-${randomUUID()}.json`);
+
+  const originals = await walkFiles(originalsRoot, extensions, maxDepth, originalsRoot);
+  const originalHashIndex = new Map();
+  for (const original of originals) {
+    const sha1 = await sha1File(original.path);
+    const entries = originalHashIndex.get(sha1) ?? [];
+    entries.push({
+      path: original.path,
+      relativePath: original.relativePath,
+      fileSizeBytes: original.size,
+      modifiedAt: new Date(original.mtimeMs).toISOString(),
+    });
+    originalHashIndex.set(sha1, entries);
+  }
+
+  const sourceFiles = [];
+  for (const source of sources) {
+    sourceFiles.push(...(await walkFiles(source, extensions, maxDepth, source)));
+  }
+
+  const metadata = await readExifMetadata(sourceFiles.map((file) => file.path));
+  const operations = [];
+  const plannedDestinationPaths = new Set();
+  const firstSourceOperationByHash = new Map();
+  for (const file of sourceFiles) {
+    const meta = metadata.get(file.path);
+    const capture = getCaptureDate(file.path, meta, file.mtimeMs);
+    const sha1 = await sha1File(file.path);
+    const originalMatches = originalHashIndex.get(sha1) ?? [];
+    const firstSourceMatch = firstSourceOperationByHash.get(sha1);
+    const duplicateEvidence =
+      originalMatches.length > 0
+        ? { type: 'content_sha1_matches_originals', sha1, matches: originalMatches }
+        : firstSourceMatch
+          ? {
+              type: 'content_sha1_matches_planned_source',
+              sha1,
+              firstOperationId: firstSourceMatch.id,
+              firstSourcePath: firstSourceMatch.sourcePath,
+            }
+          : null;
+    const isDuplicate = Boolean(duplicateEvidence);
+
+    if (!isDuplicate && !capture.date) {
+      operations.push(toSkippedOperation(file, mode, 'missing_capture_date', null, null, null, true));
+      continue;
+    }
+
+    if (!isDuplicate && ((startDate && capture.date < startDate) || (endDate && capture.date > endDate))) {
+      operations.push(toSkippedOperation(file, mode, 'outside_date_range', capture.date, capture.source, null, true));
+      continue;
+    }
+
+    const destinationPath = isDuplicate
+      ? resolve(duplicatesRoot, toSafePathSegment(basename(file.sourceRoot)), file.relativePath)
+      : resolve(originalsRoot, inferEventFolder(file, capture.date, eventName), file.name);
+    const destinationState = await getDestinationState(destinationPath);
+    const hasPlanCollision = plannedDestinationPaths.has(destinationPath);
+    const status = destinationState.exists || hasPlanCollision ? 'conflict' : 'planned';
+    const reason = destinationState.exists ? 'destination_exists' : hasPlanCollision ? 'destination_planned_twice' : null;
+    const operation = {
+      id: randomUUID(),
+      status,
+      reason,
+      intent: isDuplicate ? 'duplicate_quarantine' : 'add_to_originals',
+      action: mode,
+      sourcePath: file.path,
+      sourceRoot: file.sourceRoot,
+      relativePath: file.relativePath,
+      destinationPath,
+      originalFileName: file.name,
+      fileExtension: extname(file.name).toLowerCase(),
+      fileSizeBytes: file.size,
+      sourceModifiedAt: new Date(file.mtimeMs).toISOString(),
+      captureDate: capture.date ? toDateOnly(capture.date) : null,
+      captureDateTime: capture.date ? capture.date.toISOString() : null,
+      captureDateSource: capture.source,
+      destinationState,
+      sha1,
+      duplicateEvidence,
+    };
+    operations.push(operation);
+
+    if (status === 'planned') {
+      plannedDestinationPaths.add(destinationPath);
+      if (!isDuplicate && !firstSourceOperationByHash.has(sha1)) {
+        firstSourceOperationByHash.set(sha1, operation);
+      }
+    }
+  }
+
+  const summary = summarizeOperations(operations);
+  const payload = {
+    schema: 'photo-file-organizer-plan-v1',
+    generatedAt,
+    id: randomUUID(),
+    planKind: 'reconcile-originals-and-backups',
+    sourceRoots: sources,
+    destinationRoot: originalsRoot,
+    originalsRoot,
+    duplicatesRoot,
+    eventName,
+    mode,
+    folderFormat: 'event-folder',
+    filters: {
+      start: args.start ?? null,
+      end: args.end ?? null,
+      extensions: [...extensions].sort(),
+      maxDepth,
+      duplicateMatch: 'content_sha1',
+    },
+    originalIndexSummary: {
+      files: originals.length,
+      uniqueHashes: originalHashIndex.size,
+      duplicateHashesWithinOriginals: [...originalHashIndex.values()].filter((entries) => entries.length > 1).length,
+    },
+    summary,
+    operations,
+  };
+
+  await mkdir(dirname(planFile), { recursive: true });
+  await writeFile(planFile, `${JSON.stringify(payload, null, 2)}\n`);
+  printJson({
+    status: 'planned',
+    planFile,
+    originalIndexSummary: payload.originalIndexSummary,
     summary,
   });
 }
@@ -361,10 +517,10 @@ async function undoJournal() {
   });
 }
 
-async function walkFiles(root, extensions, maxDepth) {
+async function walkFiles(root, extensions, maxDepth, sourceRoot = root) {
   const rootState = await stat(root);
   if (rootState.isFile()) {
-    return toFileEntry(root, rootState, root, extensions) ? [toFileEntry(root, rootState, root, extensions)] : [];
+    return toFileEntry(root, rootState, root, extensions, dirname(root)) ? [toFileEntry(root, rootState, root, extensions, dirname(root))] : [];
   }
 
   const files = [];
@@ -386,7 +542,7 @@ async function walkFiles(root, extensions, maxDepth) {
       }
 
       const fileState = await stat(path);
-      const fileEntry = toFileEntry(path, fileState, entry.name, extensions);
+      const fileEntry = toFileEntry(path, fileState, entry.name, extensions, sourceRoot);
       if (fileEntry) {
         files.push(fileEntry);
       }
@@ -396,7 +552,7 @@ async function walkFiles(root, extensions, maxDepth) {
   return files.sort((a, b) => a.path.localeCompare(b.path));
 }
 
-function toFileEntry(path, fileState, name, extensions) {
+function toFileEntry(path, fileState, name, extensions, sourceRoot) {
   const fileName = basename(name);
   const extension = extname(fileName).toLowerCase();
   if (!extensions.has(extension)) {
@@ -406,6 +562,8 @@ function toFileEntry(path, fileState, name, extensions) {
   return {
     path,
     name: fileName,
+    sourceRoot,
+    relativePath: toPortableRelativePath(sourceRoot, path),
     size: fileState.size,
     mtimeMs: fileState.mtimeMs,
   };
@@ -464,6 +622,11 @@ function getCaptureDate(path, meta, mtimeMs) {
   const filenameDate = parseFilenameDate(basename(path));
   if (filenameDate) {
     return { date: filenameDate, source: 'filename' };
+  }
+
+  const pathDate = parseFilenameDate(path);
+  if (pathDate) {
+    return { date: pathDate, source: 'source_path' };
   }
 
   return { date: new Date(mtimeMs), source: 'mtime' };
@@ -539,6 +702,106 @@ function toDateFolder(date, format) {
   }
 }
 
+function inferEventFolder(file, captureDate, eventName) {
+  const explicitEvent = cleanEventName(eventName);
+  if (explicitEvent) {
+    return `${toDateOnly(captureDate)} ${explicitEvent}`;
+  }
+
+  const sourceFolderParts = dirname(file.relativePath)
+    .split(/[\\/]/)
+    .filter((part) => part && part !== '.');
+  for (const part of [...sourceFolderParts].reverse()) {
+    const normalized = normalizeExistingEventFolderName(part);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  const sourceRootName = basename(file.sourceRoot);
+  const normalizedRootName = normalizeExistingEventFolderName(sourceRootName);
+  if (normalizedRootName) {
+    return normalizedRootName;
+  }
+
+  const eventCandidate =
+    [...sourceFolderParts].reverse().find((part) => !isGenericFolderName(part)) ||
+    (!isGenericFolderName(sourceRootName) ? sourceRootName : null);
+  const event = cleanEventName(stripDatePrefix(eventCandidate)) || 'Unsorted';
+  return `${toDateOnly(captureDate)} ${event}`;
+}
+
+function normalizeExistingEventFolderName(value) {
+  const clean = String(value).trim();
+  const yearRange = clean.match(/^((?:19|20)\d{2})_((?:19|20)\d{2})\s+(.+)$/);
+  if (yearRange) {
+    return `${yearRange[1]}_${yearRange[2]} ${cleanEventName(yearRange[3])}`;
+  }
+
+  const dateEvent = clean.match(/^((?:19|20)\d{2})[-_](\d{2})(?:[-_](\d{2}))?\s+(.+)$/);
+  if (dateEvent) {
+    return `${dateEvent[1]}-${dateEvent[2]}${dateEvent[3] ? `-${dateEvent[3]}` : ''} ${cleanEventName(dateEvent[4])}`;
+  }
+
+  const monthEvent = clean.match(/^([A-Z][a-z]{2})\s+(\d{1,2}),\s+((?:19|20)\d{2})\s+(.+)$/);
+  if (monthEvent) {
+    const monthIndex = monthNames.indexOf(monthEvent[1]);
+    if (monthIndex >= 0) {
+      return `${monthEvent[3]}-${String(monthIndex + 1).padStart(2, '0')}-${String(Number(monthEvent[2])).padStart(2, '0')} ${cleanEventName(monthEvent[4])}`;
+    }
+  }
+
+  return null;
+}
+
+function stripDatePrefix(value) {
+  if (!value) {
+    return null;
+  }
+
+  return String(value)
+    .replace(/^((?:19|20)\d{2})[-_]\d{2}(?:[-_]\d{2})?\s+/, '')
+    .replace(/^((?:19|20)\d{2})_((?:19|20)\d{2})\s+/, '')
+    .replace(/^[A-Z][a-z]{2}\s+\d{1,2},\s+(?:19|20)\d{2}\s*/, '')
+    .trim();
+}
+
+function cleanEventName(value) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const clean = value.replaceAll(/[\\/:\0]/g, '-').replaceAll(/\s+/g, ' ').trim();
+  return clean || null;
+}
+
+function isGenericFolderName(value) {
+  const clean = String(value).trim().toLowerCase();
+  return [
+    'backup',
+    'camera',
+    'dcim',
+    'downloads',
+    'images',
+    'media',
+    'originals',
+    'photo',
+    'photo library',
+    'photos',
+    'pictures',
+    'raw photo and video files',
+    'videos',
+  ].includes(clean);
+}
+
+function toPortableRelativePath(root, path) {
+  return relative(root, path).split(sep).join('/');
+}
+
+function toSafePathSegment(value) {
+  return cleanEventName(value) ?? 'source';
+}
+
 async function getDestinationState(path) {
   try {
     const destination = await stat(path);
@@ -582,6 +845,7 @@ function summarizeOperations(operations) {
     planned: operations.filter((operation) => operation.status === 'planned').length,
     conflicts: operations.filter((operation) => operation.status === 'conflict').length,
     skipped: operations.filter((operation) => operation.status === 'skipped').length,
+    byIntent: countBy(operations.map((operation) => operation.intent).filter(Boolean)),
     byReason: countBy(operations.map((operation) => operation.reason).filter(Boolean)),
     byDate: countBy(operations.filter((operation) => operation.captureDate).map((operation) => operation.captureDate)),
   };
@@ -598,6 +862,12 @@ async function assertSourceStillMatches(operation) {
   const source = await stat(operation.sourcePath);
   if (source.size !== operation.fileSizeBytes) {
     throw new Error(`Source size changed for ${operation.sourcePath}`);
+  }
+  if (operation.sha1) {
+    const currentSha1 = await sha1File(operation.sourcePath);
+    if (currentSha1 !== operation.sha1) {
+      throw new Error(`Source SHA1 changed for ${operation.sourcePath}`);
+    }
   }
 }
 
@@ -621,6 +891,12 @@ async function assertCopiedDestinationMatches(operation) {
   const destination = await stat(operation.destinationPath);
   if (destination.size !== operation.fileSizeBytes) {
     throw new Error(`Copied destination size changed: ${operation.destinationPath}`);
+  }
+  if (operation.sha1) {
+    const currentSha1 = await sha1File(operation.destinationPath);
+    if (currentSha1 !== operation.sha1) {
+      throw new Error(`Copied destination SHA1 changed: ${operation.destinationPath}`);
+    }
   }
 }
 
