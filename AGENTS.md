@@ -43,8 +43,16 @@
   - A Synology Immich backup was created at `/volume1/docker/immich-backups/20260721-113059`.
   - It contains `immich-folder-without-raw-postgres.tgz`, `immich-postgres-pg_dumpall.sql.gz`, copied `docker-compose.yml`, copied `.env`, and `SHA256SUMS`.
   - Raw Postgres folders were not read or modified because the SSH user cannot read uid 999-owned database files without sudo. The database backup is a logical `pg_dumpall` taken through the running Postgres container.
-  - No custom Immich image was deployed to Synology. A local amd64 `immich-server` build was started and then canceled after the user clarified that the database must not be impacted.
-  - Do not update/restart the Synology `immich-server` image while the user requires zero database impact, because Immich startup may run migrations.
+  - Synology Immich is now running the custom assistant-enabled server image `immich-server:codex-3196e93da51b` with image id `sha256:436e8a0790bd0a9dee3a41ab97e44ed9a4ac59483b9686d658070ae5888d31d4`.
+  - The previous running server image was tagged for rollback as `immich-server:pre-codex-20260721-140859`.
+  - Synology compose backup before the image change: `/volume1/docker/immich/docker-compose.yml.pre-codex-20260721-124056`.
+  - Synology assistant env backup before runtime config: `/volume1/docker/immich/.env.pre-assistant-20260721-141618`.
+  - Runtime config currently uses `IMMICH_LLM_PROVIDER=openai`, `IMMICH_ASSISTANT_PROVIDER=openai`, `IMMICH_SOURCE_REF=release`, and an OpenAI API key copied from local `docker/.env` without printing it.
+  - The custom build tar was copied to Synology as `/volume1/docker/immich/immich-server-codex-3196e93da51b-amd64.tar.gz`; gzip verification passed before `docker load`.
+  - API verification after restart: `GET /api/server/version` returned `3.0.3`, `GET /api/server/ping` returned `{"res":"pong"}`, `/assistant` returned HTTP 200, and `immich-server` was healthy.
+  - Compose initially recreated dependency containers when run without `--no-deps`; subsequent server-only restart used `docker compose up -d --no-deps immich-server`.
+  - A yellow sidebar triangle after the first deploy was caused by `IMMICH_SOURCE_REF=main`, which Immich intentionally displays as a main/custom-build warning. It was changed to `release` in Synology `.env` to match release UI behavior.
+  - Current known warning in logs: `Failed to import plugin from /build/plugins/immich-plugin-llm`; the built image did not include `packages/plugin-llm` because that package is not present in the current checkout image context. This is a plugin-subsystem warning, not the assistant route itself.
 - Exact Synology SSH access is critical and should not be inferred:
   - Use exactly `ssh -p 22222 hausmanj@drhaus`.
   - In this managed shell, SSH/network may require `sandbox_permissions: "require_escalated"`.
@@ -56,6 +64,12 @@
     - `/volume1` exists
     - `/volume1/docker` exists
   - Do not substitute `localhost:22222`, inferred hostnames, Tailscale IPs, old known-host addresses, or `Host drhaus` assumptions unless the exact command above fails and the user explicitly changes the route.
+  - Current SSH path appears to be through Tailscale or a local forwarded route: `SSH_CONNECTION` on Synology showed `127.0.0.1 ... 127.0.0.1 22222`.
+  - Synology DSM over Tailscale is available at `https://drhaus.taildd6bd4.ts.net:5001/#/signin`; treat this as the browser/admin DSM URL, not a replacement for the exact SSH command unless the user says otherwise.
+  - Because of that, Synology could not connect back to the Mac bridge on Mac LAN/Tailscale addresses tested from Synology (`192.168.0.183`, `192.168.2.54`, `192.168.2.1`, `192.168.3.1`, `100.101.216.120` all failed for port `3738`).
+  - Synology remote SSH port forwarding also failed for tested loopback ports `3738` and `3740`. Do not assume reverse tunnels are available unless Synology SSH config changes.
+  - For now, Synology in-app assistant chat uses the OpenAI API provider directly instead of the Mac bridge. The Mac bridge remains useful for local Docker/dev and Codex-run workflows from this chat.
+  - If exposing a Mac/Synology agent endpoint later, prefer LAN/VPN-only access or an authenticated reverse proxy. Do not expose an unauthenticated command bridge to the public internet.
 - The user explicitly does not want repeated user prompts while implementing. Continue autonomously when safe, especially for local code changes, audits, and non-destructive verification. Ask only for true blockers.
 - The user explicitly objected to repeated lint checks before the capability is finished. Avoid lint loops during active implementation. Use focused TypeScript/runtime checks when the feature is coherent, then final validation before commit.
 - Source files and external libraries must remain untouched unless the user explicitly approves a specific impactful operation. For any future impactful tool, including metadata edits, stack changes, archive/favorite changes, folder moves, or duplicate resolution, require:
