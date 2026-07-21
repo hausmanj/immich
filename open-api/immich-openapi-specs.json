@@ -5342,6 +5342,57 @@
         "x-immich-permission": "album.create"
       }
     },
+    "/assistant/review-plan": {
+      "post": {
+        "description": "Create multiple reversible assistant review albums from approved concrete review actions. Each album writes its own assistant change journal and undo path.",
+        "operationId": "executeReviewPlan",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssistantExecuteReviewPlanRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssistantExecuteReviewPlanResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Execute an assistant review-album plan",
+        "tags": [
+          "Assistant"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          }
+        ],
+        "x-immich-permission": "album.create"
+      }
+    },
     "/assistant/tool": {
       "post": {
         "description": "Run a read-only deterministic assistant audit or search against the authenticated user library.",
@@ -18839,6 +18890,55 @@
           "actions",
           "answer",
           "context",
+          "status"
+        ],
+        "type": "object"
+      },
+      "AssistantExecuteReviewPlanRequestDto": {
+        "properties": {
+          "albums": {
+            "items": {
+              "$ref": "#/components/schemas/AssistantReviewAlbumRequestDto"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "albums"
+        ],
+        "type": "object"
+      },
+      "AssistantExecuteReviewPlanResponseDto": {
+        "properties": {
+          "albumCount": {
+            "type": "number"
+          },
+          "albums": {
+            "items": {
+              "$ref": "#/components/schemas/AssistantReviewAlbumResponseDto"
+            },
+            "type": "array"
+          },
+          "assetCount": {
+            "type": "number"
+          },
+          "message": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "applied"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "albumCount",
+          "albums",
+          "assetCount",
+          "message",
           "status"
         ],
         "type": "object"

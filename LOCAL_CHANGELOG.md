@@ -141,6 +141,11 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - The assistant prompt now says sparse GPS is an anchor/name signal for older libraries, while source folder, capture date, and camera cohorts are the primary coverage backbone.
   - The assistant must not recommend leaving the `No visible location` majority unaddressed when asked to organize the entire library.
   - Auto assistant provider selection now tries configured providers in order, so a failing default Codex CLI path can fall through to Claude or another configured provider. Explicit provider selections still report their own provider error.
+- Codex-style plan execution follow-up:
+  - Added `POST /assistant/review-plan` to execute multiple approved concrete review-album actions in one request.
+  - Each album created by a review plan still writes its own change journal and undo action before/after mutation.
+  - The web Assistant now detects approval/execution feedback in chat and executes the latest concrete `review` actions without requiring button clicks.
+  - Album creation buttons are now restricted to concrete `review` actions only. Broad planning/audit/search cards no longer expose album creation just because they have a cohort-shaped payload.
 - Full `sidecar_pair_audit` over `/external/desktop-icloud-originals` completed:
   - `directoriesScanned=56`;
   - `sidecarFileCount=0`;

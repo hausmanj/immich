@@ -56,6 +56,14 @@
     undoAction: 'delete_created_review_album';
   };
 
+  type AssistantExecuteReviewPlanResponse = {
+    status: 'applied';
+    albumCount: number;
+    assetCount: number;
+    albums: AssistantReviewAlbumResponse[];
+    message: string;
+  };
+
   type AssistantToolResponse = {
     toolType: NonNullable<AssistantAction['toolType']>;
     generatedAt: string;
@@ -251,25 +259,22 @@
     return action.albumName?.trim() || action.title.trim() || 'Assistant review album';
   };
 
+  const isConcreteReviewAction = (action: AssistantAction) => {
+    return action.type === 'review' && (action.assetIds.length > 0 || !!(action.cohortType && action.cohortKey));
+  };
+
   const isStaleActionMessage = (messageIndex: number) => {
     return messages.slice(messageIndex + 1).some((message) => message.role === 'user');
   };
 
   const hasExecutableAction = (action: AssistantAction) => {
-    return (
-      !!action.toolType ||
-      (action.type !== 'search' &&
-        action.type !== 'folder_plan' &&
-        (action.assetIds.length > 0 || !!(action.cohortType && action.cohortKey)))
-    );
+    return !!action.toolType || isConcreteReviewAction(action);
   };
 
   const canCreateReviewAlbum = (action: AssistantAction, messageIndex: number) => {
     return (
       !isStaleActionMessage(messageIndex) &&
-      action.type !== 'search' &&
-      action.type !== 'folder_plan' &&
-      (action.assetIds.length > 0 || !!(action.cohortType && action.cohortKey))
+      isConcreteReviewAction(action)
     );
   };
 
@@ -299,8 +304,64 @@
     return action.assetIds.length > 0 ? `Create review album (${formatNumber(action.assetIds.length)})` : 'Create review album';
   };
 
+  const isPlanExecutionFeedback = (content: string) => {
+    return /\b(go|execute|apply|create|stage|materialize|start|proceed|do it|approved?|yes)\b/i.test(content);
+  };
+
+  const getLatestAssistantActions = () => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message.role === 'assistant' && message.actions?.length) {
+        return message.actions;
+      }
+    }
+
+    return [];
+  };
+
+  const actionMatchesFeedback = (action: AssistantAction, content: string) => {
+    const normalized = content.toLowerCase();
+    const haystack = [action.title, action.rationale, action.albumName ?? '', action.cohortKey ?? ''].join(' ').toLowerCase();
+    const hasSpecificTarget =
+      /\b(trip|french|polynesia|bora|leeward)\b/.test(normalized) ||
+      /\b(adjacent|oct(?:ober)?\s*21|10\/21|source|folder|all|everything|entire)\b/.test(normalized);
+
+    if (!hasSpecificTarget || /\b(all|everything|entire|plan|these|them)\b/.test(normalized)) {
+      return true;
+    }
+
+    if (/\b(trip|french|polynesia|bora|leeward)\b/.test(normalized)) {
+      return /\b(french|polynesia|bora|leeward|trip)\b/.test(haystack);
+    }
+
+    if (/\b(adjacent|oct(?:ober)?\s*21|10\/21)\b/.test(normalized)) {
+      return /\b(oct(?:ober)?\s*21|2012-10-21|adjacent)\b/.test(haystack);
+    }
+
+    if (/\b(source|folder)\b/.test(normalized)) {
+      return /\b(source|folder)\b/.test(haystack);
+    }
+
+    return true;
+  };
+
+  const getApprovedReviewActions = (content: string) => {
+    if (!isPlanExecutionFeedback(content)) {
+      return [];
+    }
+
+    return getLatestAssistantActions()
+      .filter((action) => isConcreteReviewAction(action))
+      .filter((action) => actionMatchesFeedback(action, content));
+  };
+
   const createReviewAlbum = async (action: AssistantAction, actionKey: string) => {
     if (applyingActionKey) {
+      return;
+    }
+
+    if (action.type !== 'review') {
+      toastManager.warning('Only concrete review actions can create albums.');
       return;
     }
 
@@ -357,6 +418,46 @@
     } finally {
       applyingActionKey = null;
     }
+  };
+
+  const executeApprovedReviewActions = async (actions: AssistantAction[]) => {
+    const response = await fetch('/api/assistant/review-plan', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        albums: actions.map((action) => ({
+          albumName: getReviewAlbumName(action),
+          assetIds: action.assetIds.length > 0 ? action.assetIds : undefined,
+          cohortType: action.cohortType,
+          cohortKey: action.cohortKey,
+        })),
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+
+    return (await response.json()) as AssistantExecuteReviewPlanResponse;
+  };
+
+  const formatExecutedReviewPlan = (result: AssistantExecuteReviewPlanResponse) => {
+    return [
+      result.message,
+      '',
+      ...result.albums.map((album) =>
+        [
+          `- ${album.albumName}: ${formatNumber(album.assetCount)} assets`,
+          `  Album ID: ${album.albumId}`,
+          `  Change journal: ${album.changeLogFilePath}`,
+          album.undoAvailable ? `  Undo action: ${album.undoAction}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      ),
+    ].join('\n');
   };
 
   const runTool = async (action: AssistantAction, actionKey: string) => {
@@ -653,6 +754,20 @@
     loading = true;
 
     try {
+      const approvedReviewActions = getApprovedReviewActions(content);
+      if (approvedReviewActions.length > 0) {
+        const result = await executeApprovedReviewActions(approvedReviewActions);
+        messages = [
+          ...nextMessages,
+          {
+            role: 'assistant',
+            content: formatExecutedReviewPlan(result),
+            actions: [],
+          },
+        ];
+        return;
+      }
+
       const response = await fetch('/api/assistant/chat', {
         method: 'POST',
         headers: {
