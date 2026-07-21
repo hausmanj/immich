@@ -371,7 +371,7 @@ describe('getEnv', () => {
         provider: undefined,
         openai: {
           apiKey: undefined,
-          model: 'gpt-5.6-luna',
+          model: 'gpt-5.1',
         },
         anthropic: {
           apiKey: undefined,

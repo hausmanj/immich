@@ -167,6 +167,13 @@ type AssistantOrganizationCoverageLedgerItem = {
       };
 };
 
+type AssistantOrganizationCoveragePlan = {
+  selectedEventReviewCohorts: AssistantOrganizationCoverageItem[];
+  remainingSourcePathReviewCohorts: AssistantOrganizationCoverageItem[];
+  coverageExecutionLedger: AssistantOrganizationCoverageLedgerItem[];
+  [key: string]: unknown;
+};
+
 type AssistantMutationActionType =
   | 'assistant_review_album_create'
   | 'metadata_edit'
@@ -2995,9 +3002,70 @@ export class AssistantService extends BaseService {
       instruction:
         'You are an in-app Immich photo library assistant for organizing very large photo and video libraries. Help assess metadata, source cohorts, time ranges, locations, albums, folders, review queues, duplicates, video metadata, and original-file risks using the provided library context. Prefer deterministicAudits over the sampled assets when discussing whole-library counts, cohorts, duplicate candidates, videos, mobile upload audit coverage, and review-album candidates. Use deterministicAudits.organizationCoveragePlan as the first source for whole-library organization because it is designed to account for every asset. For whole-library organization, follow organizationCoveragePlan.coverageExecutionLedger as the ordered ledger of exact next steps. Explain the coverageStatusSummary, then propose the first useful executable actions from the ledger: ready_for_review_album items become concrete review actions, and needs_decomposition_audit items become metadata_audit actions with the ledger nextAction toolType/toolInput. For older libraries with sparse GPS, GPS is only an anchor signal; source folders, capture dates, and camera cohorts are the primary organization backbone. SourcePathCohorts are exact source directories, but exact source directories are not automatically albums: if a source folder has a generic container name or spans many days, places, cameras, or trips, treat it as a container that must be decomposed before album creation. For organizationCoveragePlan.remainingSourcePathReviewCohorts, reviewStrategy=review_album means the item may become a concrete review action; reviewStrategy=decompose_first means the item needs an exact-folder metadata_search or sidecar_pair_audit action first, with toolInput.originalPathContains set to the cohortKey. Never recommend leaving the no-GPS or No visible location majority unaddressed when the user asks to organize the entire library. Prefer deterministicAudits.eventCohorts for multi-day trips, same-location travel, and event-style organization; do not split a trip into daily albums when a higher-confidence event cohort covers the same date/location span. Event cohort assetCount is the materialized review-album size, which includes compatible no-location assets in the event date span plus assets from source folders anchored by GPS/place evidence; locationAssetCount is only the GPS/place anchor count. When the user asks whether nearby days should be included, compare eventCohorts with dateCohorts/sourcePathCohorts/requestedToolResults and explicitly call out adjacent no-location days as review candidates rather than ignoring them. Daily dateCohorts/sourcePathCohorts are fallback coverage units after event cohorts, not discarded leftovers. When deterministicAudits.requestedToolResults is present, treat it as server-run evidence from the current user request; it contains the full tool summary, result count, error count, and logFilePath when large row-level output was written to disk. Full row-level results remain available through a tool action and, when present, the JSON audit log. When proposing a concrete reversible review album from deterministicAudits, use action.type=review, set action.cohortType and action.cohortKey to one exact cohort, and leave assetIds empty unless the action is based on explicit sampled assets. Do not put albumName, assetIds, cohortType, or cohortKey on broad album_plan, metadata_audit, original_file_audit, folder_plan, or search actions; those are not single album mutations. For broad coverage plans, describe the sequence and propose individual review actions for the first concrete cohorts only. When more evidence is needed, include action.toolType and action.toolInput for one of the read-only Immich tools: content_hash_audit, sidecar_pair_audit, metadata_search, or mobile_original_compare. When the deterministic Immich tools are not enough, propose action.type=agent_command with a concrete read-only shell command, target, cwd, and timeoutSeconds. Use target=local for Mac host tools and mounted Desktop paths, target=synology for NAS data under /volume1 over ssh -p 22222 hausmanj@drhaus, and target=immich for commands inside the Immich server container such as inspecting /data logs or /external container mounts. Agent command actions can use tools such as exiftool, osxphotos, find, file, shasum, sqlite, jq, ffprobe, docker-visible paths, or purpose-built scripts. For physical organization outside Immich, prefer node tools/photo-file-organizer.mjs reconcile-plan/plan/apply/undo over ad hoc mv/cp because it creates complete plans, typed journals, and undo records. Use reconcile-plan when comparing backup folders to an existing originals tree: it uses content SHA1 to route existing photos to a duplicates quarantine and new photos to date-prefixed event folders. Agent command actions are powerful operator commands: default to read-only inventory, metadata extraction, hashing, grouping, and report generation. Treat impactful organization changes as requiring read-only evidence first plus a persisted assistant change journal and undo path before the change is considered safe. Use mutationCapabilities to distinguish executable journaled mutations from plan-only blocked mutations: metadata_edit, archive_favorite, and stack_change are currently applyable with typed undo; folder_move and duplicate_resolution are registered but apply-blocked until a reliable typed undo exists. Treat checksumAlgorithm=sha1 as file-content evidence and checksumAlgorithm=sha1-path as external-library path identity, not byte-level integrity. When a field is absent from the provided context, say it is not visible in the assistant context; do not claim it is missing from the source file or Immich database. Do not suggest tagging unless the user explicitly asks for tags. Do not claim any change has been applied. Prefer reversible, review-first organization. Never suggest deleting assets unless the user explicitly asks about deletion.',
       userContent: JSON.stringify({
-        libraryContext: context,
+        libraryContext: this.toCompactLibraryContext(context),
         conversation: dto.messages,
       }),
+    };
+  }
+
+  private toCompactLibraryContext(context: Awaited<ReturnType<AssistantService['getLibraryContext']>>) {
+    const audits = context.deterministicAudits;
+    return {
+      summary: context.summary,
+      statistics: context.statistics,
+      externalLibraries: context.externalLibraries,
+      mutationCapabilities: context.mutationCapabilities,
+      topYears: context.topYears.slice(0, 20),
+      cameraMakes: context.cameraMakes.slice(0, 20),
+      cameraModels: context.cameraModels.slice(0, 20),
+      countries: context.countries.slice(0, 20),
+      cities: context.cities.slice(0, 20),
+      metadataCoverage: context.metadataCoverage,
+      recentAssets: context.recentAssets.slice(0, 10),
+      unorganizedAssets: context.unorganizedAssets.slice(0, 10),
+      deterministicAudits: {
+        checksumSemantics: audits.checksumSemantics,
+        librarySummary: audits.librarySummary,
+        checksumAlgorithmCohorts: audits.checksumAlgorithmCohorts,
+        organizationCoveragePlan: this.toCompactCoveragePlan(audits.organizationCoveragePlan),
+        eventCohorts: audits.eventCohorts.slice(0, 15),
+        sourcePathCohorts: audits.sourcePathCohorts.slice(0, 35),
+        dateCohorts: audits.dateCohorts.slice(0, 25),
+        cameraCohorts: audits.cameraCohorts.slice(0, 20),
+        locationCohorts: audits.locationCohorts.slice(0, 20),
+        duplicateCandidates: {
+          exactContentChecksum: audits.duplicateCandidates.exactContentChecksum.slice(0, 20),
+          matchingFileTraits: audits.duplicateCandidates.matchingFileTraits.slice(0, 20),
+        },
+        videoCohorts: audits.videoCohorts.slice(0, 20),
+        mobileAppMetadataCohorts: audits.mobileAppMetadataCohorts.slice(0, 20),
+        requestedToolResults: audits.requestedToolResults.map((result) => this.toCompactToolResult(result)),
+        actionGuidance: audits.actionGuidance,
+      },
+    };
+  }
+
+  private toCompactCoveragePlan(plan: AssistantOrganizationCoveragePlan) {
+    return {
+      ...plan,
+      selectedEventReviewCohorts: plan.selectedEventReviewCohorts.slice(0, 8),
+      remainingSourcePathReviewCohorts: plan.remainingSourcePathReviewCohorts.slice(0, 35),
+      coverageExecutionLedger: plan.coverageExecutionLedger.slice(0, 30),
+    };
+  }
+
+  private toCompactToolResult(result: AssistantToolResponseDto) {
+    return {
+      toolType: result.toolType,
+      generatedAt: result.generatedAt,
+      summary: result.summary,
+      resultCount: result.resultCount,
+      errorCount: result.errorCount,
+      logFilePath: result.logFilePath,
+      logFileFormat: result.logFileFormat,
+      inlineResultsOmitted: result.inlineResultsOmitted,
+      results: result.results.slice(0, 10),
+      errors: result.errors.slice(0, 5),
     };
   }
 
