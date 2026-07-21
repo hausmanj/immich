@@ -2,7 +2,6 @@
   import { browser } from '$app/environment';
   import UserPageLayout from '$lib/components/layouts/UserPageLayout.svelte';
   import { Route } from '$lib/route';
-  import { goto } from '$app/navigation';
   import { Button, Icon, Textarea, toastManager } from '@immich/ui';
   import { mdiArrowRight, mdiMagnify, mdiPlusBoxOutline, mdiRobotOutline, mdiSend, mdiTrashCanOutline } from '@mdi/js';
   import { onMount, tick } from 'svelte';
@@ -263,9 +262,7 @@
     return action.type === 'review' && (action.assetIds.length > 0 || !!(action.cohortType && action.cohortKey));
   };
 
-  const isStaleActionMessage = (messageIndex: number) => {
-    return messages.slice(messageIndex + 1).some((message) => message.role === 'user');
-  };
+  const isStaleActionMessage = (messageIndex: number) => messages.slice(messageIndex + 1).length > 0;
 
   const hasExecutableAction = (action: AssistantAction) => {
     return !!action.toolType || isConcreteReviewAction(action);
@@ -412,7 +409,7 @@
         },
       ];
       saveAssistantState();
-      await goto(Route.viewAlbum({ id: result.albumId }));
+      await continueFromCurrentState('Continue organizing from this completed review-album action. Propose the next read-only audits or review actions, and do not repeat completed actions.');
     } catch (error) {
       toastManager.danger(error instanceof Error ? error.message : String(error));
     } finally {
@@ -441,6 +438,40 @@
     }
 
     return (await response.json()) as AssistantExecuteReviewPlanResponse;
+  };
+
+  const continueFromCurrentState = async (instruction: string) => {
+    const response = await fetch('/api/assistant/chat', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        provider: provider === 'auto' ? undefined : provider,
+        messages: [
+          ...messages.map(({ role, content }) => ({ role, content })).slice(-11),
+          { role: 'user' as const, content: instruction },
+        ],
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+
+    const result = (await response.json()) as AssistantResponse;
+    messages = [
+      ...messages,
+      {
+        role: 'assistant',
+        content: result.answer,
+        actions: result.actions,
+      },
+    ];
+
+    if (result.status !== 'success') {
+      toastManager.warning(result.error ?? result.answer);
+    }
   };
 
   const formatExecutedReviewPlan = (result: AssistantExecuteReviewPlanResponse) => {
@@ -486,14 +517,16 @@
       }
 
       const result = (await response.json()) as AssistantToolResponse;
+      const toolMessage: ChatMessage = {
+        role: 'assistant',
+        content: formatToolResult(result),
+        actions: [],
+      };
       messages = [
         ...messages,
-        {
-          role: 'assistant',
-          content: formatToolResult(result),
-          actions: [],
-        },
+        toolMessage,
       ];
+      await continueFromCurrentState('Continue organizing from this completed read-only audit. Use the audit evidence to propose the next exact action. Do not dump raw audit rows.');
     } catch (error) {
       toastManager.danger(error instanceof Error ? error.message : String(error));
     } finally {
@@ -503,6 +536,7 @@
 
   const formatToolResult = (result: AssistantToolResponse) => {
     const summary = Object.entries(result.summary)
+      .filter(([key]) => key !== 'breakdown')
       .map(([key, value]) => `${key}: ${formatToolValue(value)}`)
       .join('\n');
     const resultCount = result.resultCount ?? result.results.length;
@@ -512,6 +546,7 @@
       result.inlineResultsOmitted && result.logFilePath
         ? `Inline rows omitted from chat. The log contains ${formatNumber(resultCount)} result rows and ${formatNumber(errorCount)} error rows.`
         : '';
+    const breakdown = formatMetadataSearchBreakdown(result);
     const results = formatToolResultRows(result);
     const errors = formatToolErrorRows(result.errors);
 
@@ -519,6 +554,7 @@
       `${getToolTitle(result.toolType)} completed at ${new Date(result.generatedAt).toLocaleString()}.`,
       '',
       summary,
+      breakdown,
       logLine,
       omittedLine,
       results ? `\nResults:\n${results}` : '',
@@ -543,6 +579,39 @@
         return formatMobileCompareRows(result.results);
       }
     }
+  };
+
+  const formatMetadataSearchBreakdown = (result: AssistantToolResponse) => {
+    if (result.toolType !== 'metadata_search') {
+      return '';
+    }
+
+    const breakdown = result.summary.breakdown;
+    if (!isRecord(breakdown)) {
+      return '';
+    }
+
+    return [
+      'Breakdown:',
+      formatBreakdownSection('Dates', getRecordArray(breakdown, 'dates'), 12),
+      formatBreakdownSection('Places', getRecordArray(breakdown, 'places'), 10),
+      formatBreakdownSection('Cameras', getRecordArray(breakdown, 'cameras'), 8),
+      formatBreakdownSection('Media types', getRecordArray(breakdown, 'mediaTypes'), 6),
+      formatBreakdownSection('Extensions', getRecordArray(breakdown, 'fileExtensions'), 6),
+    ]
+      .filter(Boolean)
+      .join('\n');
+  };
+
+  const formatBreakdownSection = (title: string, rows: Array<Record<string, unknown>>, limit: number) => {
+    if (rows.length === 0) {
+      return '';
+    }
+
+    return [
+      `${title}:`,
+      ...rows.slice(0, limit).map((row) => `- ${getString(row, 'label') || 'Unknown'}: ${formatNumber(getNumber(row, 'count'))}`),
+    ].join('\n');
   };
 
   const formatSidecarPairRows = (results: Array<Record<string, unknown>>) => {
@@ -765,6 +834,7 @@
             actions: [],
           },
         ];
+        await continueFromCurrentState('Continue organizing from this completed review-plan execution. Propose the next read-only audits or review actions, and do not repeat completed actions.');
         return;
       }
 
