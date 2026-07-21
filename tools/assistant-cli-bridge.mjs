@@ -19,6 +19,47 @@ const agentMaxOutputBytes = Number.parseInt(
   10,
 );
 const agentMaxTimeoutSeconds = Number.parseInt(process.env.ASSISTANT_BRIDGE_AGENT_MAX_TIMEOUT_SECONDS ?? '3600', 10);
+const commandTargets = {
+  local: {
+    key: 'local',
+    label: process.env.ASSISTANT_BRIDGE_LOCAL_LABEL ?? 'Mac host',
+    kind: 'local',
+    root: agentRoot,
+    defaultCwd: agentDefaultCwd,
+    logDirectory: agentLogDirectory,
+    shell: process.env.ASSISTANT_BRIDGE_LOCAL_SHELL ?? '/bin/zsh',
+    shellArgs: parseArgs(process.env.ASSISTANT_BRIDGE_LOCAL_SHELL_ARGS, ['-lc']),
+  },
+  synology: {
+    key: 'synology',
+    label: process.env.ASSISTANT_BRIDGE_SYNOLOGY_LABEL ?? 'Synology',
+    kind: 'ssh',
+    enabled: true,
+    host: process.env.ASSISTANT_BRIDGE_SYNOLOGY_HOST ?? 'drhaus',
+    port: process.env.ASSISTANT_BRIDGE_SYNOLOGY_PORT ?? '22222',
+    user: process.env.ASSISTANT_BRIDGE_SYNOLOGY_USER ?? 'hausmanj',
+    root: process.env.ASSISTANT_BRIDGE_SYNOLOGY_ROOT ?? '/volume1',
+    defaultCwd: process.env.ASSISTANT_BRIDGE_SYNOLOGY_DEFAULT_CWD ?? process.env.ASSISTANT_BRIDGE_SYNOLOGY_ROOT ?? '/volume1',
+    logDirectory: resolve(process.env.ASSISTANT_BRIDGE_SYNOLOGY_LOG_DIR ?? agentLogDirectory),
+    sshOptions: parseArgs(process.env.ASSISTANT_BRIDGE_SYNOLOGY_SSH_OPTIONS, [
+      '-o',
+      'BatchMode=yes',
+      '-o',
+      'ConnectTimeout=10',
+    ]),
+  },
+  immich: {
+    key: 'immich',
+    label: process.env.ASSISTANT_BRIDGE_IMMICH_LABEL ?? 'Immich container',
+    kind: 'docker',
+    enabled: true,
+    container: process.env.ASSISTANT_BRIDGE_IMMICH_CONTAINER ?? 'immich_server',
+    root: process.env.ASSISTANT_BRIDGE_IMMICH_ROOT ?? '/',
+    defaultCwd: process.env.ASSISTANT_BRIDGE_IMMICH_DEFAULT_CWD ?? '/usr/src/app',
+    logDirectory: resolve(process.env.ASSISTANT_BRIDGE_IMMICH_LOG_DIR ?? agentLogDirectory),
+    shell: process.env.ASSISTANT_BRIDGE_IMMICH_SHELL ?? '/bin/bash',
+  },
+};
 
 const providers = {
   '/claude': {
@@ -110,7 +151,23 @@ function sendJson(response, statusCode, payload) {
   response.end(JSON.stringify(payload));
 }
 
+function toCommandTargetSummary(target) {
+  return {
+    key: target.key,
+    label: target.label,
+    kind: target.kind,
+    enabled: target.kind === 'local' ? true : target.enabled,
+    root: target.root,
+    defaultCwd: target.defaultCwd,
+    container: target.kind === 'docker' ? target.container : undefined,
+  };
+}
+
 function isPathInside(path, root) {
+  if (root === '/') {
+    return path.startsWith('/');
+  }
+
   return path === root || path.startsWith(`${root}/`);
 }
 
@@ -129,13 +186,53 @@ function toSafeLogName(value) {
   return value.replaceAll(':', '-').replaceAll('.', '-');
 }
 
-async function writeAgentCommandLog(payload) {
-  await mkdir(agentLogDirectory, { recursive: true });
+async function writeAgentCommandLog(payload, logDirectory = agentLogDirectory) {
+  await mkdir(logDirectory, { recursive: true });
   const startedAt = typeof payload.startedAt === 'string' ? payload.startedAt : new Date().toISOString();
-  const logFilePath = join(agentLogDirectory, `${toSafeLogName(startedAt)}-agent-command-${randomUUID()}.json`);
+  const logFilePath = join(logDirectory, `${toSafeLogName(startedAt)}-agent-command-${randomUUID()}.json`);
   await mkdir(dirname(logFilePath), { recursive: true });
   await writeFile(logFilePath, JSON.stringify({ ...payload, hostLogFilePath: logFilePath }, null, 2));
   return logFilePath;
+}
+
+function toCommandTarget(value) {
+  const key = typeof value === 'string' && value.trim() ? value.trim() : 'local';
+  return commandTargets[key] ?? null;
+}
+
+function shellQuote(value) {
+  return `'${String(value).replaceAll("'", "'\"'\"'")}'`;
+}
+
+function toSpawnPlan(target, cwd, command) {
+  if (target.kind === 'local') {
+    return {
+      command: target.shell,
+      args: [...target.shellArgs, command],
+      cwd,
+    };
+  }
+
+  if (target.kind === 'docker') {
+    return {
+      command: 'docker',
+      args: ['exec', '-w', cwd, target.container, target.shell, '-lc', command],
+      cwd: process.cwd(),
+    };
+  }
+
+  const remote = target.user ? `${target.user}@${target.host}` : target.host;
+  return {
+    command: 'ssh',
+    args: [
+      ...target.sshOptions,
+      '-p',
+      String(target.port),
+      remote,
+      `cd ${shellQuote(cwd)} && ${command}`,
+    ],
+    cwd: process.cwd(),
+  };
 }
 
 function runAgentCommand(body) {
@@ -146,11 +243,32 @@ function runAgentCommand(body) {
       return;
     }
 
-    const cwd = resolve(typeof body.cwd === 'string' && body.cwd.trim() ? body.cwd.trim() : agentDefaultCwd);
-    if (!isPathInside(cwd, agentRoot)) {
+    const target = toCommandTarget(body.target);
+    if (!target) {
+      resolveCommand({ statusCode: 400, payload: { error: `Unknown command target: ${body.target}` } });
+      return;
+    }
+
+    if (target.kind !== 'local' && !target.enabled) {
+      resolveCommand({
+        statusCode: 400,
+        payload: {
+          error: `Command target ${target.key} is disabled. Check bridge target configuration and connectivity.`,
+        },
+      });
+      return;
+    }
+
+    const cwd =
+      target.kind === 'local'
+        ? resolve(typeof body.cwd === 'string' && body.cwd.trim() ? body.cwd.trim() : target.defaultCwd)
+        : typeof body.cwd === 'string' && body.cwd.trim()
+          ? body.cwd.trim()
+          : target.defaultCwd;
+    if (!isPathInside(cwd, target.root)) {
       resolveCommand({
         statusCode: 403,
-        payload: { error: `Command cwd must be inside ${agentRoot}` },
+        payload: { error: `Command cwd must be inside ${target.root} for target ${target.key}` },
       });
       return;
     }
@@ -164,8 +282,9 @@ function runAgentCommand(body) {
         ? Math.min(Math.max(Math.trunc(body.maxOutputBytes), 1024), agentMaxOutputBytes)
         : agentMaxOutputBytes;
     const startedAt = new Date().toISOString();
-    const child = spawn('/bin/zsh', ['-lc', command], {
-      cwd,
+    const spawnPlan = toSpawnPlan(target, cwd, command);
+    const child = spawn(spawnPlan.command, spawnPlan.args, {
+      cwd: spawnPlan.cwd,
       env: process.env,
       shell: false,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -185,6 +304,8 @@ function runAgentCommand(body) {
       const finishedAt = new Date().toISOString();
       const payload = {
         status: 'error',
+        target: target.key,
+        targetKind: target.kind,
         command,
         cwd,
         exitCode: null,
@@ -196,7 +317,7 @@ function runAgentCommand(body) {
         finishedAt,
         durationMs: new Date(finishedAt).getTime() - new Date(startedAt).getTime(),
       };
-      const hostLogFilePath = await writeAgentCommandLog(payload);
+      const hostLogFilePath = await writeAgentCommandLog(payload, target.logDirectory);
       resolveCommand({ statusCode: 200, payload: { ...payload, hostLogFilePath } });
     });
     child.on('close', async (code) => {
@@ -208,6 +329,8 @@ function runAgentCommand(body) {
       const stderrText = truncateUtf8(stderrBuffer, maxOutputBytes);
       const payload = {
         status: timedOut ? 'timed_out' : code === 0 ? 'completed' : 'failed',
+        target: target.key,
+        targetKind: target.kind,
         command,
         cwd,
         exitCode: code,
@@ -227,7 +350,7 @@ function runAgentCommand(body) {
         ...payload,
         stdout: stdoutBuffer.toString('utf8'),
         stderr: stderrBuffer.toString('utf8'),
-      });
+      }, target.logDirectory);
       resolveCommand({ statusCode: 200, payload: { ...payload, hostLogFilePath } });
     });
   });
@@ -242,6 +365,7 @@ const server = http.createServer(async (request, response) => {
       agentRoot,
       agentDefaultCwd,
       agentLogDirectory,
+      commandTargets: Object.values(commandTargets).map(toCommandTargetSummary),
     });
     return;
   }

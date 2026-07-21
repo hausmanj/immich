@@ -37,6 +37,7 @@
     toolType?: 'content_hash_audit' | 'sidecar_pair_audit' | 'metadata_search' | 'mobile_original_compare' | null;
     toolInput?: Record<string, unknown> | null;
     command?: string | null;
+    target?: AgentCommandTarget | null;
     cwd?: string | null;
     timeoutSeconds?: number | null;
     confidence: number;
@@ -56,6 +57,7 @@
     messages: ChatMessage[];
     assessment: Assessment | null;
     terminalCommand?: string;
+    terminalTarget?: AgentCommandTarget;
     terminalCwd?: string;
     terminalEntries?: AgentTerminalEntry[];
   };
@@ -101,6 +103,8 @@
   type AssistantAgentCommandResponse = {
     status: 'disabled' | 'completed' | 'failed' | 'timed_out' | 'error';
     command: string;
+    target: AgentCommandTarget | null;
+    targetKind: string | null;
     cwd: string | null;
     exitCode: number | null;
     stdout: string;
@@ -118,6 +122,8 @@
   type AgentTerminalEntry = AssistantAgentCommandResponse & {
     id: string;
   };
+
+  type AgentCommandTarget = 'local' | 'synology' | 'immich';
 
   type AssessmentBucket = {
     label: string;
@@ -167,6 +173,7 @@
   let runningToolActionKey = $state<string | null>(null);
   let runningAgentCommand = $state(false);
   let terminalCommand = $state('');
+  let terminalTarget = $state<AgentCommandTarget>('local');
   let terminalCwd = $state('/Users/johnhausman/source/immich');
   let terminalTimeoutSeconds = $state(600);
   let terminalEntries = $state<AgentTerminalEntry[]>([]);
@@ -198,10 +205,25 @@
     { value: 'codex-cli', label: 'Codex' },
   ];
 
+  const agentTargetOptions: Array<{ value: AgentCommandTarget; label: string; defaultCwd: string }> = [
+    { value: 'local', label: 'Mac', defaultCwd: '/Users/johnhausman/source/immich' },
+    { value: 'synology', label: 'Synology', defaultCwd: '/volume1' },
+    { value: 'immich', label: 'Immich container', defaultCwd: '/usr/src/app' },
+  ];
+
   const assistantStateStorageKey = 'immich-assistant-conversation-v1';
   const assistantStateVersion = 1;
   const assistantStateMaxMessages = 80;
   const assistantTerminalMaxEntries = 25;
+
+  const isAgentCommandTarget = (value: unknown): value is AgentCommandTarget => {
+    return value === 'local' || value === 'synology' || value === 'immich';
+  };
+
+  const setTerminalTarget = (value: AgentCommandTarget) => {
+    terminalTarget = value;
+    terminalCwd = agentTargetOptions.find((option) => option.value === value)?.defaultCwd ?? terminalCwd;
+  };
 
   onMount(() => {
     loadAssistantState();
@@ -252,6 +274,7 @@
       messages = state.messages.length > 0 ? state.messages : messages;
       assessment = state.assessment ?? null;
       terminalCommand = typeof state.terminalCommand === 'string' ? state.terminalCommand : '';
+      terminalTarget = isAgentCommandTarget(state.terminalTarget) ? state.terminalTarget : terminalTarget;
       terminalCwd = typeof state.terminalCwd === 'string' ? state.terminalCwd : terminalCwd;
       terminalEntries = Array.isArray(state.terminalEntries) ? state.terminalEntries : [];
     } catch {
@@ -272,6 +295,7 @@
       messages: messages.slice(-assistantStateMaxMessages),
       assessment,
       terminalCommand,
+      terminalTarget,
       terminalCwd,
       terminalEntries: terminalEntries.slice(-assistantTerminalMaxEntries).map((entry) => toPersistedTerminalEntry(entry)),
     };
@@ -295,6 +319,8 @@
     prompt = '';
     assessment = null;
     terminalCommand = '';
+    terminalTarget = 'local';
+    terminalCwd = '/Users/johnhausman/source/immich';
     terminalEntries = [];
     if (browser) {
       localStorage.removeItem(assistantStateStorageKey);
@@ -608,7 +634,12 @@
     }
   };
 
-  const executeAgentCommand = async (commandInput: string, cwdInput?: string | null, timeoutSecondsInput?: number | null) => {
+  const executeAgentCommand = async (
+    commandInput: string,
+    cwdInput?: string | null,
+    timeoutSecondsInput?: number | null,
+    targetInput?: AgentCommandTarget | null,
+  ) => {
     const command = commandInput.trim();
     if (!command || runningAgentCommand) {
       return null;
@@ -623,6 +654,7 @@
         },
         body: JSON.stringify({
           command,
+          target: targetInput ?? terminalTarget,
           cwd: cwdInput?.trim() || terminalCwd.trim() || undefined,
           timeoutSeconds: timeoutSecondsInput ?? terminalTimeoutSeconds,
           maxOutputBytes: 1024 * 1024,
@@ -664,7 +696,7 @@
       return;
     }
 
-    const result = await executeAgentCommand(action.command, action.cwd, action.timeoutSeconds);
+    const result = await executeAgentCommand(action.command, action.cwd, action.timeoutSeconds, action.target);
     if (!result) {
       return;
     }
@@ -705,6 +737,7 @@
   const formatAgentCommandResult = (result: AssistantAgentCommandResponse) => {
     return [
       `Agent command completed with status ${result.status}.`,
+      `Target: ${result.target ?? 'local'}${result.targetKind ? ` (${result.targetKind})` : ''}`,
       `Command: ${result.command}`,
       `cwd: ${result.cwd ?? 'cwd unavailable'}`,
       `exitCode: ${result.exitCode === null ? 'n/a' : result.exitCode}`,
@@ -1011,7 +1044,7 @@
         const commandResults: AssistantAgentCommandResponse[] = [];
         for (const action of approvedAgentCommandActions) {
           if (action.command) {
-            const result = await executeAgentCommand(action.command, action.cwd, action.timeoutSeconds);
+            const result = await executeAgentCommand(action.command, action.cwd, action.timeoutSeconds, action.target);
             if (result) {
               commandResults.push(result);
             }
@@ -1310,6 +1343,19 @@
         </div>
         <div class="flex flex-wrap items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
           <label class="flex items-center gap-2">
+            target
+            <select
+              value={terminalTarget}
+              class="rounded-md border border-gray-300 bg-white px-2 py-1 text-xs text-gray-900 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100"
+              disabled={runningAgentCommand}
+              onchange={(event) => setTerminalTarget((event.currentTarget as HTMLSelectElement).value as AgentCommandTarget)}
+            >
+              {#each agentTargetOptions as option (option.value)}
+                <option value={option.value}>{option.label}</option>
+              {/each}
+            </select>
+          </label>
+          <label class="flex items-center gap-2">
             cwd
             <input
               bind:value={terminalCwd}
@@ -1334,7 +1380,7 @@
       <Textarea
         bind:value={terminalCommand}
         rows={3}
-        placeholder="Run an audited local command, for example: exiftool -ver"
+        placeholder="Run an audited command, for example: exiftool -ver"
         disabled={runningAgentCommand}
         onkeydown={onTerminalKeydown}
       />
@@ -1355,7 +1401,7 @@
                 $ {entry.command}
               </div>
               <div class="mt-1 text-gray-500">
-                {entry.cwd ?? 'cwd unavailable'} | {formatAgentStatus(entry)}
+                {entry.target ?? 'local'}{entry.targetKind ? ` (${entry.targetKind})` : ''} | {entry.cwd ?? 'cwd unavailable'} | {formatAgentStatus(entry)}
               </div>
               {#if entry.stdout}
                 <pre class="mt-2 overflow-x-auto whitespace-pre-wrap text-gray-100">{entry.stdout}{entry.stdoutTruncated ? '\n... stdout truncated inline; see log ...' : ''}</pre>

@@ -4,6 +4,11 @@ This file tracks local-only changes in this checkout that have not necessarily b
 
 ## 2026-07-19 - In-App Library Assistant Prototype
 
+- Added a comprehensive `AGENTS.md` current-memory checkpoint on 2026-07-21.
+  - Captures the user's actual target: Codex-level local/Synology operational agent capability for 1M-2M messy files, not a tagging assistant.
+  - Records exact Synology SSH access: `ssh -p 22222 hausmanj@drhaus`.
+  - Distinguishes committed host-bridge work from incomplete multi-target Synology WIP.
+  - Records the no-destructive-changes rule: impactful operations require typed journals, typed undo, and current-state recording.
 - Added the user's Synology-mounted laptop backup as a read-only dev-server external-library mount:
   - Host path: `/Volumes/laptop backup`
   - Container path for Immich external library import: `/external/laptop-backup`
@@ -73,6 +78,11 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - Added structured assistant `agent_command` actions so Claude/Codex can propose concrete audited shell commands. The web UI can run them from action cards or auto-execute them after approval text such as "go", "do it", or "execute", then feed the command result back into the conversation.
   - Purpose: give the in-app assistant workflow access to real local/Synology operations for EXIF tools, osxphotos probes, inventory, checksum/dedupe commands, and other 1M+ file assessment work while keeping source files untouched unless a command explicitly changes them.
   - Verified runtime smoke: a temporary `asset.read` API key ran `pwd && exiftool -ver || true` through `/api/assistant/agent-command`, returned exit code `0`, showed `exiftool` version `13.55`, wrote host and server command logs, and the temporary key was deleted.
+- Extended the audited agent terminal into a multi-target bridge for Mac/Synology/Immich-container operations.
+  - Added command targets: `local` for the Mac host, `synology` for `ssh -p 22222 hausmanj@drhaus`, and `immich` for `docker exec` into `immich_server`.
+  - Assistant `agent_command` actions and the manual Agent terminal can now choose a target; the selected target is persisted with the conversation.
+  - Bridge health reports the available command targets, and every command log records `target` and `targetKind`.
+  - This provides command/data transfer into the Immich container and out to Synology for large-library assessment, while Immich mutations still require typed journals and typed undo.
   - Temporarily commented the `/Volumes/laptop backup:/external/laptop-backup:ro` dev bind because the host volume was not mounted and Docker Desktop refused to recreate `immich-server` while the source path was absent. Re-enable it when the volume is mounted again.
 - Added an assistant provider selector in the web UI so chat can explicitly use Auto, Claude CLI, or Codex CLI.
   - Direct OpenAI and Anthropic API paths remain backend fallback plumbing, but are hidden from the Assistant UI to keep the tool focused on local Claude/Codex access.

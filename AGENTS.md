@@ -6,6 +6,68 @@
 - Do not assume mobile/iOS changes are untestable locally. The user has iPhone/simulator testing available and has used it recently.
 - Before finalizing iOS/mobile changes, try to run or ask to run the app on the available iPhone/simulator path when toolchain access is present.
 
+## Critical Current Memory - 2026-07-21
+
+- The user is not asking for a narrow "tagging" or description assistant. They want Codex-level operational capability inside Immich/Synology to assess, classify, deduplicate, and eventually organize extremely large messy photo/file libraries, potentially 1M to 2M files.
+- The correct mental model is a local AI operations layer for photo/library work:
+  - Immich is the UI and database surface.
+  - The assistant must be able to inspect real files and metadata using shell tools.
+  - The assistant must be able to use Mac host tools when that is fastest or required.
+  - The assistant must also be able to run commands directly on Synology over SSH for the largest folders, especially when data lives on the NAS and should not be copied over a slower path.
+  - A dedicated 10Gbps Mac-to-Synology path is acceptable. The user cares about capability and throughput, not whether the agent is strictly in Docker.
+- I previously implemented and committed a host-side audited command bridge, but that is not yet "100% terminal agent functionality" and should not be described as such.
+  - Committed bridge/API/UI work:
+    - `fd5d034 Add audited assistant agent terminal`
+    - `e0a5f70 Add assistant bridge launcher`
+  - Actual committed capability:
+    - `/assistant` has an Agent terminal panel.
+    - Immich server has `POST /assistant/agent-command`.
+    - `tools/assistant-cli-bridge.mjs` has `POST /command`.
+    - Commands run through the Mac host bridge, return stdout/stderr/exit code, and write host/server logs.
+    - `agent_command` actions can be proposed by Claude/Codex and can be executed from the UI or after approval text.
+  - Missing capability:
+    - no interactive PTY yet;
+    - no streaming output yet;
+    - no persistent named shell sessions yet;
+    - no pause/resume/cancel long-running job manager yet;
+    - no separate Synology-wide Docker agent service yet.
+- Current command bridge target model:
+  - `local`: Mac host commands under `/Users/johnhausman` by default; use this for host tools such as `exiftool`, `osxphotos`, local scripts, Docker CLI, and mounted Desktop paths.
+  - `synology`: Synology commands through exactly `ssh -p 22222 hausmanj@drhaus`, rooted at `/volume1` by default; use this for NAS-resident bulk file inventory, hashing, metadata extraction, and reports.
+  - `immich`: commands inside the running Immich server container via `docker exec -w <cwd> immich_server /bin/bash -lc <command>`; use this for `/usr/src/app`, `/data`, and container-visible `/external` mount checks.
+  - The Assistant web Agent terminal persists the selected target, cwd, command transcript, and log paths in browser storage.
+  - Assistant `agent_command` actions may specify `target`, `cwd`, and `timeoutSeconds`; target defaults to `local`.
+  - This is still an audited command bridge, not a full interactive terminal agent. Long-running/resumable PTY sessions remain future work.
+- Exact Synology SSH access is critical and should not be inferred:
+  - Use exactly `ssh -p 22222 hausmanj@drhaus`.
+  - In this managed shell, SSH/network may require `sandbox_permissions: "require_escalated"`.
+  - Verified with escalation on 2026-07-21:
+    - command: `ssh -o BatchMode=yes -o ConnectTimeout=10 -p 22222 hausmanj@drhaus 'pwd && uname -a && ls -ld /volume1 /volume1/docker 2>/dev/null || true'`
+    - home: `/volume1/homes/hausmanj`
+    - host: `DrHaus`
+    - kernel/platform: Synology `synology_v1000_1821+`
+    - `/volume1` exists
+    - `/volume1/docker` exists
+  - Do not substitute `localhost:22222`, inferred hostnames, Tailscale IPs, old known-host addresses, or `Host drhaus` assumptions unless the exact command above fails and the user explicitly changes the route.
+- The user explicitly does not want repeated user prompts while implementing. Continue autonomously when safe, especially for local code changes, audits, and non-destructive verification. Ask only for true blockers.
+- The user explicitly objected to repeated lint checks before the capability is finished. Avoid lint loops during active implementation. Use focused TypeScript/runtime checks when the feature is coherent, then final validation before commit.
+- Source files and external libraries must remain untouched unless the user explicitly approves a specific impactful operation. For any future impactful tool, including metadata edits, stack changes, archive/favorite changes, folder moves, or duplicate resolution, require:
+  - typed pre-change journal,
+  - typed undo strategy,
+  - clear current-state recording,
+  - no silent skipping or destructive behavior.
+- Laptop-backup context:
+  - The user expects to "unleash picture hell": icons, thumbnails, movie art, copied folders, Google Takeout, iMazing backups, app folders, documents, raw photos, rendered copies, and real photos/videos all mixed together.
+  - The organization engine must not make daily albums from broad folders or leave no-GPS assets unaddressed.
+  - It must decompose broad source containers into event/source/date/camera/noise/risk cohorts and keep reversible review queues before destructive organization.
+  - For old libraries, GPS is sparse and must be treated as an anchor only; source paths, dates, camera clocks, dimensions, file sizes, EXIF, sidecars, and content hashes are the backbone.
+- Current dev compose state:
+  - `/Volumes/laptop backup:/external/laptop-backup:ro` is currently commented out in `docker/docker-compose.dev.yml` because the host volume was not mounted and Docker Desktop refused to start `immich-server`.
+  - Re-enable it only after `/Volumes/laptop backup` is mounted again.
+- Secrets:
+  - Never print or commit secrets from `docker/.env`.
+  - `docker/.env` contains real local provider credentials and must be treated as sensitive.
+
 ## Current iOS Original-File Experiment
 
 - The local patch is intentionally conservative: prefer unedited iOS Photos base files when available, log adjusted-asset decisions in detail, and fall back to the existing export path rather than silently skipping content.
@@ -94,6 +156,10 @@
   - keep the mount read-only;
   - expect huge scale and noisy content, including icons, thumbnails, caches, duplicate exports, app folders, document trees, and mixed originals/renders;
   - prefer resumable inventory/classification tools before broad Immich import or album generation.
+- For direct Synology access, use exactly:
+  - `ssh -p 22222 hausmanj@drhaus`
+  - Verified from this environment with escalation on 2026-07-21: home `/volume1/homes/hausmanj`, host `DrHaus`, and `/volume1/docker` exists.
+  - Do not substitute localhost tunnels, inferred hostnames, or old known-host addresses unless this exact command fails and the user explicitly changes the route.
 - Next assistant indexing implementation should prioritize making persisted index runs resumable/backgrounded over live synchronous execution:
   - improve index runs from synchronous SQL pass to queued/resumable background jobs with cancel/resume;
   - add event/group findings and coverage ledger proving every item is covered, deferred, risky, or unclassified.

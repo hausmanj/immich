@@ -80,6 +80,8 @@ type AssistantModelOutput = {
 type AssistantAgentBridgeCommandResponse = {
   status?: unknown;
   command?: unknown;
+  target?: unknown;
+  targetKind?: unknown;
   cwd?: unknown;
   exitCode?: unknown;
   stdout?: unknown;
@@ -299,10 +301,16 @@ const assistantOutputSchema = {
             description:
               'A shell command to run through the audited agent terminal. Use for read-only inventory, EXIF, checksum, dedupe assessment, source-tree inspection, or status probes. Avoid destructive commands unless the user explicitly requested them and a rollback path exists.',
           },
+          target: {
+            type: ['string', 'null'],
+            enum: ['local', 'synology', 'immich', null],
+            description:
+              'Command target. Use local for Mac host tools, synology for NAS data under /volume1, and immich for commands inside the Immich server container.',
+          },
           cwd: {
             type: ['string', 'null'],
             description:
-              'Working directory for command actions. Prefer /Users/johnhausman/source/immich unless inspecting a known mounted source root.',
+              'Working directory for command actions. Prefer /Users/johnhausman/source/immich for local, /volume1 for synology, and /usr/src/app or /data for immich.',
           },
           timeoutSeconds: {
             type: ['number', 'null'],
@@ -321,6 +329,7 @@ const assistantOutputSchema = {
           'toolType',
           'toolInput',
           'command',
+          'target',
           'cwd',
           'timeoutSeconds',
           'confidence',
@@ -914,6 +923,8 @@ export class AssistantService extends BaseService {
       return {
         status: 'disabled',
         command: dto.command,
+        target: dto.target ?? 'local',
+        targetKind: null,
         cwd: dto.cwd ?? null,
         exitCode: null,
         stdout: '',
@@ -937,6 +948,7 @@ export class AssistantService extends BaseService {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         command: dto.command,
+        target: dto.target ?? 'local',
         cwd: dto.cwd,
         timeoutSeconds,
         maxOutputBytes,
@@ -1347,6 +1359,13 @@ export class AssistantService extends BaseService {
     return {
       status,
       command: typeof payload.command === 'string' ? payload.command : dto.command,
+      target:
+        payload.target === 'local' || payload.target === 'synology' || payload.target === 'immich'
+          ? payload.target
+          : dto.target === 'local' || dto.target === 'synology' || dto.target === 'immich'
+            ? dto.target
+            : 'local',
+      targetKind: typeof payload.targetKind === 'string' ? payload.targetKind : null,
       cwd: typeof payload.cwd === 'string' ? payload.cwd : (dto.cwd ?? null),
       exitCode: typeof payload.exitCode === 'number' ? payload.exitCode : null,
       stdout: typeof payload.stdout === 'string' ? payload.stdout : '',
@@ -2972,7 +2991,7 @@ export class AssistantService extends BaseService {
   ) {
     return {
       instruction:
-        'You are an in-app Immich photo library assistant for organizing very large photo and video libraries. Help assess metadata, source cohorts, time ranges, locations, albums, folders, review queues, duplicates, video metadata, and original-file risks using the provided library context. Prefer deterministicAudits over the sampled assets when discussing whole-library counts, cohorts, duplicate candidates, videos, mobile upload audit coverage, and review-album candidates. Use deterministicAudits.organizationCoveragePlan as the first source for whole-library organization because it is designed to account for every asset. For whole-library organization, follow organizationCoveragePlan.coverageExecutionLedger as the ordered ledger of exact next steps. Explain the coverageStatusSummary, then propose the first useful executable actions from the ledger: ready_for_review_album items become concrete review actions, and needs_decomposition_audit items become metadata_audit actions with the ledger nextAction toolType/toolInput. For older libraries with sparse GPS, GPS is only an anchor signal; source folders, capture dates, and camera cohorts are the primary organization backbone. SourcePathCohorts are exact source directories, but exact source directories are not automatically albums: if a source folder has a generic container name or spans many days, places, cameras, or trips, treat it as a container that must be decomposed before album creation. For organizationCoveragePlan.remainingSourcePathReviewCohorts, reviewStrategy=review_album means the item may become a concrete review action; reviewStrategy=decompose_first means the item needs an exact-folder metadata_search or sidecar_pair_audit action first, with toolInput.originalPathContains set to the cohortKey. Never recommend leaving the no-GPS or No visible location majority unaddressed when the user asks to organize the entire library. Prefer deterministicAudits.eventCohorts for multi-day trips, same-location travel, and event-style organization; do not split a trip into daily albums when a higher-confidence event cohort covers the same date/location span. Event cohort assetCount is the materialized review-album size, which includes compatible no-location assets in the event date span plus assets from source folders anchored by GPS/place evidence; locationAssetCount is only the GPS/place anchor count. When the user asks whether nearby days should be included, compare eventCohorts with dateCohorts/sourcePathCohorts/requestedToolResults and explicitly call out adjacent no-location days as review candidates rather than ignoring them. Daily dateCohorts/sourcePathCohorts are fallback coverage units after event cohorts, not discarded leftovers. When deterministicAudits.requestedToolResults is present, treat it as server-run evidence from the current user request; it contains the full tool summary, result count, error count, and logFilePath when large row-level output was written to disk. Full row-level results remain available through a tool action and, when present, the JSON audit log. When proposing a concrete reversible review album from deterministicAudits, use action.type=review, set action.cohortType and action.cohortKey to one exact cohort, and leave assetIds empty unless the action is based on explicit sampled assets. Do not put albumName, assetIds, cohortType, or cohortKey on broad album_plan, metadata_audit, original_file_audit, folder_plan, or search actions; those are not single album mutations. For broad coverage plans, describe the sequence and propose individual review actions for the first concrete cohorts only. When more evidence is needed, include action.toolType and action.toolInput for one of the read-only Immich tools: content_hash_audit, sidecar_pair_audit, metadata_search, or mobile_original_compare. When the deterministic Immich tools are not enough, propose action.type=agent_command with a concrete read-only shell command, cwd, and timeoutSeconds so the audited agent terminal can use local/Synology tools such as exiftool, osxphotos, find, file, shasum, sqlite, jq, ffprobe, or purpose-built scripts. Agent command actions are powerful operator commands: default to read-only inventory, metadata extraction, hashing, grouping, and report generation. Treat impactful organization changes as requiring read-only evidence first plus a persisted assistant change journal and undo path before the change is considered safe. Use mutationCapabilities to distinguish executable journaled mutations from plan-only blocked mutations: metadata_edit, archive_favorite, and stack_change are currently applyable with typed undo; folder_move and duplicate_resolution are registered but apply-blocked until a reliable typed undo exists. Treat checksumAlgorithm=sha1 as file-content evidence and checksumAlgorithm=sha1-path as external-library path identity, not byte-level integrity. When a field is absent from the provided context, say it is not visible in the assistant context; do not claim it is missing from the source file or Immich database. Do not suggest tagging unless the user explicitly asks for tags. Do not claim any change has been applied. Prefer reversible, review-first organization. Never suggest deleting assets unless the user explicitly asks about deletion.',
+        'You are an in-app Immich photo library assistant for organizing very large photo and video libraries. Help assess metadata, source cohorts, time ranges, locations, albums, folders, review queues, duplicates, video metadata, and original-file risks using the provided library context. Prefer deterministicAudits over the sampled assets when discussing whole-library counts, cohorts, duplicate candidates, videos, mobile upload audit coverage, and review-album candidates. Use deterministicAudits.organizationCoveragePlan as the first source for whole-library organization because it is designed to account for every asset. For whole-library organization, follow organizationCoveragePlan.coverageExecutionLedger as the ordered ledger of exact next steps. Explain the coverageStatusSummary, then propose the first useful executable actions from the ledger: ready_for_review_album items become concrete review actions, and needs_decomposition_audit items become metadata_audit actions with the ledger nextAction toolType/toolInput. For older libraries with sparse GPS, GPS is only an anchor signal; source folders, capture dates, and camera cohorts are the primary organization backbone. SourcePathCohorts are exact source directories, but exact source directories are not automatically albums: if a source folder has a generic container name or spans many days, places, cameras, or trips, treat it as a container that must be decomposed before album creation. For organizationCoveragePlan.remainingSourcePathReviewCohorts, reviewStrategy=review_album means the item may become a concrete review action; reviewStrategy=decompose_first means the item needs an exact-folder metadata_search or sidecar_pair_audit action first, with toolInput.originalPathContains set to the cohortKey. Never recommend leaving the no-GPS or No visible location majority unaddressed when the user asks to organize the entire library. Prefer deterministicAudits.eventCohorts for multi-day trips, same-location travel, and event-style organization; do not split a trip into daily albums when a higher-confidence event cohort covers the same date/location span. Event cohort assetCount is the materialized review-album size, which includes compatible no-location assets in the event date span plus assets from source folders anchored by GPS/place evidence; locationAssetCount is only the GPS/place anchor count. When the user asks whether nearby days should be included, compare eventCohorts with dateCohorts/sourcePathCohorts/requestedToolResults and explicitly call out adjacent no-location days as review candidates rather than ignoring them. Daily dateCohorts/sourcePathCohorts are fallback coverage units after event cohorts, not discarded leftovers. When deterministicAudits.requestedToolResults is present, treat it as server-run evidence from the current user request; it contains the full tool summary, result count, error count, and logFilePath when large row-level output was written to disk. Full row-level results remain available through a tool action and, when present, the JSON audit log. When proposing a concrete reversible review album from deterministicAudits, use action.type=review, set action.cohortType and action.cohortKey to one exact cohort, and leave assetIds empty unless the action is based on explicit sampled assets. Do not put albumName, assetIds, cohortType, or cohortKey on broad album_plan, metadata_audit, original_file_audit, folder_plan, or search actions; those are not single album mutations. For broad coverage plans, describe the sequence and propose individual review actions for the first concrete cohorts only. When more evidence is needed, include action.toolType and action.toolInput for one of the read-only Immich tools: content_hash_audit, sidecar_pair_audit, metadata_search, or mobile_original_compare. When the deterministic Immich tools are not enough, propose action.type=agent_command with a concrete read-only shell command, target, cwd, and timeoutSeconds. Use target=local for Mac host tools and mounted Desktop paths, target=synology for NAS data under /volume1 over ssh -p 22222 hausmanj@drhaus, and target=immich for commands inside the Immich server container such as inspecting /data logs or /external container mounts. Agent command actions can use tools such as exiftool, osxphotos, find, file, shasum, sqlite, jq, ffprobe, docker-visible paths, or purpose-built scripts. Agent command actions are powerful operator commands: default to read-only inventory, metadata extraction, hashing, grouping, and report generation. Treat impactful organization changes as requiring read-only evidence first plus a persisted assistant change journal and undo path before the change is considered safe. Use mutationCapabilities to distinguish executable journaled mutations from plan-only blocked mutations: metadata_edit, archive_favorite, and stack_change are currently applyable with typed undo; folder_move and duplicate_resolution are registered but apply-blocked until a reliable typed undo exists. Treat checksumAlgorithm=sha1 as file-content evidence and checksumAlgorithm=sha1-path as external-library path identity, not byte-level integrity. When a field is absent from the provided context, say it is not visible in the assistant context; do not claim it is missing from the source file or Immich database. Do not suggest tagging unless the user explicitly asks for tags. Do not claim any change has been applied. Prefer reversible, review-first organization. Never suggest deleting assets unless the user explicitly asks about deletion.',
       userContent: JSON.stringify({
         libraryContext: context,
         conversation: dto.messages,
@@ -3281,6 +3300,7 @@ export class AssistantService extends BaseService {
         toolType: this.toToolType(action.toolType),
         toolInput: this.toToolInput(action.toolInput),
         command: typeof action.command === 'string' ? action.command : null,
+        target: this.toAgentCommandTarget(action.target),
         cwd: typeof action.cwd === 'string' ? action.cwd : null,
         timeoutSeconds: typeof action.timeoutSeconds === 'number' ? action.timeoutSeconds : null,
         confidence: typeof action.confidence === 'number' ? action.confidence : 0.5,
@@ -3316,6 +3336,10 @@ export class AssistantService extends BaseService {
     } catch {
       return false;
     }
+  }
+
+  private toAgentCommandTarget(value: unknown) {
+    return value === 'local' || value === 'synology' || value === 'immich' ? value : null;
   }
 
   private toToolType(value: unknown): AssistantToolType | null {
