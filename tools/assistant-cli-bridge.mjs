@@ -2,7 +2,7 @@
 
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import { dirname, join, resolve } from 'node:path';
 
@@ -73,6 +73,199 @@ const providers = {
     timeoutSeconds: Number.parseInt(process.env.ASSISTANT_BRIDGE_CODEX_TIMEOUT_SECONDS ?? '240', 10),
   },
 };
+
+const agentStream = {
+  command: process.env.ASSISTANT_BRIDGE_AGENT_STREAM_COMMAND ?? 'claude',
+  baseArgs: parseArgs(process.env.ASSISTANT_BRIDGE_AGENT_STREAM_ARGS, [
+    '--print',
+    '--output-format',
+    'stream-json',
+    '--verbose',
+  ]),
+  model: process.env.ASSISTANT_BRIDGE_AGENT_STREAM_MODEL ?? '',
+  defaultCwd: resolve(process.env.ASSISTANT_BRIDGE_AGENT_STREAM_CWD ?? agentDefaultCwd),
+  defaultPermissionMode: process.env.ASSISTANT_BRIDGE_AGENT_STREAM_PERMISSION_MODE ?? 'default',
+  timeoutSeconds: Number.parseInt(process.env.ASSISTANT_BRIDGE_AGENT_STREAM_TIMEOUT_SECONDS ?? '3600', 10),
+  heartbeatMs: Number.parseInt(process.env.ASSISTANT_BRIDGE_AGENT_STREAM_HEARTBEAT_MS ?? '15000', 10),
+};
+
+const agentStreamCodex = {
+  command: process.env.ASSISTANT_BRIDGE_AGENT_STREAM_CODEX_COMMAND ?? 'codex',
+};
+
+// ── Rolling context checkpoint ────────────────────────────────────────────────
+// Each agent-stream turn spawns a fresh `claude --print --resume <id>`; because that is a separate
+// process every turn, there is no prompt-cache carryover and the whole growing transcript is re-sent
+// uncached, so cost grows ~quadratically with conversation length. To bound it, we track each session's
+// context size and, once it crosses a threshold, summarize the session to a durable file and reseed a
+// FRESH (small) session from that summary. This is transparent to the console, which already adopts the
+// new session_id from the stream's init/result events.
+const sessionStateDir = resolve(
+  process.env.ASSISTANT_BRIDGE_SESSION_STATE_DIR ?? join(dirname(agentLogDirectory), 'assistant-agent-sessions'),
+);
+const sessionStateFile = join(sessionStateDir, 'sessions.json');
+const checkpointTokens = Number.parseInt(process.env.ASSISTANT_BRIDGE_CHECKPOINT_TOKENS ?? '120000', 10);
+const checkpointTurns = Number.parseInt(process.env.ASSISTANT_BRIDGE_CHECKPOINT_TURNS ?? '40', 10);
+const checkpointSummaryTimeoutSeconds = Number.parseInt(
+  process.env.ASSISTANT_BRIDGE_CHECKPOINT_SUMMARY_TIMEOUT_SECONDS ?? '180',
+  10,
+);
+const checkpointModel = (process.env.ASSISTANT_BRIDGE_CHECKPOINT_MODEL ?? '').trim();
+const checkpointEnabled = (process.env.ASSISTANT_BRIDGE_CHECKPOINT_ENABLED ?? '1') !== '0';
+const summaryPrompt =
+  'Produce a concise but COMPLETE handoff summary of THIS session so a brand-new session can continue ' +
+  'with no other context. Include: the user goal(s); key decisions, constraints and preferences; what has ' +
+  'been done so far; the current state; any open background jobs with their handles/paths (e.g. progress ' +
+  'files, plan/journal files); important file paths; and the exact next steps. Use compact markdown. Do ' +
+  'not ask questions and do not use tools — output only the summary text.';
+
+// sessionId -> { engine, cwd, turnCount, contextTokens, createdAt, updatedAt, checkpointedFrom }
+const sessionState = new Map();
+
+async function loadSessionState() {
+  try {
+    const raw = await readFile(sessionStateFile, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && parsed.sessions) {
+      for (const [id, value] of Object.entries(parsed.sessions)) sessionState.set(id, value);
+    }
+  } catch {
+    // No prior state (first run) or unreadable — start empty.
+  }
+}
+
+async function saveSessionState() {
+  try {
+    await mkdir(sessionStateDir, { recursive: true });
+    const sessions = Object.fromEntries(sessionState);
+    const tmp = `${sessionStateFile}.tmp`;
+    await writeFile(tmp, JSON.stringify({ updatedAt: new Date().toISOString(), sessions }, null, 2));
+    const { rename } = await import('node:fs/promises');
+    await rename(tmp, sessionStateFile);
+  } catch {
+    // Persistence is best-effort; in-memory state still governs this bridge lifetime.
+  }
+}
+
+function needsCheckpoint(state) {
+  if (!checkpointEnabled || !state) return false;
+  if (checkpointTokens > 0 && typeof state.contextTokens === 'number' && state.contextTokens >= checkpointTokens) {
+    return true;
+  }
+  if (checkpointTurns > 0 && typeof state.turnCount === 'number' && state.turnCount >= checkpointTurns) {
+    return true;
+  }
+  return false;
+}
+
+function checkpointReason(state) {
+  if (checkpointTokens > 0 && typeof state.contextTokens === 'number' && state.contextTokens >= checkpointTokens) {
+    return 'tokens';
+  }
+  return 'turns';
+}
+
+// Parse a completed turn's stream-json transcript for the resulting session id and its context size.
+function parseTurnResult(engine, transcript) {
+  let sessionId = null;
+  let contextTokens = null;
+  for (let i = transcript.length - 1; i >= 0; i--) {
+    let event;
+    try {
+      event = JSON.parse(transcript[i]);
+    } catch {
+      continue;
+    }
+    if (engine === 'codex') {
+      if (!sessionId && event.type === 'thread.started' && event.thread_id) sessionId = event.thread_id;
+      if (contextTokens === null && event.usage && typeof event.usage.input_tokens === 'number') {
+        contextTokens = event.usage.input_tokens + (event.usage.cached_input_tokens ?? 0);
+      }
+    } else {
+      if (event.type === 'result') {
+        if (event.session_id) sessionId = event.session_id;
+        const u = event.usage ?? {};
+        contextTokens =
+          (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0);
+      } else if (!sessionId && event.type === 'system' && event.subtype === 'init' && event.session_id) {
+        sessionId = event.session_id;
+      }
+    }
+    if (sessionId && contextTokens !== null) break;
+  }
+  return { sessionId, contextTokens };
+}
+
+// Capture the full stdout of a one-shot child (used for the summarization pre-step).
+function spawnCapture(command, args, { cwd, input, timeoutSeconds }) {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const child = spawn(command, args, { cwd, env: process.env, shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGTERM');
+    }, Math.max(1, timeoutSeconds) * 1000);
+    child.stdout.on('data', (c) => (stdout += c.toString('utf8')));
+    child.stderr.on('data', (c) => (stderr += c.toString('utf8')));
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      rejectPromise(error);
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (timedOut) rejectPromise(new Error('summarization timed out'));
+      else resolvePromise({ code, stdout, stderr });
+    });
+    child.stdin.end(input);
+  });
+}
+
+// Ask the engine to summarize the session we are about to abandon, returning plain text.
+async function summarizeSession(engine, sessionId, cwd) {
+  if (engine === 'codex') {
+    const args = ['exec', 'resume', '--skip-git-repo-check', sessionId, '-'];
+    const { stdout } = await spawnCapture(agentStreamCodex.command, args, {
+      cwd,
+      input: summaryPrompt,
+      timeoutSeconds: checkpointSummaryTimeoutSeconds,
+    });
+    return stdout.trim();
+  }
+  const args = ['--print', '--output-format', 'text', '--resume', sessionId];
+  if (checkpointModel) args.push('--model', checkpointModel);
+  const { stdout } = await spawnCapture(agentStream.command, args, {
+    cwd,
+    input: summaryPrompt,
+    timeoutSeconds: checkpointSummaryTimeoutSeconds,
+  });
+  return stdout.trim();
+}
+
+async function writeCheckpointFile(sessionId, summary, engine) {
+  await mkdir(sessionStateDir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const file = join(sessionStateDir, `session-${engine}-${sessionId.slice(0, 8)}-${stamp}.md`);
+  const header = `# Session checkpoint\n\n- engine: ${engine}\n- priorSessionId: ${sessionId}\n- checkpointedAt: ${new Date().toISOString()}\n\n`;
+  await writeFile(file, header + summary + '\n');
+  return file;
+}
+
+function buildReseedPreamble(summary, priorSessionId, checkpointFile) {
+  return (
+    '[Session continuity] You are continuing a longer conversation that was automatically checkpointed to ' +
+    'keep context small and token-efficient. The full prior transcript is intentionally NOT loaded; the ' +
+    'authoritative handoff summary below (also saved at ' +
+    checkpointFile +
+    ') captures everything so far. Continue seamlessly and treat it as the source of truth for what has ' +
+    'already happened. Prior session id: ' +
+    priorSessionId +
+    '.\n\n===== HANDOFF SUMMARY =====\n' +
+    summary +
+    '\n===== END HANDOFF SUMMARY =====\n'
+  );
+}
 
 function parseArgs(value, defaults) {
   return value
@@ -411,16 +604,292 @@ function runAgentCommand(body) {
   });
 }
 
+async function writeAgentStreamLog(payload) {
+  await mkdir(agentLogDirectory, { recursive: true });
+  const startedAt = typeof payload.startedAt === 'string' ? payload.startedAt : new Date().toISOString();
+  const logFilePath = join(agentLogDirectory, `${toSafeLogName(startedAt)}-agent-stream-${payload.runId ?? randomUUID()}.json`);
+  await mkdir(dirname(logFilePath), { recursive: true });
+  await writeFile(logFilePath, JSON.stringify({ ...payload, hostLogFilePath: logFilePath }, null, 2));
+  return logFilePath;
+}
+
+function buildAgentStreamArgs(body) {
+  const args = [...agentStream.baseArgs];
+  const model = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : agentStream.model;
+  if (model) args.push('--model', model);
+  const permissionMode =
+    typeof body.permissionMode === 'string' && body.permissionMode.trim()
+      ? body.permissionMode.trim()
+      : agentStream.defaultPermissionMode;
+  if (permissionMode) args.push('--permission-mode', permissionMode);
+  if (typeof body.sessionId === 'string' && body.sessionId.trim()) args.push('--resume', body.sessionId.trim());
+  if (Array.isArray(body.allowedTools) && body.allowedTools.length) {
+    args.push('--allowedTools', ...body.allowedTools.map(String));
+  }
+  if (Array.isArray(body.disallowedTools) && body.disallowedTools.length) {
+    args.push('--disallowedTools', ...body.disallowedTools.map(String));
+  }
+  if (typeof body.appendSystemPrompt === 'string' && body.appendSystemPrompt.trim()) {
+    args.push('--append-system-prompt', body.appendSystemPrompt);
+  }
+  if (Array.isArray(body.addDirs)) {
+    for (const dir of body.addDirs) {
+      if (typeof dir === 'string' && dir.trim()) args.push('--add-dir', dir.trim());
+    }
+  }
+  if (typeof body.mcpConfig === 'string' && body.mcpConfig.trim()) args.push('--mcp-config', body.mcpConfig.trim());
+  if (body.strictMcpConfig === true) args.push('--strict-mcp-config');
+  if (body.dangerouslySkipPermissions === true) args.push('--dangerously-skip-permissions');
+  return args;
+}
+
+function buildCodexArgs(body, cwd) {
+  // Older assistant used `codex exec -` (stdin); streaming uses `codex exec --json`.
+  const args = ['exec'];
+  const resumeSessionId = typeof body.sessionId === 'string' && body.sessionId.trim() ? body.sessionId.trim() : '';
+  if (resumeSessionId) args.push('resume');
+  args.push('--json', '--skip-git-repo-check');
+  if (!resumeSessionId) args.push('-C', cwd);
+  const bypass =
+    body.dangerouslySkipPermissions === true ||
+    (typeof body.permissionMode === 'string' && body.permissionMode.toLowerCase().indexOf('bypass') >= 0);
+  if (bypass) args.push('--dangerously-bypass-approvals-and-sandbox');
+  const codexModel =
+    typeof body.codexModel === 'string' && body.codexModel.trim()
+      ? body.codexModel.trim()
+      : (process.env.ASSISTANT_BRIDGE_AGENT_STREAM_CODEX_MODEL ?? 'gpt-5.6-sol');
+  if (codexModel) args.push('-m', codexModel);
+  const effort = typeof body.codexEffort === 'string' && body.codexEffort.trim() ? body.codexEffort.trim() : 'high';
+  args.push('-c', 'model_reasoning_effort="' + effort + '"');
+  if (resumeSessionId) args.push(resumeSessionId, '-');
+  return args;
+}
+
+async function runAgentStream(response, body) {
+  const requestedCwd = typeof body.cwd === 'string' && body.cwd.trim() ? resolve(body.cwd.trim()) : agentStream.defaultCwd;
+  const cwd = isPathInside(requestedCwd, agentRoot) ? requestedCwd : agentStream.defaultCwd;
+  const timeoutSeconds =
+    typeof body.timeoutSeconds === 'number' && Number.isFinite(body.timeoutSeconds)
+      ? Math.min(Math.max(Math.trunc(body.timeoutSeconds), 1), agentMaxTimeoutSeconds)
+      : agentStream.timeoutSeconds;
+  const engine = body.engine === 'codex' ? 'codex' : 'claude';
+  const runId = randomUUID();
+  const startedAt = new Date().toISOString();
+
+  response.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+
+  const sse = (event, data) => {
+    if (response.writableEnded) return;
+    if (event) response.write(`event: ${event}\n`);
+    response.write(`data: ${typeof data === 'string' ? data : JSON.stringify(data)}\n\n`);
+  };
+
+  // ── Rolling checkpoint pre-step: if the session we are about to resume has grown past the threshold,
+  // summarize it to a durable file and reseed a fresh session from that summary instead of resuming.
+  const priorSessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : '';
+  let didCheckpoint = false;
+  if (priorSessionId) {
+    const priorState = sessionState.get(priorSessionId);
+    if (needsCheckpoint(priorState)) {
+      sse('bridge_checkpoint', {
+        status: 'summarizing',
+        priorSessionId,
+        reason: checkpointReason(priorState),
+        contextTokens: priorState.contextTokens ?? null,
+        turnCount: priorState.turnCount ?? null,
+      });
+      try {
+        const summary = await summarizeSession(engine, priorSessionId, cwd);
+        if (summary && summary.length > 0) {
+          const checkpointFile = await writeCheckpointFile(priorSessionId, summary, engine);
+          const preamble = buildReseedPreamble(summary, priorSessionId, checkpointFile);
+          const existingAppend =
+            typeof body.appendSystemPrompt === 'string' && body.appendSystemPrompt.trim()
+              ? '\n\n' + body.appendSystemPrompt
+              : '';
+          body = { ...body, sessionId: '', appendSystemPrompt: preamble + existingAppend };
+          didCheckpoint = true;
+          sse('bridge_checkpoint', { status: 'reseeded', priorSessionId, checkpointFile, summaryChars: summary.length });
+        } else {
+          sse('bridge_checkpoint', { status: 'summary_empty', priorSessionId });
+        }
+      } catch (error) {
+        // Fail safe: if summarization fails, keep resuming the old session rather than lose context.
+        sse('bridge_checkpoint', { status: 'summary_failed', priorSessionId, error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+  }
+
+  const command = engine === 'codex' ? agentStreamCodex.command : agentStream.command;
+  const args = engine === 'codex' ? buildCodexArgs(body, cwd) : buildAgentStreamArgs(body);
+  const stdinInput =
+    engine === 'codex' && typeof body.appendSystemPrompt === 'string' && body.appendSystemPrompt.trim()
+      ? body.appendSystemPrompt + '\n\n==== USER REQUEST ====\n\n' + body.input
+      : body.input;
+
+  sse('bridge_start', { runId, startedAt, engine, command, args, cwd, timeoutSeconds, checkpointed: didCheckpoint });
+
+  const child = spawn(command, args, { cwd, env: process.env, shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
+  const transcript = [];
+  let stdoutBuf = '';
+  let stderrText = '';
+  let timedOut = false;
+
+  const heartbeat = setInterval(() => {
+    if (!response.writableEnded) response.write(': ping\n\n');
+  }, agentStream.heartbeatMs);
+  const timer = setTimeout(() => {
+    timedOut = true;
+    child.kill('SIGTERM');
+  }, timeoutSeconds * 1000);
+
+  response.on('close', () => {
+    if (child.exitCode === null && !child.killed) child.kill('SIGTERM');
+  });
+
+  child.stdout.on('data', (chunk) => {
+    stdoutBuf += chunk.toString('utf8');
+    let idx;
+    while ((idx = stdoutBuf.indexOf('\n')) >= 0) {
+      const line = stdoutBuf.slice(0, idx).trim();
+      stdoutBuf = stdoutBuf.slice(idx + 1);
+      if (!line) continue;
+      transcript.push(line);
+      sse(null, line);
+    }
+  });
+  child.stderr.on('data', (chunk) => {
+    const text = chunk.toString('utf8');
+    stderrText += text;
+    sse('stderr', { text });
+  });
+  child.on('error', async (error) => {
+    clearInterval(heartbeat);
+    clearTimeout(timer);
+    const message = error instanceof Error ? error.message : String(error);
+    const logFilePath = await writeAgentStreamLog({
+      runId,
+      command,
+      args,
+      cwd,
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      status: 'error',
+      exitCode: null,
+      stderr: message,
+      transcript,
+    });
+    sse('bridge_error', { runId, error: message, logFilePath });
+    response.end();
+  });
+  child.on('close', async (code) => {
+    clearInterval(heartbeat);
+    clearTimeout(timer);
+    const rest = stdoutBuf.trim();
+    if (rest) {
+      transcript.push(rest);
+      sse(null, rest);
+    }
+    const finishedAt = new Date().toISOString();
+    const logFilePath = await writeAgentStreamLog({
+      runId,
+      command,
+      args,
+      cwd,
+      startedAt,
+      finishedAt,
+      status: timedOut ? 'timed_out' : code === 0 ? 'completed' : 'failed',
+      exitCode: code,
+      timedOut,
+      stderr: stderrText,
+      transcript,
+    });
+    // Record the resulting session's size so the NEXT turn can decide whether to checkpoint.
+    let sessionInfo = null;
+    if (!timedOut && code === 0) {
+      const parsed = parseTurnResult(engine, transcript);
+      if (parsed.sessionId) {
+        const prior = priorSessionId ? sessionState.get(priorSessionId) : null;
+        const turnCount = didCheckpoint ? 1 : (prior?.turnCount ?? 0) + 1;
+        const existing = sessionState.get(parsed.sessionId);
+        sessionState.set(parsed.sessionId, {
+          engine,
+          cwd,
+          turnCount,
+          contextTokens: parsed.contextTokens ?? prior?.contextTokens ?? null,
+          createdAt: existing?.createdAt ?? startedAt,
+          updatedAt: finishedAt,
+          checkpointedFrom: didCheckpoint ? priorSessionId : prior?.checkpointedFrom ?? null,
+        });
+        // The old lineage is abandoned after a reseed (or when the id forks) — drop it so it can't retrigger.
+        if (priorSessionId && priorSessionId !== parsed.sessionId) sessionState.delete(priorSessionId);
+        await saveSessionState();
+        const st = sessionState.get(parsed.sessionId);
+        sessionInfo = {
+          sessionId: parsed.sessionId,
+          turnCount: st.turnCount,
+          contextTokens: st.contextTokens,
+          willCheckpointNextTurn: needsCheckpoint(st),
+        };
+      }
+    }
+
+    sse('bridge_done', { runId, exitCode: code, timedOut, finishedAt, logFilePath, eventCount: transcript.length, session: sessionInfo });
+    response.end();
+  });
+
+  child.stdin.end(stdinInput);
+}
+
 const server = http.createServer(async (request, response) => {
   if (request.method === 'GET' && request.url === '/health') {
     sendJson(response, 200, {
       status: 'ok',
       providers: Object.keys(providers).map((path) => path.slice(1)),
       agentCommand: true,
+      agentStream: { enabled: true, command: agentStream.command, model: agentStream.model || null },
       agentRoot,
       agentDefaultCwd,
       agentLogDirectory,
       commandTargets: Object.values(commandTargets).map(toCommandTargetSummary),
+      checkpoint: {
+        enabled: checkpointEnabled,
+        thresholdTokens: checkpointTokens,
+        thresholdTurns: checkpointTurns,
+        stateDir: sessionStateDir,
+        trackedSessions: sessionState.size,
+      },
+    });
+    return;
+  }
+
+  if (request.method === 'POST' && request.url === '/agent-stream') {
+    let body;
+    try {
+      body = await readJson(request);
+    } catch (error) {
+      sendJson(response, error.statusCode ?? 500, { error: error instanceof Error ? error.message : String(error) });
+      return;
+    }
+    if (!body || typeof body.input !== 'string' || body.input.trim().length === 0) {
+      sendJson(response, 400, { error: 'Request body must include a non-empty input string' });
+      return;
+    }
+    runAgentStream(response, body).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!response.writableEnded) {
+        try {
+          response.write(`event: bridge_error\ndata: ${JSON.stringify({ error: message })}\n\n`);
+        } catch {
+          // response already torn down
+        }
+        response.end();
+      }
     });
     return;
   }
@@ -463,6 +932,10 @@ const server = http.createServer(async (request, response) => {
   }
 });
 
+await loadSessionState();
 server.listen(port, host, () => {
   console.log(`Assistant CLI bridge listening on http://${host}:${port}`);
+  console.log(
+    `Rolling checkpoint: ${checkpointEnabled ? 'on' : 'off'} (>=${checkpointTokens} ctx tokens or >=${checkpointTurns} turns) state=${sessionStateDir}`,
+  );
 });

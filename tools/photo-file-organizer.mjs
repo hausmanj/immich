@@ -65,6 +65,10 @@ try {
       await undoJournal();
       break;
     }
+    case 'status': {
+      await statusCommand();
+      break;
+    }
     default: {
       usage();
       process.exitCode = 1;
@@ -116,11 +120,29 @@ function addArg(parsed, key, value) {
 function usage() {
   console.error(`Usage:
   node tools/photo-file-organizer.mjs plan --source PATH --dest PATH [--event-name NAME] [--start YYYY-MM-DD] [--end YYYY-MM-DD] [--plan-file PATH] [--folder-format apple-date|year-apple-date|iso-date|year-iso-date] [--mode move|copy] [--hash]
-  node tools/photo-file-organizer.mjs reconcile-plan --source PATH --originals PATH --duplicates PATH [--plan-file PATH] [--event-name NAME] [--start YYYY-MM-DD] [--end YYYY-MM-DD]
+  node tools/photo-file-organizer.mjs reconcile-plan --source PATH --originals PATH --duplicates PATH [--plan-file PATH] [--event-name NAME] [--start YYYY-MM-DD] [--end YYYY-MM-DD] [--perceptual] [--phash-distance N] [--ffmpeg PATH]
   node tools/photo-file-organizer.mjs apply --plan-file PATH [--journal-dir PATH]
   node tools/photo-file-organizer.mjs undo --journal-file PATH
+  node tools/photo-file-organizer.mjs status --progress-file PATH
 
-Plan is read-only. Apply writes a journal before moving/copying. Undo uses that journal.`);
+Plan is read-only. Apply writes a journal before moving/copying. Undo uses that journal.
+
+For a long (1-2M-file) reconcile-plan, pass --progress-file PATH: the scan rewrites a tiny status blob
+(phase, scanned/total, heartbeat, pid) as it runs. Launch it detached and poll cheaply with the status
+command, e.g.:
+  nohup node tools/photo-file-organizer.mjs reconcile-plan --perceptual \
+    --source S --originals O --duplicates Q --plan-file /path/plan.json \
+    --progress-file /path/progress.json >/path/run.log 2>&1 &
+  node tools/photo-file-organizer.mjs status --progress-file /path/progress.json
+status reports "stalled" if the job's pid is gone and the heartbeat is stale (died without completing).
+
+reconcile-plan routes byte-identical copies (content SHA1) to the duplicates quarantine and new files to
+date-prefixed event folders. Add --perceptual to also group visually-identical copies that differ in bytes
+(e.g. the same photo at different resolutions): within each visual group the LARGEST file is kept and the
+smaller copies are quarantined. --phash-distance N (default 5) is the max Hamming distance between 64-bit
+dHashes treated as the same image; --ffmpeg names the decoder binary (default "ffmpeg"). Perceptual grouping
+never modifies the --originals tree: a source that visually matches an existing original is quarantined even
+when it is larger (surfaced with largerThanOriginalMatch=true for manual review).`);
 }
 
 async function plan() {
@@ -220,6 +242,10 @@ async function plan() {
 }
 
 async function reconcilePlan() {
+  if (args.perceptual === true || args.perceptual === 'true') {
+    return reconcilePlanPerceptual();
+  }
+
   const sources = toArray(args.source).map((value) => resolve(String(value)));
   const originalsRoot = args.originals ? resolve(String(args.originals)) : null;
   const duplicatesRoot = args.duplicates ? resolve(String(args.duplicates)) : null;
@@ -368,6 +394,567 @@ async function reconcilePlan() {
     originalIndexSummary: payload.originalIndexSummary,
     summary,
   });
+}
+
+async function reconcilePlanPerceptual() {
+  const sources = toArray(args.source).map((value) => resolve(String(value)));
+  const originalsRoot = args.originals ? resolve(String(args.originals)) : null;
+  const duplicatesRoot = args.duplicates ? resolve(String(args.duplicates)) : null;
+  if (sources.length === 0 || !originalsRoot || !duplicatesRoot) {
+    throw new Error('reconcile-plan requires --source, --originals, and --duplicates');
+  }
+
+  const mode = args.mode === 'copy' ? 'copy' : 'move';
+  const eventName = typeof args['event-name'] === 'string' ? args['event-name'].trim() : null;
+  const startDate = args.start ? parseDateOnly(String(args.start)) : null;
+  const endDate = args.end ? parseDateOnly(String(args.end), true) : null;
+  const extensions = args.extensions
+    ? new Set(String(args.extensions).split(',').map((item) => normalizeExtension(item.trim())).filter(Boolean))
+    : mediaExtensions;
+  const maxDepth = args['max-depth'] === undefined ? null : Number(args['max-depth']);
+  const ffmpegBin = typeof args.ffmpeg === 'string' ? args.ffmpeg : 'ffmpeg';
+  const phashDistance = args['phash-distance'] === undefined ? 5 : Number(args['phash-distance']);
+  if (!Number.isInteger(phashDistance) || phashDistance < 0 || phashDistance > 64) {
+    throw new Error('--phash-distance must be an integer between 0 and 64');
+  }
+  if (!ensureFfmpeg(ffmpegBin)) {
+    throw new Error(
+      `Perceptual grouping requires a working ffmpeg decoder. "${ffmpegBin}" was not runnable. Install ffmpeg or pass --ffmpeg PATH.`,
+    );
+  }
+
+  const generatedAt = new Date().toISOString();
+  const planFile =
+    typeof args['plan-file'] === 'string'
+      ? resolve(args['plan-file'])
+      : resolve(`photo-file-reconcile-perceptual-plan-${toSafeName(generatedAt)}-${randomUUID()}.json`);
+
+  // A lightweight, frequently-rewritten status file so the agent (or a supervisor) can cheaply poll a
+  // hours-long 1-2M-file scan for progress/heartbeat/resume without ever re-reading the large plan.
+  const progressFile = typeof args['progress-file'] === 'string' ? resolve(args['progress-file']) : null;
+  const runId = randomUUID();
+  const progress = {
+    schema: 'photo-file-organizer-progress-v1',
+    runId,
+    command: 'reconcile-plan',
+    perceptual: true,
+    pid: process.pid,
+    planFile,
+    sourceRoots: sources,
+    originalsRoot,
+    duplicatesRoot,
+    status: 'running',
+    phase: 'starting',
+    startedAt: generatedAt,
+    updatedAt: generatedAt,
+    totals: { originalsFiles: null, sourceFiles: null, metadataToRead: null },
+    counters: { originalsHashed: 0, metadataRead: 0, sourceScanned: 0, sourcePerceptualHashed: 0, exactDuplicates: 0 },
+    result: null,
+    error: null,
+  };
+  await emitProgress(progressFile, progress);
+  const flushEvery = 250;
+
+  try {
+  // Index the known-good originals tree: SHA1 (byte identity) + perceptual dHash (visual identity).
+  progress.phase = 'indexing_originals';
+  const originals = await walkFiles(originalsRoot, extensions, maxDepth, originalsRoot);
+  progress.totals.originalsFiles = originals.length;
+  await emitProgress(progressFile, progress);
+  const originalHashIndex = new Map();
+  const originalsTree = createBKTree();
+  let originalPerceptualHashed = 0;
+  for (const original of originals) {
+    const sha1 = await sha1File(original.path);
+    const entries = originalHashIndex.get(sha1) ?? [];
+    entries.push({
+      path: original.path,
+      relativePath: original.relativePath,
+      fileSizeBytes: original.size,
+      modifiedAt: new Date(original.mtimeMs).toISOString(),
+    });
+    originalHashIndex.set(sha1, entries);
+
+    const phash = perceptualHashFile(original.path, ffmpegBin);
+    if (phash) {
+      originalsTree.add(phash, { path: original.path, relativePath: original.relativePath, fileSizeBytes: original.size });
+      originalPerceptualHashed++;
+    }
+    progress.counters.originalsHashed++;
+    if (progress.counters.originalsHashed % flushEvery === 0) {
+      await emitProgress(progressFile, progress);
+    }
+  }
+
+  progress.phase = 'walking_sources';
+  await emitProgress(progressFile, progress);
+  const sourceFiles = [];
+  for (const source of sources) {
+    sourceFiles.push(...(await walkFiles(source, extensions, maxDepth, source)));
+  }
+  progress.totals.sourceFiles = sourceFiles.length;
+  progress.phase = 'reading_metadata';
+  await emitProgress(progressFile, progress);
+
+  const metadata = await readExifMetadata(sourceFiles.map((file) => file.path), async (read, total) => {
+    progress.counters.metadataRead = read;
+    progress.totals.metadataToRead = total;
+    await emitProgress(progressFile, progress);
+  });
+
+  progress.phase = 'scanning_sources';
+  await emitProgress(progressFile, progress);
+
+  // PASS 1: classify byte-identity, capture date / range eligibility, and compute perceptual hashes
+  // only for the survivors that could actually become keepers.
+  const records = [];
+  const firstSourceKeeperByHash = new Map();
+  for (const file of sourceFiles) {
+    const meta = metadata.get(file.path);
+    const capture = getCaptureDate(file.path, meta, file.mtimeMs);
+    const sha1 = await sha1File(file.path);
+    const record = {
+      id: randomUUID(),
+      file,
+      capture,
+      sha1,
+      phash: null,
+      phashStatus: 'not_computed',
+      decision: null,
+      reason: null,
+      duplicateEvidence: null,
+      keeperRecord: null,
+      perceptualDistance: null,
+      originalMatch: null,
+      largerThanOriginalMatch: false,
+    };
+    records.push(record);
+    progress.counters.sourceScanned++;
+    if (progress.counters.sourceScanned % flushEvery === 0) {
+      await emitProgress(progressFile, progress);
+    }
+
+    const originalMatches = originalHashIndex.get(sha1) ?? [];
+    if (originalMatches.length > 0) {
+      record.decision = 'exact_duplicate';
+      record.reason = null;
+      record.duplicateEvidence = { type: 'content_sha1_matches_originals', sha1, matches: originalMatches };
+      progress.counters.exactDuplicates++;
+      continue;
+    }
+
+    const firstSourceKeeper = firstSourceKeeperByHash.get(sha1);
+    if (firstSourceKeeper) {
+      record.decision = 'exact_duplicate';
+      record.duplicateEvidence = {
+        type: 'content_sha1_matches_planned_source',
+        sha1,
+        firstOperationId: firstSourceKeeper.id,
+        firstSourcePath: firstSourceKeeper.file.path,
+      };
+      progress.counters.exactDuplicates++;
+      continue;
+    }
+
+    // First time we see this byte-content among non-original sources: it is the byte-keeper candidate.
+    firstSourceKeeperByHash.set(sha1, record);
+
+    if (!capture.date) {
+      record.decision = 'skipped';
+      record.reason = 'missing_capture_date';
+      continue;
+    }
+    if ((startDate && capture.date < startDate) || (endDate && capture.date > endDate)) {
+      record.decision = 'skipped';
+      record.reason = 'outside_date_range';
+      continue;
+    }
+
+    // Eligible to reach the originals tree — compute its perceptual hash for visual grouping.
+    const phash = perceptualHashFile(file.path, ffmpegBin);
+    record.phash = phash;
+    record.phashStatus = phash ? 'ok' : 'unavailable';
+    record.decision = 'candidate';
+    if (phash) {
+      progress.counters.sourcePerceptualHashed++;
+    }
+  }
+
+  progress.phase = 'clustering';
+  await emitProgress(progressFile, progress);
+
+  // PASS 2a: quarantine source files that visually match an existing curated original.
+  const candidates = records.filter((record) => record.decision === 'candidate');
+  for (const record of candidates) {
+    if (!record.phash) {
+      continue;
+    }
+    const originalHits = originalsTree
+      .query(record.phash, phashDistance)
+      .sort((a, b) => a.distance - b.distance || a.payload.path.localeCompare(b.payload.path));
+    if (originalHits.length > 0) {
+      const closest = originalHits[0];
+      record.decision = 'near_original';
+      record.perceptualDistance = closest.distance;
+      record.originalMatch = closest.payload;
+      record.largerThanOriginalMatch = record.file.size > (closest.payload.fileSizeBytes ?? 0);
+    }
+  }
+
+  // PASS 2b: greedy largest-wins clustering of the remaining candidates. Processing in size-descending
+  // order guarantees the biggest file in each visual neighborhood becomes the keeper.
+  const clusterPool = candidates.filter((record) => record.decision === 'candidate' && record.phash);
+  const keeperTree = createBKTree();
+  const ordered = [...clusterPool].sort(
+    (a, b) => b.file.size - a.file.size || a.file.path.localeCompare(b.file.path),
+  );
+  for (const record of ordered) {
+    const hits = keeperTree
+      .query(record.phash, phashDistance)
+      .sort((a, b) => a.distance - b.distance || a.payload.file.path.localeCompare(b.payload.file.path));
+    if (hits.length > 0) {
+      const keeper = hits[0].payload;
+      record.decision = 'perceptual_duplicate';
+      record.keeperRecord = keeper;
+      record.perceptualDistance = hits[0].distance;
+    } else {
+      record.decision = 'keeper';
+      keeperTree.add(record.phash, record);
+    }
+  }
+  // Candidates whose perceptual hash could not be computed keep as unique (never silently dropped).
+  for (const record of candidates) {
+    if (record.decision === 'candidate') {
+      record.decision = 'keeper';
+    }
+  }
+
+  progress.phase = 'assigning_destinations';
+  await emitProgress(progressFile, progress);
+
+  // PASS 3: materialize operations in stable source order, assigning destinations and collisions.
+  const operations = [];
+  const plannedDestinationPaths = new Set();
+  for (const record of records) {
+    const { file, capture } = record;
+    const base = {
+      id: record.id,
+      action: mode,
+      sourcePath: file.path,
+      sourceRoot: file.sourceRoot,
+      relativePath: file.relativePath,
+      originalFileName: file.name,
+      fileExtension: extname(file.name).toLowerCase(),
+      fileSizeBytes: file.size,
+      sourceModifiedAt: new Date(file.mtimeMs).toISOString(),
+      captureDate: capture.date ? toDateOnly(capture.date) : null,
+      captureDateTime: capture.date ? capture.date.toISOString() : null,
+      captureDateSource: capture.source,
+      sha1: record.sha1,
+      perceptualHash: record.phash ? record.phash.hex : null,
+      perceptualHashStatus: record.phashStatus,
+    };
+
+    if (record.decision === 'skipped') {
+      operations.push({ ...base, status: 'skipped', reason: record.reason, intent: null, destinationPath: null, destinationState: null });
+      continue;
+    }
+
+    const isKeeper = record.decision === 'keeper';
+    const destinationPath = isKeeper
+      ? resolve(originalsRoot, inferEventFolder(file, capture.date, eventName), file.name)
+      : resolve(duplicatesRoot, toSafePathSegment(basename(file.sourceRoot)), file.relativePath);
+    const destinationState = await getDestinationState(destinationPath);
+    const hasPlanCollision = plannedDestinationPaths.has(destinationPath);
+    const status = destinationState.exists || hasPlanCollision ? 'conflict' : 'planned';
+    const collisionReason = destinationState.exists
+      ? 'destination_exists'
+      : hasPlanCollision
+        ? 'destination_planned_twice'
+        : null;
+
+    const duplicateEvidence =
+      record.decision === 'exact_duplicate'
+        ? record.duplicateEvidence
+        : record.decision === 'near_original'
+          ? {
+              type: 'perceptual_near_duplicate_of_original',
+              perceptualDistance: record.perceptualDistance,
+              largerThanOriginalMatch: record.largerThanOriginalMatch,
+              match: record.originalMatch,
+            }
+          : record.decision === 'perceptual_duplicate'
+            ? {
+                type: 'perceptual_near_duplicate_smaller_copy',
+                perceptualDistance: record.perceptualDistance,
+                keeperOperationId: record.keeperRecord.id,
+                keeperPath: record.keeperRecord.file.path,
+                keeperFileSizeBytes: record.keeperRecord.file.size,
+              }
+            : null;
+
+    const intentReason =
+      record.decision === 'exact_duplicate'
+        ? 'content_sha1_duplicate'
+        : record.decision === 'near_original'
+          ? 'perceptual_near_duplicate_of_original'
+          : record.decision === 'perceptual_duplicate'
+            ? 'perceptual_near_duplicate_smaller_copy'
+            : null;
+
+    operations.push({
+      ...base,
+      status,
+      reason: collisionReason ?? intentReason,
+      intent: isKeeper ? 'add_to_originals' : 'duplicate_quarantine',
+      destinationPath,
+      destinationState,
+      duplicateEvidence,
+    });
+
+    if (status === 'planned') {
+      plannedDestinationPaths.add(destinationPath);
+    }
+  }
+
+  const summary = summarizeOperations(operations);
+  const payload = {
+    schema: 'photo-file-organizer-plan-v1',
+    generatedAt,
+    id: randomUUID(),
+    planKind: 'reconcile-originals-and-backups-perceptual',
+    sourceRoots: sources,
+    destinationRoot: originalsRoot,
+    originalsRoot,
+    duplicatesRoot,
+    eventName,
+    mode,
+    folderFormat: 'event-folder',
+    filters: {
+      start: args.start ?? null,
+      end: args.end ?? null,
+      extensions: [...extensions].sort(),
+      maxDepth,
+      duplicateMatch: 'content_sha1+perceptual_dhash',
+      perceptual: true,
+      phashDistance,
+      ffmpeg: ffmpegBin,
+    },
+    originalIndexSummary: {
+      files: originals.length,
+      uniqueHashes: originalHashIndex.size,
+      duplicateHashesWithinOriginals: [...originalHashIndex.values()].filter((entries) => entries.length > 1).length,
+      perceptualHashed: originalPerceptualHashed,
+    },
+    perceptualSummary: {
+      keepers: operations.filter((operation) => operation.intent === 'add_to_originals').length,
+      exactDuplicates: operations.filter((operation) => operation.reason === 'content_sha1_duplicate').length,
+      nearDuplicateOfOriginal: operations.filter((operation) => operation.reason === 'perceptual_near_duplicate_of_original').length,
+      nearDuplicateSmallerCopy: operations.filter((operation) => operation.reason === 'perceptual_near_duplicate_smaller_copy').length,
+      largerThanOriginalForReview: operations.filter((operation) => operation.duplicateEvidence?.largerThanOriginalMatch === true).length,
+      perceptualHashUnavailable: operations.filter((operation) => operation.perceptualHashStatus === 'unavailable').length,
+    },
+    summary,
+    operations,
+  };
+
+  await mkdir(dirname(planFile), { recursive: true });
+  await writeFile(planFile, `${JSON.stringify(payload, null, 2)}\n`);
+
+  progress.status = 'completed';
+  progress.phase = 'completed';
+  progress.result = { summary, perceptualSummary: payload.perceptualSummary, originalIndexSummary: payload.originalIndexSummary };
+  await emitProgress(progressFile, progress);
+
+  printJson({
+    status: 'planned',
+    planFile,
+    progressFile,
+    originalIndexSummary: payload.originalIndexSummary,
+    perceptualSummary: payload.perceptualSummary,
+    summary,
+  });
+  } catch (error) {
+    progress.status = 'error';
+    progress.phase = 'error';
+    progress.error = error instanceof Error ? error.message : String(error);
+    await emitProgress(progressFile, progress);
+    throw error;
+  }
+}
+
+// Best-effort atomic status write: never let a progress-file error abort the real work.
+async function emitProgress(progressFile, progress) {
+  if (!progressFile) {
+    return;
+  }
+  progress.updatedAt = new Date().toISOString();
+  try {
+    await mkdir(dirname(progressFile), { recursive: true });
+    const temporary = `${progressFile}.tmp`;
+    await writeFile(temporary, `${JSON.stringify(progress, null, 2)}\n`);
+    await rename(temporary, progressFile);
+  } catch {
+    // A transient status-write failure must not stop the scan; the next flush will retry.
+  }
+}
+
+async function statusCommand() {
+  const progressFile = args['progress-file'] ? resolve(String(args['progress-file'])) : null;
+  if (!progressFile) {
+    throw new Error('status requires --progress-file');
+  }
+
+  let raw;
+  try {
+    raw = await readFile(progressFile, 'utf8');
+  } catch {
+    printJson({ status: 'unknown', progressFile, reason: 'progress_file_not_found' });
+    return;
+  }
+
+  const progress = JSON.parse(raw);
+  const ageSeconds = Math.round((Date.now() - new Date(progress.updatedAt).getTime()) / 1000);
+  const scanned = progress.counters?.sourceScanned ?? 0;
+  const total = progress.totals?.sourceFiles ?? null;
+  const running = isPidAlive(progress.pid);
+  // A "running" status whose heartbeat is stale and whose pid is gone means the job died without finishing.
+  const stalled = progress.status === 'running' && !running && ageSeconds > 60;
+  printJson({
+    status: stalled ? 'stalled' : progress.status,
+    phase: progress.phase,
+    runId: progress.runId,
+    pid: progress.pid,
+    pidAlive: running,
+    heartbeatAgeSeconds: ageSeconds,
+    progress: {
+      sourceScanned: scanned,
+      sourceFiles: total,
+      percent: total ? Math.min(100, Math.round((scanned / total) * 100)) : null,
+      sourcePerceptualHashed: progress.counters?.sourcePerceptualHashed ?? 0,
+      exactDuplicates: progress.counters?.exactDuplicates ?? 0,
+      metadataRead: progress.counters?.metadataRead ?? 0,
+      originalsHashed: progress.counters?.originalsHashed ?? 0,
+      originalsFiles: progress.totals?.originalsFiles ?? null,
+    },
+    planFile: progress.planFile,
+    result: progress.result,
+    error: progress.error,
+  });
+}
+
+function isPidAlive(pid) {
+  if (!Number.isInteger(pid)) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === 'EPERM';
+  }
+}
+
+function ensureFfmpeg(ffmpegBin) {
+  const probe = spawnSync(ffmpegBin, ['-version'], { encoding: 'utf8' });
+  return probe.status === 0;
+}
+
+// dHash: decode to a 9x8 grayscale frame and emit a 64-bit hash from left>right pixel gradients.
+// Same image at different resolutions normalizes to the same 9x8 grid, so its hash is identical or near.
+function perceptualHashFile(path, ffmpegBin) {
+  const output = spawnSync(
+    ffmpegBin,
+    ['-v', 'error', '-i', path, '-frames:v', '1', '-vf', 'scale=9:8,format=gray', '-f', 'rawvideo', '-'],
+    { maxBuffer: 4 * 1024 * 1024 },
+  );
+  if (output.status !== 0 || !output.stdout || output.stdout.length < 72) {
+    return null;
+  }
+
+  const pixels = output.stdout;
+  let hi = 0;
+  let lo = 0;
+  let bitIndex = 0;
+  for (let row = 0; row < 8; row++) {
+    for (let col = 0; col < 8; col++) {
+      const left = pixels[row * 9 + col];
+      const right = pixels[row * 9 + col + 1];
+      const bit = left < right ? 1 : 0;
+      if (bit) {
+        if (bitIndex < 32) {
+          hi |= 1 << bitIndex;
+        } else {
+          lo |= 1 << (bitIndex - 32);
+        }
+      }
+      bitIndex++;
+    }
+  }
+
+  hi >>>= 0;
+  lo >>>= 0;
+  const hex = `${hi.toString(16).padStart(8, '0')}${lo.toString(16).padStart(8, '0')}`;
+  return { hi, lo, hex };
+}
+
+function popcount32(value) {
+  let v = value - ((value >>> 1) & 0x55555555);
+  v = (v & 0x33333333) + ((v >>> 2) & 0x33333333);
+  return (((v + (v >>> 4)) & 0x0f0f0f0f) * 0x01010101) >>> 24;
+}
+
+function hammingHash(a, b) {
+  return popcount32((a.hi ^ b.hi) >>> 0) + popcount32((a.lo ^ b.lo) >>> 0);
+}
+
+// Burkhard-Keller tree over Hamming distance: sub-linear radius queries so clustering scales past 1M files.
+// A hoisted factory (not a class) so it is callable from the command dispatch that runs above this line.
+function createBKTree() {
+  let root = null;
+
+  function add(hash, payload) {
+    const node = { hash, payload, children: new Map() };
+    if (!root) {
+      root = node;
+      return;
+    }
+    let current = root;
+    for (;;) {
+      const distance = hammingHash(hash, current.hash);
+      const next = current.children.get(distance);
+      if (!next) {
+        current.children.set(distance, node);
+        return;
+      }
+      current = next;
+    }
+  }
+
+  function query(hash, radius) {
+    const results = [];
+    if (!root) {
+      return results;
+    }
+    const stack = [root];
+    while (stack.length > 0) {
+      const node = stack.pop();
+      const distance = hammingHash(hash, node.hash);
+      if (distance <= radius) {
+        results.push({ distance, payload: node.payload });
+      }
+      const low = distance - radius;
+      const high = distance + radius;
+      for (const [childDistance, child] of node.children) {
+        if (childDistance >= low && childDistance <= high) {
+          stack.push(child);
+        }
+      }
+    }
+    return results;
+  }
+
+  return { add, query };
 }
 
 async function applyPlan() {
@@ -569,7 +1156,7 @@ function toFileEntry(path, fileState, name, extensions, sourceRoot) {
   };
 }
 
-async function readExifMetadata(paths) {
+async function readExifMetadata(paths, onBatch = null) {
   const result = new Map();
   if (paths.length === 0 || args['no-exif'] === true || args['no-exif'] === 'true') {
     return result;
@@ -595,14 +1182,18 @@ async function readExifMetadata(paths) {
       ],
       { encoding: 'utf8', maxBuffer: 128 * 1024 * 1024 },
     );
-    if (output.status !== 0 || !output.stdout.trim()) {
-      continue;
+    if (output.status === 0 && output.stdout.trim()) {
+      for (const item of JSON.parse(output.stdout)) {
+        if (typeof item.SourceFile === 'string') {
+          result.set(resolve(item.SourceFile), item);
+        }
+      }
     }
 
-    for (const item of JSON.parse(output.stdout)) {
-      if (typeof item.SourceFile === 'string') {
-        result.set(resolve(item.SourceFile), item);
-      }
+    // Heartbeat: on a million-file library the exiftool read alone runs for a long time; without this
+    // the status file would look stalled while the job is actually busy.
+    if (onBatch) {
+      await onBatch(Math.min(index + batch.length, paths.length), paths.length);
     }
   }
 
