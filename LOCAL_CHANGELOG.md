@@ -78,6 +78,12 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - Browser cache note: the hot-patched file keeps the same immutable asset filename, so a hard refresh may be needed before the browser stops using the cached old chunk.
 - Runtime assistant diagnostic follow-up:
   - Symptom: the Assistant appeared to hang and then showed the same large `DOCTYPE`-style error after a simple question.
+  - Diagnostic logs showed the backend was actually reaching `codex-cli` and succeeding, but requests were taking roughly 60-70 seconds and could exceed the browser/reverse-proxy response window.
+  - Source fix: local CLI provider calls now have a 35-second in-app response budget. If the provider exceeds that budget, Immich returns a deterministic coverage-plan answer with executable review/audit actions instead of surfacing a 504.
+  - Source fix: assistant chat no longer makes a second LLM call after auto-running read-only audit tools; it summarizes auto-tool results into the current response and keeps full row-level evidence in JSON audit logs.
+  - Emergency runtime fix: rebuilt the server package, hot-patched `/usr/src/app/server/dist/services/assistant.service.js` in the running Synology `immich-server` container, and restarted only `immich-server`.
+  - Runtime backup before replacement: `/tmp/assistant.service.js.pre-timeout-fallback.20260721-184622`.
+  - Verification: authenticated smoke test against Synology `POST /api/assistant/chat` with `provider=codex-cli` returned HTTP 200 in 37 seconds, status `success`, 4 actions, and wrote diagnostic `/data/assistant-audits/assistant-chat/2026-07-22T00-55-59-160Z-assistant-chat-fcd73497-9281-44cc-b9f5-b1c7348c2daa.json`. Temporary API key cleanup returned `0`.
   - Source fix: `AssistantService.chat()` now writes a per-request diagnostic JSON log under `/data/assistant-audits/assistant-chat`.
   - Each diagnostic records request ID, user ID, provider requested, message count, last-message preview, compact context summary, provider attempt start/finish/duration, action count, success/error status, and bounded error text.
   - Runtime fix: hot-patched `/usr/src/app/server/dist/services/assistant.service.js` in the running Synology `immich-server` container and restarted only `immich-server`.

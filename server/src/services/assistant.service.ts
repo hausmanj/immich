@@ -360,6 +360,7 @@ export class AssistantService extends BaseService {
   private readonly assistantChatDiagnosticDirectory = '/data/assistant-audits/assistant-chat';
   private readonly assistantAutoToolIterationLimit = 1;
   private readonly assistantAutoToolActionLimit = 3;
+  private readonly assistantChatProviderResponseBudgetMs = 35_000;
 
   async assess(auth: AuthDto): Promise<AssistantAssessmentResponseDto> {
     const albumService = BaseService.create(AlbumService, this);
@@ -496,7 +497,7 @@ export class AssistantService extends BaseService {
       diagnostic.providerAttempts.push(providerAttempt);
 
       try {
-        let output = await this.callAssistantProvider(providerConfig, dto, context);
+        let output = await this.callAssistantProviderWithResponseBudget(providerConfig, dto, context);
         let responseContext = context;
 
         for (let iteration = 0; iteration < this.assistantAutoToolIterationLimit; iteration++) {
@@ -506,7 +507,7 @@ export class AssistantService extends BaseService {
           }
 
           responseContext = this.withRequestedToolResults(responseContext, autoToolResults);
-          output = await this.callAssistantProvider(providerConfig, dto, responseContext);
+          output = this.withAutoToolResultSummary(output, autoToolResults);
         }
 
         const response = {
@@ -534,6 +535,15 @@ export class AssistantService extends BaseService {
         providerAttempt.durationMs = new Date(providerAttempt.finishedAt).getTime() - new Date(providerStartedAt).getTime();
         providerAttempt.error = lastError.slice(0, 2000);
         this.logger.warn(`Assistant chat failed for ${providerConfig.provider}: ${lastError}`);
+        if (this.isAssistantProviderTimeout(error) && this.isLocalCliProvider(providerConfig)) {
+          const response = this.toDeterministicAssistantResponse(context, providerConfig, lastError);
+          diagnostic.error = lastError ?? null;
+          await this.writeAssistantChatDiagnostic(diagnostic, response.status);
+          this.logger.warn(
+            `Assistant chat ${requestId} returned deterministic fallback after ${providerAttempt.durationMs}ms for ${providerConfig.provider}`,
+          );
+          return response;
+        }
       }
     }
 
@@ -818,6 +828,50 @@ export class AssistantService extends BaseService {
       : providerConfig.provider === 'openai'
         ? await this.callOpenAi(providerConfig, dto, context)
         : await this.callAnthropic(providerConfig, dto, context);
+  }
+
+  private async callAssistantProviderWithResponseBudget(
+    providerConfig: ProviderConfig,
+    dto: AssistantChatRequestDto,
+    context: Awaited<ReturnType<AssistantService['getLibraryContext']>>,
+  ) {
+    if (!this.isLocalCliProvider(providerConfig)) {
+      return await this.callAssistantProvider(providerConfig, dto, context);
+    }
+
+    const timeoutSeconds = Math.max(
+      1,
+      Math.min(providerConfig.timeoutSeconds, Math.floor(this.assistantChatProviderResponseBudgetMs / 1000)),
+    );
+    return await this.callAssistantProvider({ ...providerConfig, timeoutSeconds }, dto, context);
+  }
+
+  private withAutoToolResultSummary(
+    output: AssistantModelOutput,
+    autoToolResults: Array<Record<string, unknown>>,
+  ): AssistantModelOutput {
+    const resultLines = autoToolResults.map((result) => {
+      const toolType = typeof result.toolType === 'string' ? result.toolType : 'tool';
+      const sourceActionTitle = typeof result.sourceActionTitle === 'string' ? result.sourceActionTitle : 'auto action';
+      const resultCount = typeof result.resultCount === 'number' ? result.resultCount : 0;
+      const errorCount = typeof result.errorCount === 'number' ? result.errorCount : 0;
+      const logFilePath = typeof result.logFilePath === 'string' ? result.logFilePath : null;
+      return `- ${sourceActionTitle}: ${toolType}, ${resultCount} result rows, ${errorCount} errors${logFilePath ? `, log ${logFilePath}` : ''}`;
+    });
+
+    return {
+      answer: [
+        this.toAnswer(output),
+        '',
+        'I ran the requested read-only audit actions and added their summaries to the current assistant context:',
+        ...resultLines,
+        '',
+        'Full row-level output remains in the JSON audit logs when a log path is listed.',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+      actions: this.toActions(output),
+    };
   }
 
   private async runAutoToolActions(auth: AuthDto, actions: AssistantChatResponseDto['actions']) {
@@ -2702,6 +2756,152 @@ export class AssistantService extends BaseService {
     };
   }
 
+  private toDeterministicAssistantResponse(
+    context: Awaited<ReturnType<AssistantService['getLibraryContext']>>,
+    providerConfig: ProviderConfig,
+    error: string,
+  ): AssistantChatResponseDto {
+    const audits = context.deterministicAudits;
+    const librarySummary: Record<string, unknown> = this.isRecord(audits.librarySummary) ? audits.librarySummary : {};
+    const coveragePlan = audits.organizationCoveragePlan;
+    const coverageStatusSummary: Record<string, unknown> = this.isRecord(coveragePlan?.coverageStatusSummary)
+      ? coveragePlan.coverageStatusSummary
+      : {};
+    const ledger = Array.isArray(coveragePlan?.coverageExecutionLedger) ? coveragePlan.coverageExecutionLedger : [];
+    const eventCohorts = Array.isArray(audits.eventCohorts) ? audits.eventCohorts : [];
+    const sourcePathCohorts = Array.isArray(audits.sourcePathCohorts) ? audits.sourcePathCohorts : [];
+
+    const actions = this.toDeterministicCoverageActions(ledger, eventCohorts, sourcePathCohorts);
+    const totalAssets = this.toDisplayNumber(librarySummary['totalAssets'] ?? context.statistics.totalAssets);
+    const plannedAssets = this.toDisplayNumber(coverageStatusSummary['plannedAssets']);
+    const unplannedAssets = this.toDisplayNumber(coverageStatusSummary['unplannedAssets']);
+    const readyCohorts = this.toDisplayNumber(coverageStatusSummary['readyReviewAlbumCohorts']);
+    const decompositionCohorts = this.toDisplayNumber(coverageStatusSummary['decompositionAuditCohorts']);
+    const noLocationAssets = this.toDisplayNumber(librarySummary['noVisibleLocationAssets']);
+    const gpsAssets = this.toDisplayNumber(librarySummary['gpsAssetCount']);
+
+    return {
+      status: 'success',
+      provider: providerConfig.provider,
+      model: providerConfig.model,
+      answer: [
+        'Codex did not return before the web timeout budget, so Immich returned a deterministic library plan instead of failing the request.',
+        '',
+        `Current library shape: ${totalAssets} total assets, ${gpsAssets} with GPS/place evidence, ${noLocationAssets} with no visible location.`,
+        `Coverage plan: ${plannedAssets} planned assets, ${unplannedAssets} unplanned assets, ${readyCohorts} review-ready cohorts, ${decompositionCohorts} decomposition-audit cohorts.`,
+        '',
+        'Recommended sequence: use multi-day event cohorts first, then decompose broad source containers with read-only audits, then create reversible review albums from exact event/source cohorts. GPS is only an anchor for older material; source folders, capture dates, camera cohorts, file traits, and audit logs are the backbone.',
+        '',
+        `Diagnostic: local provider ${providerConfig.provider} exceeded the in-app response budget. No library changes were made. Error: ${error}`,
+      ].join('\n'),
+      actions,
+      error,
+      context: context.summary,
+    };
+  }
+
+  private toDeterministicCoverageActions(
+    ledger: AssistantOrganizationCoverageLedgerItem[],
+    eventCohorts: unknown[],
+    sourcePathCohorts: unknown[],
+  ): AssistantChatResponseDto['actions'] {
+    const actions: AssistantChatResponseDto['actions'] = [];
+
+    for (const item of ledger.slice(0, 8)) {
+      if (item.status === 'ready_for_review_album' && item.nextAction.type === 'review') {
+        actions.push({
+          type: 'review',
+          title: item.title,
+          rationale: item.rationale,
+          query: null,
+          albumName: item.nextAction.albumName,
+          assetIds: [],
+          cohortType: item.nextAction.cohortType,
+          cohortKey: item.nextAction.cohortKey,
+          toolType: null,
+          toolInput: null,
+          command: null,
+          target: null,
+          cwd: null,
+          timeoutSeconds: null,
+          confidence: 0.78,
+        });
+      }
+
+      if (item.status === 'needs_decomposition_audit' && item.nextAction.type === 'metadata_audit') {
+        actions.push({
+          type: 'metadata_audit',
+          title: item.title,
+          rationale: item.rationale,
+          query: null,
+          albumName: null,
+          assetIds: [],
+          cohortType: item.cohortType,
+          cohortKey: item.cohortKey,
+          toolType: item.nextAction.toolType,
+          toolInput: item.nextAction.toolInput,
+          command: null,
+          target: null,
+          cwd: null,
+          timeoutSeconds: null,
+          confidence: 0.66,
+        });
+      }
+
+      if (actions.length >= 6) {
+        return actions;
+      }
+    }
+
+    if (actions.length === 0) {
+      const eventAction = this.toFirstReviewActionFromCohorts(eventCohorts, 'event');
+      const sourcePathAction = this.toFirstReviewActionFromCohorts(sourcePathCohorts, 'source_path');
+      return [eventAction, sourcePathAction].filter(
+        (action): action is AssistantChatResponseDto['actions'][number] => action !== null,
+      );
+    }
+
+    return actions;
+  }
+
+  private toFirstReviewActionFromCohorts(
+    cohorts: unknown[],
+    cohortType: 'event' | 'source_path',
+  ): AssistantChatResponseDto['actions'][number] | null {
+    const cohort = cohorts.find((item) => this.isRecord(item));
+    if (!this.isRecord(cohort)) {
+      return null;
+    }
+
+    const label = typeof cohort.label === 'string' ? cohort.label : typeof cohort.title === 'string' ? cohort.title : cohortType;
+    const cohortKey = typeof cohort.cohortKey === 'string' ? cohort.cohortKey : typeof cohort.key === 'string' ? cohort.key : null;
+    if (!cohortKey) {
+      return null;
+    }
+
+    return {
+      type: 'review',
+      title: `Review ${label}`,
+      rationale: 'Deterministic fallback review action generated from the current Immich audit context.',
+      query: null,
+      albumName: `Review - ${label}`.slice(0, 250),
+      assetIds: [],
+      cohortType,
+      cohortKey,
+      toolType: null,
+      toolInput: null,
+      command: null,
+      target: null,
+      cwd: null,
+      timeoutSeconds: null,
+      confidence: typeof cohort.confidence === 'number' ? cohort.confidence : 0.65,
+    };
+  }
+
+  private toDisplayNumber(value: unknown) {
+    return typeof value === 'number' ? value.toLocaleString('en-US') : typeof value === 'string' ? value : 'unknown';
+  }
+
   private async getAutomaticToolResults(
     auth: AuthDto,
     dto: AssistantChatRequestDto,
@@ -3149,7 +3349,7 @@ export class AssistantService extends BaseService {
     };
   }
 
-  private toCompactToolResult(result: AssistantToolResponseDto) {
+  private toCompactToolResult(result: AssistantToolResponseDto | Record<string, unknown>) {
     return {
       toolType: result.toolType,
       generatedAt: result.generatedAt,
@@ -3159,8 +3359,8 @@ export class AssistantService extends BaseService {
       logFilePath: result.logFilePath,
       logFileFormat: result.logFileFormat,
       inlineResultsOmitted: result.inlineResultsOmitted,
-      results: this.toCompactList(result.results, 10),
-      errors: this.toCompactList(result.errors, 5),
+      results: this.toCompactList(Array.isArray(result.results) ? result.results : [], 10),
+      errors: this.toCompactList(Array.isArray(result.errors) ? result.errors : [], 5),
     };
   }
 
@@ -3526,6 +3726,11 @@ export class AssistantService extends BaseService {
 
   private getErrorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
+  }
+
+  private isAssistantProviderTimeout(error: unknown) {
+    const message = this.getErrorMessage(error).toLowerCase();
+    return message.includes('timeout') || message.includes('timed out') || message.includes('abort');
   }
 
   private isRecord(value: unknown): value is Record<string, unknown> {
