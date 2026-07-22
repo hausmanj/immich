@@ -459,12 +459,23 @@ export class AssistantService extends BaseService {
         actionCount?: number;
         error?: string;
       }>,
+      fastPath: null as string | null,
       error: null as string | null,
     };
 
+    const providerConfigs = this.getLlmProviders(dto.provider);
+    const fastResponse = this.toFastAssistantChatResponse(dto, providerConfigs);
+    if (fastResponse) {
+      diagnostic.status = fastResponse.status;
+      diagnostic.fastPath = 'simple_status';
+      diagnostic.contextSummary = fastResponse.context;
+      await this.writeAssistantChatDiagnostic(diagnostic, fastResponse.status);
+      this.logger.log(`Assistant chat ${requestId} fast-path response status=${fastResponse.status}`);
+      return fastResponse;
+    }
+
     const context = await this.getLibraryContext(auth, dto);
     diagnostic.contextSummary = context.summary;
-    const providerConfigs = this.getLlmProviders(dto.provider);
     this.logger.log(
       `Assistant chat ${requestId} started provider=${dto.provider ?? 'auto'} providers=${providerConfigs
         .map((provider) => provider.provider)
@@ -828,6 +839,42 @@ export class AssistantService extends BaseService {
       : providerConfig.provider === 'openai'
         ? await this.callOpenAi(providerConfig, dto, context)
         : await this.callAnthropic(providerConfig, dto, context);
+  }
+
+  private toFastAssistantChatResponse(
+    dto: AssistantChatRequestDto,
+    providerConfigs: ProviderConfig[],
+  ): AssistantChatResponseDto | null {
+    const latest = dto.messages.at(-1)?.content.trim() ?? '';
+    const normalized = latest.toLowerCase().replace(/[.!?]+$/g, '').trim();
+    const isSimpleStatus =
+      /^(hi|hello|hey|test|ping|status|ready|you there|are you there|is this working|working|assistant status)$/.test(
+        normalized,
+      );
+
+    if (!isSimpleStatus) {
+      return null;
+    }
+
+    const providerConfig = providerConfigs[0];
+    if (!providerConfig) {
+      return {
+        status: 'disabled',
+        answer:
+          'Assistant route is online, but no assistant provider is configured. Set IMMICH_ASSISTANT_CLAUDE_COMMAND, IMMICH_ASSISTANT_CODEX_COMMAND, or IMMICH_LLM_PROVIDER with a matching provider API key.',
+        actions: [],
+        context: { albums: 0, sampledAssets: 0, unorganizedAssets: 0 },
+      };
+    }
+
+    return {
+      status: 'success',
+      provider: providerConfig.provider,
+      model: providerConfig.model,
+      answer: `Assistant route is online. Current provider is ${providerConfig.provider}. I did not load the photo library context for this simple status check.`,
+      actions: [],
+      context: { albums: 0, sampledAssets: 0, unorganizedAssets: 0 },
+    };
   }
 
   private async callAssistantProviderWithResponseBudget(
