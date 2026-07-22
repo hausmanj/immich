@@ -1,0 +1,605 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Immich Agent</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #0f1216; color: #d7dde5; display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+    background: #151a21; border-bottom: 1px solid #232c37; flex-wrap: wrap;
+  }
+  header .brand { font-weight: 700; color: #7cc4ff; letter-spacing: .3px; }
+  header .brand small { color: #64748b; font-weight: 400; margin-left: 6px; }
+  header .spacer { flex: 1; }
+  header label { color: #9aa7b6; display: inline-flex; align-items: center; gap: 6px; }
+  select, button {
+    background: #1c232c; color: #d7dde5; border: 1px solid #2c3742; border-radius: 8px;
+    padding: 6px 10px; font: inherit; cursor: pointer;
+  }
+  button.primary { background: #2563eb; border-color: #2563eb; color: #fff; font-weight: 600; }
+  button.recording { background: #7f1d1d; border-color: #ef4444; color: #fff; font-weight: 700; }
+  button:disabled { opacity: .5; cursor: default; }
+  input[type="range"] { width: 86px; accent-color: #3b82f6; }
+  #status { font-size: 12px; padding: 3px 9px; border-radius: 999px; background: #1c232c; color: #94a3b8; }
+  #status.running { background: #0b3a2e; color: #34d399; }
+  #status.error { background: #3a1414; color: #f87171; }
+  main {
+    flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 10px;
+    max-width: 980px; width: 100%; margin: 0 auto;
+  }
+  .row { display: flex; flex-direction: column; gap: 4px; }
+  .role { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: #64748b; }
+  .user .bubble { background: #1d2836; border: 1px solid #2b3b52; }
+  .bubble {
+    background: #161c24; border: 1px solid #232c37; border-radius: 10px; padding: 10px 12px;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .thinking .bubble { background: #141922; border-style: dashed; color: #8b98a8; font-style: italic; }
+  .tool .bubble { background: #12181f; border-color: #2a3646; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+  .tool .toolname { color: #fbbf24; font-weight: 700; }
+  .result-block .bubble {
+    background: #0e1319; border-color: #202a36; color: #93a4b6;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; max-height: 260px; overflow: auto;
+  }
+  .chip { align-self: flex-start; font-size: 11px; color: #64748b; padding: 2px 8px; border: 1px solid #232c37; border-radius: 999px; }
+  .done { align-self: flex-start; font-size: 12px; color: #34d399; }
+  .err .bubble { background: #2a1414; border-color: #5b2020; color: #f87171; }
+  footer {
+    display: flex; gap: 10px; padding: 12px 16px; border-top: 1px solid #232c37; background: #12161c;
+    max-width: 980px; width: 100%; margin: 0 auto; align-items: flex-end;
+  }
+  textarea {
+    flex: 1; resize: none; min-height: 46px; max-height: 200px; background: #0d1116; color: #e5e9ef;
+    border: 1px solid #2c3742; border-radius: 10px; padding: 11px 12px; font: inherit;
+  }
+  textarea:focus { outline: none; border-color: #3b82f6; }
+  #mic { min-width: 46px; }
+</style>
+</head>
+<body>
+  <header>
+    <span class="brand">Immich Agent <small>live</small></span>
+    <label>engine
+      <select id="engine">
+        <option value="claude" selected>Claude</option>
+        <option value="codex">Codex (ChatGPT)</option>
+      </select>
+    </label>
+    <label>model
+      <select id="model">
+        <option value="opus" selected>Opus (deep — matches Claude Code)</option>
+        <option value="sonnet">Sonnet (balanced)</option>
+        <option value="haiku">Haiku (fast)</option>
+        <option value="">CLI default</option>
+      </select>
+    </label>
+    <label><input type="checkbox" id="bypass" checked /> auto-run tools</label>
+    <label><input type="checkbox" id="speakReplies" /> speak replies</label>
+    <label><input type="checkbox" id="showToolOutput" /> show tool output</label>
+    <label>voice
+      <select id="voiceSelect" style="max-width:180px">
+        <option value="">System default</option>
+      </select>
+    </label>
+    <label>speed <input type="range" id="voiceRate" min="0.75" max="1.5" step="0.05" value="1" /></label>
+    <label>pitch <input type="range" id="voicePitch" min="0.7" max="1.3" step="0.05" value="1" /></label>
+    <label>volume <input type="range" id="voiceVolume" min="0" max="1" step="0.05" value="1" /></label>
+    <button id="voiceTest" type="button">Test voice</button>
+    <input id="apikey" type="password" placeholder="Immich API key (if login fails)" autocomplete="off" spellcheck="false" style="min-width:200px;background:#0d1116;color:#e5e9ef;border:1px solid #2c3742;border-radius:8px;padding:6px 10px;font:inherit;" />
+    <span class="spacer"></span>
+    <span id="live" style="font-size:11px;color:#64748b;font-family:ui-monospace,SFMono-Regular,Menlo,monospace"></span>
+    <span id="status">idle</span>
+    <button id="newSession" type="button">New session</button>
+  </header>
+  <main id="transcript">
+    <span class="chip">New agent session — ask it to inspect, audit, hash, or plan reversible organization. It can use the Mac, SSH to Synology, and query this Immich host.</span>
+  </main>
+  <footer>
+    <textarea id="input" placeholder="e.g. Inspect /external and report source folders, counts, date spans, and which look like noise vs real trips. Read-only." autofocus></textarea>
+    <button id="mic" type="button" title="Dictate prompt" aria-pressed="false">Mic</button>
+    <button id="send" class="primary" type="button">Send</button>
+    <button id="stop" type="button" disabled style="background:#3a1414;border-color:#5b2020;color:#f87171;font-weight:600">Stop</button>
+  </footer>
+
+<script>
+(function () {
+  var transcript = document.getElementById('transcript');
+  var input = document.getElementById('input');
+  var sendBtn = document.getElementById('send');
+  var newBtn = document.getElementById('newSession');
+  var modelSel = document.getElementById('model');
+  var bypass = document.getElementById('bypass');
+  var statusEl = document.getElementById('status');
+  var apikeyEl = document.getElementById('apikey');
+  var engineSel = document.getElementById('engine');
+  var stopBtn = document.getElementById('stop');
+  var liveEl = document.getElementById('live');
+  var micBtn = document.getElementById('mic');
+  var speakReplies = document.getElementById('speakReplies');
+  var showToolOutput = document.getElementById('showToolOutput');
+  var voiceTest = document.getElementById('voiceTest');
+  var voiceSelect = document.getElementById('voiceSelect');
+  var voiceRate = document.getElementById('voiceRate');
+  var voicePitch = document.getElementById('voicePitch');
+  var voiceVolume = document.getElementById('voiceVolume');
+  var sessionId = null;
+  var sessionByEngine = { claude: null, codex: null };
+  var running = false;
+  var controller = null;
+  var runStart = 0, evCount = 0, toolCount = 0, lastActivity = 0, liveTimer = null;
+  var toolRows = {};
+  var recognition = null, recognizing = false, speechBase = '', speechFinal = '';
+
+  try { apikeyEl.value = localStorage.getItem('immich_agent_api_key') || ''; } catch (e) {}
+  apikeyEl.addEventListener('change', function () {
+    try { localStorage.setItem('immich_agent_api_key', apikeyEl.value.trim()); } catch (e) {}
+  });
+  try { speakReplies.checked = localStorage.getItem('immich_agent_speak_replies') !== '0'; } catch (e) { speakReplies.checked = true; }
+  speakReplies.addEventListener('change', function () {
+    try { localStorage.setItem('immich_agent_speak_replies', speakReplies.checked ? '1' : '0'); } catch (e) {}
+    if (!speakReplies.checked && window.speechSynthesis) window.speechSynthesis.cancel();
+  });
+  try { showToolOutput.checked = localStorage.getItem('immich_agent_show_tool_output') === '1'; } catch (e) {}
+  showToolOutput.addEventListener('change', function () {
+    try { localStorage.setItem('immich_agent_show_tool_output', showToolOutput.checked ? '1' : '0'); } catch (e) {}
+  });
+  function loadVoiceSetting(key, fallback) {
+    try {
+      var value = localStorage.getItem(key);
+      return value == null || value === '' ? fallback : value;
+    } catch (e) {
+      return fallback;
+    }
+  }
+  voiceRate.value = loadVoiceSetting('immich_agent_voice_rate', '1');
+  voicePitch.value = loadVoiceSetting('immich_agent_voice_pitch', '1');
+  voiceVolume.value = loadVoiceSetting('immich_agent_voice_volume', '1');
+  function persistVoiceSetting(el, key) {
+    el.addEventListener('input', function () {
+      try { localStorage.setItem(key, el.value); } catch (e) {}
+    });
+    el.addEventListener('change', function () {
+      try { localStorage.setItem(key, el.value); } catch (e) {}
+    });
+  }
+  persistVoiceSetting(voiceRate, 'immich_agent_voice_rate');
+  persistVoiceSetting(voicePitch, 'immich_agent_voice_pitch');
+  persistVoiceSetting(voiceVolume, 'immich_agent_voice_volume');
+  var MODELS = {
+    claude: [['opus', 'Opus (deep — matches Claude Code)'], ['sonnet', 'Sonnet (balanced)'], ['haiku', 'Haiku (fast)'], ['', 'CLI default']],
+    codex: [['gpt-5.6-sol', 'GPT-5.6 Sol (advanced)'], ['gpt-5.5', 'GPT-5.5 (high effort)'], ['', 'Codex default']]
+  };
+  function populateModels() {
+    var list = MODELS[engineSel.value] || MODELS.claude;
+    var savedModel = loadVoiceSetting('immich_agent_model_' + engineSel.value, '');
+    modelSel.innerHTML = '';
+    list.forEach(function (o, i) {
+      var opt = document.createElement('option');
+      opt.value = o[0]; opt.textContent = o[1]; if ((!savedModel && i === 0) || savedModel === o[0]) opt.selected = true;
+      modelSel.appendChild(opt);
+    });
+  }
+  function setSessionForCurrentEngine(id) {
+    sessionId = id || null;
+    sessionByEngine[engineSel.value] = sessionId;
+  }
+  engineSel.addEventListener('change', function () {
+    populateModels();
+    sessionId = simpleMode ? null : (sessionByEngine[engineSel.value] || null);
+    try { localStorage.setItem('immich_agent_engine', engineSel.value); } catch (e) {}
+    addChip((engineSel.value === 'codex' ? 'Codex' : 'Claude') + ' selected' + (sessionId ? ' · resumed local session' : ' · new local session'));
+  });
+  modelSel.addEventListener('change', function () {
+    try { localStorage.setItem('immich_agent_model_' + engineSel.value, modelSel.value); } catch (e) {}
+  });
+  try {
+    var savedEngine = localStorage.getItem('immich_agent_engine');
+    if (savedEngine && MODELS[savedEngine]) engineSel.value = savedEngine;
+  } catch (e) {}
+  populateModels();
+
+  function fmtElapsed(ms) { var s = Math.floor(ms / 1000), m = Math.floor(s / 60); s = s % 60; return m + ':' + (s < 10 ? '0' : '') + s; }
+  function tickLive() {
+    if (!running) { liveEl.textContent = ''; return; }
+    var idle = Math.floor((Date.now() - lastActivity) / 1000);
+    liveEl.textContent = '▶ ' + fmtElapsed(Date.now() - runStart) + '  ' + toolCount + ' tools  ' + evCount + ' events  · last activity ' + idle + 's ago';
+    liveEl.style.color = idle > 90 ? '#fbbf24' : '#64748b';
+  }
+  function bump() { lastActivity = Date.now(); evCount++; }
+  function setRunning(on) {
+    running = on;
+    sendBtn.disabled = on; stopBtn.disabled = !on; engineSel.disabled = on;
+    modelSel.disabled = on;
+    if (on) { runStart = Date.now(); lastActivity = Date.now(); evCount = 0; toolCount = 0; toolRows = {}; liveTimer = setInterval(tickLive, 1000); tickLive(); }
+    else { if (liveTimer) clearInterval(liveTimer); liveTimer = null; controller = null; liveEl.textContent = ''; }
+  }
+
+  var SYSTEM_BRIEF = [
+    'You are the senior operations engineer for organizing a very large, messy personal photo/video library (target 1-2M assets). Immich (on a Synology NAS) is the UI + database surface; the real source files live on the NAS under /volume1. You are NOT a chat assistant that summarizes — you are an operator who investigates with real tools and produces runbook-grade answers.',
+    '',
+    'GROUND YOURSELF FIRST. At the start of a session, read /Users/johnhausman/source/immich/AGENTS.md and LOCAL_CHANGELOG.md, and the memory profile at /Users/johnhausman/.claude/projects/-Users-johnhausman-source-immich/memory/immich-assistant-library-profile.md. Do not answer library questions from priors; verify against these + live tool output.',
+    '',
+    'ENVIRONMENT & TOOLS.',
+    '- Mac (M4 Pro): Bash/Read/Grep. Preferred for heavy hashing, EXIF extraction, clustering, report generation. 10Gbps link to the NAS.',
+    '- Synology: exactly `ssh -p 22222 hausmanj@drhaus` (NAS data under /volume1). Run near the data for bulk file inventory/hashing.',
+    '- Immich container: `ssh -p 22222 hausmanj@drhaus /usr/local/bin/docker exec immich-server ...` for /data, /external, and the Immich API on http://127.0.0.1:2283.',
+    '- Immich assistant API (already built, reversible): persisted index-runs (POST/GET /api/assistant/index-runs) record source folder/type/size/dims/dates/camera/GPS + noise & risk labels + content SHA1 + raw-inventory of files on disk not imported; deterministicAudits.organizationCoveragePlan and coverageExecutionLedger (ordered work queue proving every asset is covered/deferred/risky/unclassified); read-only tools via POST /api/assistant/tool (content_hash_audit, sidecar_pair_audit, metadata_search, mobile_original_compare); reversible review albums (review-album, review-plan); journaled mutations + undo (metadata_edit, archive_favorite, stack_change apply+undo work; folder_move and duplicate_resolution are apply-BLOCKED until typed undo exists).',
+    '- Outside Immich (source files): /Users/johnhausman/source/immich/tools/photo-file-organizer.mjs with plan / reconcile-plan (read-only, content-SHA1) / apply (writes a typed journal before any move; duplicates -> quarantine, new files -> date-prefixed event folders like "2012-10-15 French Polynesia") / undo. Use this for physical NAS reorganization; the Immich external mounts are read-only, so moves run on the raw /volume1 tree, not inside the container.',
+    '',
+    'METHOD (every phase read-only until the user approves; every mutation journaled + undoable): Phase 0 Census (run index-runs / organizer plan across the tree; classify real media vs noise vs unknown; content-hash). Phase 1 Signal-vs-noise (quarantine movie-art *-poster/-backdrop/-logo, thumbnails, caches, app/doc folders, Takeout/iMazing blobs via noise/smallDimension/generatedLike cohorts). Phase 2 Byte-level dedupe (fresh SHA1 groups; keep one canonical, quarantine the rest; filename variants -> review, never auto-delete). Phase 3 Cohorts (GPS is only an ANCHOR in old libraries; backbone = source folder + capture date + camera + EXIF/dimensions; build event cohorts first, then date/source/camera; DECOMPOSE broad containers like "Raw Photo and Video Files"/"Pictures"/"GoPro" with exact-folder audits before any album). Phase 4 Reversible review queues (review albums in Immich and/or dated event folders on the source tree). Phase 5 Guarded commit (albums/stacks/metadata in Immich; organizer apply for source files).',
+    '',
+    'SAFETY: read-only by default; never delete; never bypass the journal/undo path with raw shell mutations; if reorganizing source files that are ALSO an Immich external library, note the path-desync and plan an Immich rescan.',
+    '',
+    'ANSWER QUALITY BAR (this is required): Lead with the direct answer / outcome in the first line, then the supporting detail. Be concrete and specific — cite exact tools, endpoints, paths, counts, and cohort names; no hedging, no generic filler, no shallow summaries. When asked HOW to organize, give the actual phased methodology grounded in the real tools above, not platitudes. When asked what is missing, give an honest gap list ranked by impact. Write like a senior engineer producing a runbook a peer could execute. If you have not yet gathered evidence, run the tools and gather it before concluding.'
+  ].join('\n');
+  var SIMPLE_BRIEF = [
+    'You are the Immich Agent console assistant.',
+    'For simple greetings, status checks, or voice tests: answer conversationally in one short sentence.',
+    'Do not read files, run tools, inspect the repository, or ground yourself unless the user asks for actual investigation.'
+  ].join('\n');
+
+  function scroll() { transcript.scrollTop = transcript.scrollHeight; }
+
+  function populateVoices() {
+    if (!('speechSynthesis' in window)) {
+      voiceSelect.disabled = true;
+      voiceSelect.title = 'Speech synthesis is not available in this browser';
+      return;
+    }
+    var selected = loadVoiceSetting('immich_agent_voice_name', '');
+    var voices = window.speechSynthesis.getVoices() || [];
+    var current = voiceSelect.value || selected;
+    voiceSelect.innerHTML = '';
+    var def = document.createElement('option');
+    def.value = '';
+    def.textContent = 'System default';
+    voiceSelect.appendChild(def);
+    voices
+      .slice()
+      .filter(function (v) { return /^en(-|_|$)/i.test(v.lang || ''); })
+      .sort(function (a, b) { return (a.lang + a.name).localeCompare(b.lang + b.name); })
+      .forEach(function (v) {
+        var opt = document.createElement('option');
+        opt.value = v.name;
+        opt.textContent = v.name + (v.lang ? ' · ' + v.lang : '');
+        voiceSelect.appendChild(opt);
+      });
+    voiceSelect.value = current;
+  }
+  voiceSelect.addEventListener('change', function () {
+    try { localStorage.setItem('immich_agent_voice_name', voiceSelect.value); } catch (e) {}
+  });
+  if ('speechSynthesis' in window) {
+    populateVoices();
+    window.speechSynthesis.onvoiceschanged = populateVoices;
+  } else {
+    voiceSelect.disabled = true;
+    voiceTest.disabled = true;
+  }
+
+  function selectedVoice() {
+    if (!('speechSynthesis' in window) || !voiceSelect.value) return null;
+    var voices = window.speechSynthesis.getVoices() || [];
+    for (var i = 0; i < voices.length; i++) {
+      if (voices[i].name === voiceSelect.value) return voices[i];
+    }
+    return null;
+  }
+
+  function speakText(text) {
+    if (!speakReplies.checked || !('speechSynthesis' in window) || !text) return;
+    var clean = String(text).replace(/\s+/g, ' ').trim();
+    if (!clean) return;
+    window.speechSynthesis.cancel();
+    var chunk = clean.length > 1200 ? clean.slice(0, 1200) + '...' : clean;
+    var u = new SpeechSynthesisUtterance(chunk);
+    var v = selectedVoice();
+    if (v) u.voice = v;
+    u.rate = Number.parseFloat(voiceRate.value) || 1;
+    u.pitch = Number.parseFloat(voicePitch.value) || 1;
+    u.volume = Number.parseFloat(voiceVolume.value);
+    if (!Number.isFinite(u.volume)) u.volume = 1;
+    window.speechSynthesis.speak(u);
+  }
+  voiceTest.addEventListener('click', function () {
+    speakReplies.checked = true;
+    try { localStorage.setItem('immich_agent_speak_replies', '1'); } catch (e) {}
+    speakText('Voice replies are enabled.');
+  });
+
+  function addRow(cls, role, text, isHtml) {
+    var row = document.createElement('div');
+    row.className = 'row ' + cls;
+    if (role) {
+      var r = document.createElement('div'); r.className = 'role'; r.textContent = role; row.appendChild(r);
+    }
+    var b = document.createElement('div'); b.className = 'bubble';
+    if (cls === 'result-block' && !showToolOutput.checked) {
+      var compact = String(text || '').replace(/\s+/g, ' ').trim();
+      b.textContent = compact
+        ? 'tool output hidden (' + compact.length + ' chars). Enable "show tool output" to inspect it.'
+        : 'tool output hidden. Enable "show tool output" to inspect it.';
+    } else if (isHtml) b.innerHTML = text; else b.textContent = text;
+    row.appendChild(b); transcript.appendChild(row); scroll();
+    if ((cls === 'assistant' || role === 'codex') && !isHtml) speakText(text);
+    return b;
+  }
+  function addChip(text) {
+    var c = document.createElement('span'); c.className = 'chip'; c.textContent = text;
+    transcript.appendChild(c); scroll();
+  }
+  function addDone(text) {
+    var c = document.createElement('span'); c.className = 'done'; c.textContent = text;
+    transcript.appendChild(c); scroll();
+  }
+  function setStatus(s, cls) { statusEl.textContent = s; statusEl.className = cls || ''; }
+
+  function setRecognizing(on) {
+    recognizing = on;
+    micBtn.className = on ? 'recording' : '';
+    micBtn.textContent = on ? 'Stop' : 'Mic';
+    micBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    if (on) setStatus('listening...', 'running');
+    else if (!running && statusEl.textContent === 'listening...') setStatus('idle');
+  }
+
+  function setupSpeechRecognition() {
+    var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      micBtn.disabled = true;
+      micBtn.title = 'Speech recognition is not available in this browser';
+      return;
+    }
+    recognition = new SpeechRecognition();
+    recognition.lang = 'en-US';
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+    recognition.onstart = function () { setRecognizing(true); };
+    recognition.onend = function () { setRecognizing(false); input.focus(); };
+    recognition.onerror = function (e) {
+      setRecognizing(false);
+      addChip('speech input error: ' + (e && e.error ? e.error : 'unknown'));
+    };
+    recognition.onresult = function (e) {
+      var interim = '';
+      for (var i = e.resultIndex; i < e.results.length; i++) {
+        var text = e.results[i][0] && e.results[i][0].transcript ? e.results[i][0].transcript : '';
+        if (e.results[i].isFinal) speechFinal += text + ' ';
+        else interim += text;
+      }
+      input.value = (speechBase + ' ' + speechFinal + ' ' + interim).replace(/\s+/g, ' ').trim();
+    };
+  }
+
+  function toggleDictation() {
+    if (!recognition) return;
+    if (recognizing) {
+      recognition.stop();
+      return;
+    }
+    if (running) {
+      addChip('wait for the current agent run to finish before dictating a new prompt');
+      return;
+    }
+    speechBase = input.value.trim();
+    speechFinal = '';
+    try { recognition.start(); } catch (e) { addChip('speech input could not start'); }
+  }
+  setupSpeechRecognition();
+
+  function renderClaudeEvent(j) {
+    if (j.type === 'system' && j.subtype === 'init') {
+      if (j.session_id) setSessionForCurrentEngine(j.session_id);
+      addChip('session ' + (j.session_id ? j.session_id.slice(0, 8) : '?') + ' · ' + (j.model || 'model') + ' · ' + ((j.tools || []).length) + ' tools');
+      return;
+    }
+    if (j.type === 'assistant' && j.message && j.message.content) {
+      j.message.content.forEach(function (c) {
+        if (c.type === 'thinking' && c.thinking) addRow('thinking', 'thinking', c.thinking);
+        else if (c.type === 'text' && c.text) addRow('assistant', 'agent', c.text);
+        else if (c.type === 'tool_use') {
+          toolCount++;
+          var arg = c.input && (c.input.command || c.input.file_path || c.input.pattern);
+          var label = arg ? String(arg) : JSON.stringify(c.input || {});
+          var trow = addRow('tool', 'tool · ' + c.name, '', true);
+          trow.innerHTML = '<span class="toolname">' + escapeHtml(c.name) + '</span> <span class="run" style="font-size:11px;color:#fbbf24">▶ running</span>  ' + escapeHtml(label);
+          if (c.id) toolRows[c.id] = trow;
+        }
+      });
+      return;
+    }
+    if (j.type === 'user' && j.message && j.message.content) {
+      j.message.content.forEach(function (c) {
+        if (c.type === 'tool_result') {
+          var trow = c.tool_use_id && toolRows[c.tool_use_id];
+          if (trow) { var rr = trow.querySelector('.run'); if (rr) { rr.textContent = '✓'; rr.style.color = '#34d399'; } }
+          var t = typeof c.content === 'string' ? c.content : JSON.stringify(c.content);
+          addRow('result-block', 'result', t || '(empty)');
+        }
+      });
+      return;
+    }
+    if (j.type === 'result') {
+      if (j.session_id) setSessionForCurrentEngine(j.session_id);
+      if (j.is_error && j.result) addRow('err', 'error', j.result);
+      var secs = j.duration_ms ? (j.duration_ms / 1000).toFixed(1) + 's' : '';
+      addDone('done · ' + (j.num_turns || '?') + ' turns · ' + secs);
+      return;
+    }
+  }
+
+  function renderCodexEvent(j) {
+    if (j.type === 'thread.started') { if (j.thread_id) setSessionForCurrentEngine(j.thread_id); addChip('codex thread ' + (j.thread_id ? j.thread_id.slice(0, 8) : '?')); return; }
+    if (j.type === 'turn.started') { addChip('codex turn started'); return; }
+    if (j.type === 'turn.completed') { addDone('done' + (j.usage ? ' · ' + (j.usage.output_tokens || 0) + ' out tok' : '')); return; }
+    if (j.type === 'item.started' || j.type === 'item.completed') {
+      var it = j.item || {}; var done = j.type === 'item.completed';
+      if (it.type === 'agent_message') { if (done && it.text) addRow('assistant', 'codex', it.text); }
+      else if (it.type === 'reasoning') { var tx = it.text || it.summary; if (done && tx) addRow('thinking', 'reasoning', tx); }
+      else if (it.type === 'command_execution') {
+        if (!done) {
+          toolCount++;
+          var crow = addRow('tool', 'tool · bash', '', true);
+          crow.innerHTML = '<span class="toolname">bash</span> <span class="run" style="font-size:11px;color:#fbbf24">▶ running</span>  ' + escapeHtml(it.command || '');
+          if (it.id) toolRows[it.id] = crow;
+        } else {
+          var drow = it.id && toolRows[it.id];
+          if (drow) { var r = drow.querySelector('.run'); if (r) { r.textContent = it.exit_code === 0 ? '✓' : ('exit ' + it.exit_code); r.style.color = it.exit_code === 0 ? '#34d399' : '#f87171'; } }
+          var out = it.aggregated_output || it.output; if (out) addRow('result-block', 'result', String(out).slice(0, 6000));
+        }
+      } else if (done) { addRow('tool', 'codex · ' + (it.type || 'item'), JSON.stringify(it).slice(0, 300)); }
+      return;
+    }
+  }
+
+  function renderEvent(j) {
+    if (engineSel.value === 'codex') renderCodexEvent(j); else renderClaudeEvent(j);
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"]/g, function (ch) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch];
+    });
+  }
+
+  function handleFrame(frame) {
+    var lines = frame.split('\n');
+    var event = null; var dataLines = [];
+    for (var i = 0; i < lines.length; i++) {
+      var ln = lines[i];
+      if (ln.charAt(0) === ':') { lastActivity = Date.now(); continue; } // heartbeat = liveness
+      if (ln.indexOf('event: ') === 0) event = ln.slice(7);
+      else if (ln.indexOf('data: ') === 0) dataLines.push(ln.slice(6));
+    }
+    if (!dataLines.length) return;
+    var data = dataLines.join('\n');
+    bump();
+    if (event && event !== 'stderr') {
+      if (event === 'bridge_error') { var e; try { e = JSON.parse(data); } catch (x) { e = { error: data }; } addRow('err', 'error', e.error || data); if (e.logFilePath) addChip('log ' + e.logFilePath); setStatus('error', 'error'); }
+      else if (event === 'bridge_start') {
+        var s; try { s = JSON.parse(data); } catch (x) { s = {}; }
+        addChip('bridge started · ' + (s.engine || engineSel.value) + ' · ' + (s.command || 'agent') + ' ' + ((s.args || []).slice(0, 3).join(' ')));
+      }
+      else if (event === 'bridge_done') {
+        var d; try { d = JSON.parse(data); } catch (x) { d = {}; }
+        addDone('bridge done · exit ' + (d.exitCode == null ? '?' : d.exitCode) + (d.timedOut ? ' · timed out' : ''));
+        if (d.exitCode && d.exitCode !== 0 && d.logFilePath) addRow('err', 'error', 'Agent process exited with ' + d.exitCode + '. Log: ' + d.logFilePath);
+        if (statusEl.className !== 'error') setStatus('idle');
+      }
+      return;
+    }
+    if (event === 'stderr') {
+      try {
+        var se = JSON.parse(data);
+        var txt = String(se.text || '').trim();
+        if (txt) addChip(txt.length > 160 ? txt.slice(0, 157) + '...' : txt);
+      } catch (x) {}
+      return;
+    }
+    try { renderEvent(JSON.parse(data)); } catch (x) { /* partial / non-json (codex 'Reading prompt...') */ }
+  }
+
+  function send() {
+    var text = input.value.trim();
+    if (!text || running) return;
+    var simpleMode = isSimplePrompt(text);
+    input.value = '';
+    addRow('user', 'you', text);
+    controller = new AbortController();
+    setRunning(true); setStatus('running…', 'running');
+
+    var payload = {
+      input: text,
+      engine: engineSel.value,
+      permissionMode: simpleMode ? 'default' : (bypass.checked ? 'bypassPermissions' : 'default'),
+      appendSystemPrompt: simpleMode ? SIMPLE_BRIEF : SYSTEM_BRIEF,
+      timeoutSeconds: simpleMode ? 120 : 1800
+    };
+    if (engineSel.value === 'codex') { if (modelSel.value) payload.codexModel = modelSel.value; }
+    else if (modelSel.value) payload.model = modelSel.value;
+    sessionId = sessionByEngine[engineSel.value] || null;
+    if (sessionId) payload.sessionId = sessionId;
+
+    var headers = { 'Content-Type': 'application/json' };
+    var apiKey = apikeyEl.value.trim();
+    if (apiKey) headers['x-api-key'] = apiKey;
+
+    fetch('agent-stream', {
+      method: 'POST',
+      headers: headers,
+      credentials: 'include',
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    }).then(function (res) {
+      if (!res.ok || !res.body) {
+        if (res.status === 401) {
+          addRow('err', 'error', 'HTTP 401 — no valid Immich session at this URL. Open the console at the same URL you use to log into Immich, OR paste an Immich API key in the box up top (Account Settings → API Keys) and Send again.');
+          apikeyEl.focus();
+        } else {
+          addRow('err', 'error', 'stream failed: HTTP ' + res.status);
+        }
+        setStatus('error', 'error'); setRunning(false); return;
+      }
+      var reader = res.body.getReader();
+      var dec = new TextDecoder();
+      var buf = '';
+      function pump() {
+        return reader.read().then(function (r) {
+          if (r.done) { setRunning(false); if (statusEl.className !== 'error') setStatus('idle'); return; }
+          buf += dec.decode(r.value, { stream: true });
+          var idx;
+          while ((idx = buf.indexOf('\n\n')) >= 0) {
+            handleFrame(buf.slice(0, idx));
+            buf = buf.slice(idx + 2);
+          }
+          return pump();
+        });
+      }
+      return pump();
+    }).catch(function (e) {
+      if (e && e.name === 'AbortError') { addChip('■ stopped by you'); if (statusEl.className !== 'error') setStatus('idle'); }
+      else { addRow('err', 'error', 'stream error: ' + (e && e.message ? e.message : e)); setStatus('error', 'error'); }
+      setRunning(false);
+    });
+  }
+
+  function stop() {
+    if (controller) { try { controller.abort(); } catch (e) {} }
+    setStatus('stopping…', 'running');
+  }
+
+  function isSimplePrompt(text) {
+    var t = String(text || '').toLowerCase().replace(/[^\w\s?]/g, '').replace(/\s+/g, ' ').trim();
+    if (!t) return false;
+    if (/^(hi|hello|hey|yo|ping|test|testing|working|are you there|you there|status)$/.test(t)) return true;
+    if (/^(hi|hello|hey)\b/.test(t) && t.length <= 80) return true;
+    if (/^how are you\b/.test(t) && t.length <= 80) return true;
+    if (/^(is this working|are you working|can you hear me)\??$/.test(t)) return true;
+    return false;
+  }
+
+  sendBtn.addEventListener('click', send);
+  stopBtn.addEventListener('click', stop);
+  micBtn.addEventListener('click', toggleDictation);
+  newBtn.addEventListener('click', function () {
+    setSessionForCurrentEngine(null);
+    transcript.innerHTML = '';
+    addChip('New ' + (engineSel.value === 'codex' ? 'Codex' : 'Claude') + ' session started.');
+    input.focus();
+  });
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+  });
+})();
+</script>
+</body>
+</html>

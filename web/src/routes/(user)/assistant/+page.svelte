@@ -16,6 +16,11 @@
   import { onMount, tick } from 'svelte';
   import type { PageData } from './$types';
 
+  // The Assistant sidebar entry now opens the streaming agent console (Claude/Codex).
+  if (browser) {
+    location.replace('/api/assistant/agent-console');
+  }
+
   type AssistantProvider = 'auto' | 'claude-cli' | 'codex-cli' | 'openai' | 'anthropic';
 
   type AssistantAction = {

@@ -28,3 +28,6 @@ vite.config.js.timestamp-*
 .devcontainer/.env*
 *.tsbuildinfo
 *.tsbuildInfo
+
+# Local-only build/deploy artifacts (docker image tarballs, web build bundles) — not for git history
+/build/
