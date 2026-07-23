@@ -31,3 +31,6 @@ vite.config.js.timestamp-*
 
 # Local-only build/deploy artifacts (docker image tarballs, web build bundles) — not for git history
 /build/
+
+# Assistant CLI bridge runtime state: rolling-checkpoint session summaries + tracking
+/assistant-agent-sessions/

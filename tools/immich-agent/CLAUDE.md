@@ -28,7 +28,9 @@ AGENTS.md's `/external/desktop-icloud-originals` and `/external/laptop-backup` w
 
 ## Tool inventory
 - **Immich assistant API** (reversible, journaled): `index-runs` (persisted, backgrounded census: source/dates/camera/GPS/dims + noise & risk labels + content SHA1 + raw-inventory of on-disk-but-unimported files); `deterministicAudits.organizationCoveragePlan` + `coverageExecutionLedger` (ordered work queue proving every asset is covered/deferred/risky/unclassified); `POST /assistant/tool` read-only audits (`content_hash_audit`, `sidecar_pair_audit`, `metadata_search`, `mobile_original_compare`); `review-album` / `review-plan`; `mutation` + `undo`.
-- **Out-of-Immich**: `tools/photo-file-organizer.mjs` — `plan` / `reconcile-plan` (read-only, content-SHA1 vs an existing originals tree) / `apply` (journals before any move; dupes→quarantine, new→dated event folders) / `undo`. Moves run on the raw `/volume1` tree (Immich mounts are read-only).
+- **Out-of-Immich**: `tools/photo-file-organizer.mjs` — `plan` / `reconcile-plan` / `apply` (journals before any move; dupes→quarantine, new→dated event folders) / `undo` / `status`. Moves run on the raw `/volume1` tree (Immich mounts are read-only).
+  - **`reconcile-plan --perceptual`** (use for the big dedup pass): exact content-SHA1 PLUS perceptual dHash near-dup grouping via a BK-tree (`--phash-distance`, default 5). Groups same-photo-different-resolution and **RAW (NEF/CR2/DNG) vs its exported JPEG** (hashes the exiftool embedded preview); **keeps the LARGEST file** of each visual group, quarantines the smaller copies; never touches the `--originals` tree (a source matching an existing original is quarantined, flagged `largerThanOriginalMatch`). Undecodable files are kept (`perceptualHashStatus=unavailable`), never dropped.
+  - **Long-run protocol**: launch DETACHED with `--progress-file` + `--resume-file`, artifacts under `/volume1/docker/immich/agent/` (durable). Poll `status --progress-file <p>` (phase/percent, `stalled` if pid died). Re-running the same command with the same `--resume-file` resumes (skips already-hashed files).
 
 ## Organization methodology (every phase read-only until approved; every mutation journaled + undoable)
 1. **Census** — index-runs / organizer plan across the tree; classify real media vs noise vs unknown; content-hash.
@@ -53,12 +55,13 @@ AGENTS.md's `/external/desktop-icloud-originals` and `/external/laptop-backup` w
 - Reorganizing source files that are also an Immich external library changes paths → plan an Immich rescan to avoid desync.
 
 ## Missing functionality (ranked by impact on the 1–2M dedup/missing goal)
-1. **Persistent golden hash catalog** — `reconcile-plan` re-hashes both sides each run; at 1–2M that must become a cached sqlite manifest with incremental updates. Foundation for everything below.
-2. **Perceptual near-duplicate detection** — SHA1 only catches byte-identical; re-exports/resizes/HEIC↔JPG are the same photo, different bytes. Needs pHash/dHash or Immich CLIP similarity.
+1. ✅ **DONE 2026-07-22 — Resumable hash cache**: `reconcile-plan --resume-file PATH` caches sha1+phash keyed by path+size+mtime (append-only JSONL); a killed/rebooted scan re-run with the same file skips already-hashed files. (A shared cross-run sqlite manifest is still a future nicety, but resumability — the blocker — is solved.)
+2. ✅ **DONE 2026-07-22 — Perceptual near-duplicate detection**: `reconcile-plan --perceptual` (dHash + BK-tree, largest-wins, RAW-vs-JPEG via embedded preview). Verified on real NEFs.
 3. **Unified cross-share catalog** — "missing" only means something against the union of all curated locations (originals_clean + photo/originals + Immich store).
-4. **Long-running job manager** (pause/resume/cancel); index-runs don't survive a server restart yet.
-5. **folder_move + duplicate_resolution apply** still blocked (no typed undo).
+4. **Long-running job manager** (pause/resume/cancel) — partially addressed: `--progress-file` + `status` (with `stalled` detection) + `--resume-file` give launch/poll/resume; a unified multi-job manager is still open. Immich `index-runs` now persist in Postgres.
+5. **folder_move + duplicate_resolution apply** — `duplicate_resolution` now has typed undo (shipped); `folder_move` stays apply-blocked (physical moves go through the organizer).
 6. **MCP safety layer** so agent mutations are forced through the journal/undo contract instead of raw shell.
+7. **Agent context self-management** ✅ DONE 2026-07-22 — bridge rolling checkpoint (auto-summarize + reseed past 120k tokens / 40 turns).
 
 ## Working preferences
 - Subscription only, no API fees. Continue autonomously when safe; ask only true blockers. Reversibility over speed. Lead answers with the outcome; cite exact tools/paths/counts; no shallow summaries — gather evidence before concluding.

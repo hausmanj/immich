@@ -38,6 +38,7 @@
   .row { display: flex; flex-direction: column; gap: 4px; }
   .role { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: #64748b; }
   .user .bubble { background: #1d2836; border: 1px solid #2b3b52; }
+  .queued .bubble { background: #221d36; border: 1px dashed #4c3b72; color: #c8bbf7; }
   .bubble {
     background: #161c24; border: 1px solid #232c37; border-radius: 10px; padding: 10px 12px;
     white-space: pre-wrap; word-break: break-word;
@@ -133,6 +134,8 @@
   var sessionId = null;
   var sessionByEngine = { claude: null, codex: null };
   var running = false;
+  var promptQueue = [];
+  var processingQueuedPrompt = false;
   var controller = null;
   var runStart = 0, evCount = 0, toolCount = 0, lastActivity = 0, liveTimer = null;
   var toolRows = {};
@@ -210,14 +213,15 @@
   function tickLive() {
     if (!running) { liveEl.textContent = ''; return; }
     var idle = Math.floor((Date.now() - lastActivity) / 1000);
-    liveEl.textContent = '▶ ' + fmtElapsed(Date.now() - runStart) + '  ' + toolCount + ' tools  ' + evCount + ' events  · last activity ' + idle + 's ago';
+    liveEl.textContent = '▶ ' + fmtElapsed(Date.now() - runStart) + '  ' + toolCount + ' tools  ' + evCount + ' events' + (promptQueue.length ? '  · ' + promptQueue.length + ' queued' : '') + '  · last activity ' + idle + 's ago';
     liveEl.style.color = idle > 90 ? '#fbbf24' : '#64748b';
   }
   function bump() { lastActivity = Date.now(); evCount++; }
   function setRunning(on) {
     running = on;
-    sendBtn.disabled = on; stopBtn.disabled = !on; engineSel.disabled = on;
+    sendBtn.disabled = false; stopBtn.disabled = !on; engineSel.disabled = on;
     modelSel.disabled = on;
+    sendBtn.textContent = on ? 'Queue' : 'Send';
     if (on) { runStart = Date.now(); lastActivity = Date.now(); evCount = 0; toolCount = 0; toolRows = {}; liveTimer = setInterval(tickLive, 1000); tickLive(); }
     else { if (liveTimer) clearInterval(liveTimer); liveTimer = null; controller = null; liveEl.textContent = ''; }
   }
@@ -232,9 +236,11 @@
     '- Synology: exactly `ssh -p 22222 hausmanj@drhaus` (NAS data under /volume1). Run near the data for bulk file inventory/hashing.',
     '- Immich container: `ssh -p 22222 hausmanj@drhaus /usr/local/bin/docker exec immich-server ...` for /data, /external, and the Immich API on http://127.0.0.1:2283.',
     '- Immich assistant API (already built, reversible): persisted index-runs (POST/GET /api/assistant/index-runs) record source folder/type/size/dims/dates/camera/GPS + noise & risk labels + content SHA1 + raw-inventory of files on disk not imported; deterministicAudits.organizationCoveragePlan and coverageExecutionLedger (ordered work queue proving every asset is covered/deferred/risky/unclassified); read-only tools via POST /api/assistant/tool (content_hash_audit, sidecar_pair_audit, metadata_search, mobile_original_compare); reversible review albums (review-album, review-plan); journaled mutations + undo (metadata_edit, archive_favorite, stack_change apply+undo work; folder_move and duplicate_resolution are apply-BLOCKED until typed undo exists).',
-    '- Outside Immich (source files): /Users/johnhausman/source/immich/tools/photo-file-organizer.mjs with plan / reconcile-plan (read-only, content-SHA1) / apply (writes a typed journal before any move; duplicates -> quarantine, new files -> date-prefixed event folders like "2012-10-15 French Polynesia") / undo. Use this for physical NAS reorganization; the Immich external mounts are read-only, so moves run on the raw /volume1 tree, not inside the container.',
+    '- Outside Immich (source files): /Users/johnhausman/source/immich/tools/photo-file-organizer.mjs. For the big pre-import dedup pass ALWAYS use `reconcile-plan --perceptual`: on top of exact content-SHA1 it groups visually-identical copies that differ in bytes (same photo at different resolutions, and RAW like NEF/CR2/DNG vs its exported JPEG via embedded-preview hashing), keeps the LARGEST file of each visual group and quarantines the smaller copies (never deletes; never modifies the --originals tree — a source matching an existing original is quarantined and flagged largerThanOriginalMatch for manual review).',
+    '  This scan runs for HOURS over 1-2M files, so NEVER run it synchronously in one agent_command. Launch it DETACHED on the NAS and write every artifact under /volume1/docker/immich/agent/ (durable; NOT the ephemeral container /data): `nohup node tools/photo-file-organizer.mjs reconcile-plan --perceptual --source S --originals O --duplicates Q --plan-file /volume1/docker/immich/agent/plan.json --progress-file /volume1/docker/immich/agent/progress.json --resume-file /volume1/docker/immich/agent/resume.jsonl >/volume1/docker/immich/agent/run.log 2>&1 &`. Poll cheaply with `node tools/photo-file-organizer.mjs status --progress-file <path>` (reports phase/percent; flags `stalled` if the pid died) — never block on it or re-read the plan. If it stalls or the box reboots, re-run the SAME command with the same --resume-file and it resumes (already-hashed files are skipped).',
+    '  Only after reviewing the plan JSON run `apply` (writes a typed journal; moves dupes->quarantine, keepers->date-prefixed event folders like "2012-10-15 French Polynesia") then `undo` if needed. Use `reconcile-plan` without --perceptual only for a lighter exact-SHA1-only comparison. Immich external mounts are read-only, so moves run on the raw /volume1 tree, not inside the container.',
     '',
-    'METHOD (every phase read-only until the user approves; every mutation journaled + undoable): Phase 0 Census (run index-runs / organizer plan across the tree; classify real media vs noise vs unknown; content-hash). Phase 1 Signal-vs-noise (quarantine movie-art *-poster/-backdrop/-logo, thumbnails, caches, app/doc folders, Takeout/iMazing blobs via noise/smallDimension/generatedLike cohorts). Phase 2 Byte-level dedupe (fresh SHA1 groups; keep one canonical, quarantine the rest; filename variants -> review, never auto-delete). Phase 3 Cohorts (GPS is only an ANCHOR in old libraries; backbone = source folder + capture date + camera + EXIF/dimensions; build event cohorts first, then date/source/camera; DECOMPOSE broad containers like "Raw Photo and Video Files"/"Pictures"/"GoPro" with exact-folder audits before any album). Phase 4 Reversible review queues (review albums in Immich and/or dated event folders on the source tree). Phase 5 Guarded commit (albums/stacks/metadata in Immich; organizer apply for source files).',
+    'METHOD (every phase read-only until the user approves; every mutation journaled + undoable): Phase 0 Census (run index-runs / organizer plan across the tree; classify real media vs noise vs unknown; content-hash). Phase 1 Signal-vs-noise (quarantine movie-art *-poster/-backdrop/-logo, thumbnails, caches, app/doc folders, Takeout/iMazing blobs via noise/smallDimension/generatedLike cohorts). Phase 2 Dedupe (reconcile-plan --perceptual = exact SHA1 + perceptual near-dupes incl. RAW-vs-JPEG and resolution variants; keep the LARGEST copy of each visual group as canonical, quarantine the rest; never auto-delete). Phase 3 Cohorts (GPS is only an ANCHOR in old libraries; backbone = source folder + capture date + camera + EXIF/dimensions; build event cohorts first, then date/source/camera; DECOMPOSE broad containers like "Raw Photo and Video Files"/"Pictures"/"GoPro" with exact-folder audits before any album). Phase 4 Reversible review queues (review albums in Immich and/or dated event folders on the source tree). Phase 5 Guarded commit (albums/stacks/metadata in Immich; organizer apply for source files).',
     '',
     'SAFETY: read-only by default; never delete; never bypass the journal/undo path with raw shell mutations; if reorganizing source files that are ALSO an Immich external library, note the path-desync and plan an Immich rescan.',
     '',
@@ -341,6 +347,18 @@
     transcript.appendChild(c); scroll();
   }
   function setStatus(s, cls) { statusEl.textContent = s; statusEl.className = cls || ''; }
+  function updateQueueStatus() {
+    if (running && promptQueue.length) setStatus('running · ' + promptQueue.length + ' queued', 'running');
+  }
+  function processNextQueuedPrompt() {
+    if (running || statusEl.className === 'error' || !promptQueue.length) return;
+    var next = promptQueue.shift();
+    processingQueuedPrompt = true;
+    input.value = next.text;
+    addChip('processing queued input' + (promptQueue.length ? ' · ' + promptQueue.length + ' still queued' : ''));
+    send();
+    processingQueuedPrompt = false;
+  }
 
   function setRecognizing(on) {
     recognizing = on;
@@ -348,7 +366,8 @@
     micBtn.textContent = on ? 'Stop' : 'Mic';
     micBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
     if (on) setStatus('listening...', 'running');
-    else if (!running && statusEl.textContent === 'listening...') setStatus('idle');
+    else if (running) setStatus(promptQueue.length ? 'running · ' + promptQueue.length + ' queued' : 'running…', 'running');
+    else if (statusEl.textContent === 'listening...') setStatus('idle');
   }
 
   function setupSpeechRecognition() {
@@ -384,10 +403,6 @@
     if (!recognition) return;
     if (recognizing) {
       recognition.stop();
-      return;
-    }
-    if (running) {
-      addChip('wait for the current agent run to finish before dictating a new prompt');
       return;
     }
     speechBase = input.value.trim();
@@ -510,10 +525,19 @@
 
   function send() {
     var text = input.value.trim();
-    if (!text || running) return;
+    if (!text) return;
+    if (running) {
+      promptQueue.push({ text: text, queuedAt: Date.now() });
+      input.value = '';
+      addRow('queued', 'you · queued #' + promptQueue.length, text);
+      updateQueueStatus();
+      tickLive();
+      input.focus();
+      return;
+    }
     var simpleMode = isSimplePrompt(text);
     input.value = '';
-    addRow('user', 'you', text);
+    addRow('user', processingQueuedPrompt ? 'you · queued input' : 'you', text);
     controller = new AbortController();
     setRunning(true); setStatus('running…', 'running');
 
@@ -554,7 +578,12 @@
       var buf = '';
       function pump() {
         return reader.read().then(function (r) {
-          if (r.done) { setRunning(false); if (statusEl.className !== 'error') setStatus('idle'); return; }
+          if (r.done) {
+            setRunning(false);
+            if (statusEl.className !== 'error') setStatus(promptQueue.length ? 'idle · queued' : 'idle');
+            processNextQueuedPrompt();
+            return;
+          }
           buf += dec.decode(r.value, { stream: true });
           var idx;
           while ((idx = buf.indexOf('\n\n')) >= 0) {
@@ -569,6 +598,7 @@
       if (e && e.name === 'AbortError') { addChip('■ stopped by you'); if (statusEl.className !== 'error') setStatus('idle'); }
       else { addRow('err', 'error', 'stream error: ' + (e && e.message ? e.message : e)); setStatus('error', 'error'); }
       setRunning(false);
+      if (statusEl.className !== 'error') processNextQueuedPrompt();
     });
   }
 

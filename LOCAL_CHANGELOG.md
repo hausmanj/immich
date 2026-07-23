@@ -2,6 +2,24 @@
 
 This file tracks local-only changes in this checkout that have not necessarily been pulled from upstream Immich.
 
+## 2026-07-22 - Synology-wide media census
+
+- Added `tools/media-census.py`, a read-only, SQLite-backed filesystem census for the 1-2M-file NAS discovery phase.
+  - It inventories photo, camera-RAW, and video candidates by extension without opening or hashing media bytes.
+  - Directory work is persisted in `scan_directory`; media paths are upserted into `media_file` and linked to each run through `scan_media_file`, so an interrupted scan can resume without duplicate rows or restarting completed directories.
+  - Progress, errors, exclusions, share/extension/kind counts, byte totals, inode/device identity, and final summaries are durable.
+  - Symlinks are never followed.
+  - `JellyfinMedia` is a protected case-insensitive path-component exclusion in code, not an optional run-time filter.
+  - DSM top-level `@*` infrastructure and `@eaDir` thumbnail indexes are excluded; user shares, Docker application trees, download/video shares, home folders, web uploads, and recycle folders remain visible for later signal/noise classification.
+- Started the first whole-namespace census on Synology:
+  - root: `/volume1`;
+  - run id: `7430d3fb-c21d-42e2-ae21-c2bf41b0ecb6`;
+  - catalog: `/volume1/photosync/assistant-census/media-census.sqlite`;
+  - progress: `/volume1/photosync/assistant-census/volume1-progress.json`;
+  - final summary: `/volume1/photosync/assistant-census/volume1-summary.json`;
+  - log: `/volume1/photosync/assistant-census/volume1-census-20260722.log`.
+- Local fixture validation passed: one image and one video were cataloged; `JellyfinMedia`, top-level `@*`, and nested `@eaDir` media were excluded; a directory symlink was skipped; zero errors were recorded.
+
 ## 2026-07-22 - True streaming agent engine (Claude Code via bridge)
 
 - Goal: replace the single-shot "basic assistant" with a real agentic loop ("agents window like Claude Code") that runs on the Mac Claude Code subscription (NO paid API), surfaced inside Immich, to organize 1-2M assets.
@@ -11,6 +29,7 @@ This file tracks local-only changes in this checkout that have not necessarily b
 - Voice customization follow-up: added browser speech controls to `agent-console.html` for voice selection, speed, pitch, and volume. These settings are stored in localStorage and apply to every rendered assistant text response, so they work for both Claude and ChatGPT/Codex because speech synthesis is handled entirely in the shared browser console layer.
 - Voice dropdown follow-up: filtered the browser voice selector to English voices only, plus the system default option, to avoid the long list of non-English Chrome/macOS voices.
 - Console preference follow-up: selected engine and per-engine model are now persisted in localStorage, so reloading the standalone console preserves ChatGPT/Codex vs Claude instead of defaulting back to Claude.
+- Live input follow-up: the standalone console now accepts typed or dictated prompts while an agent stream is active. New prompts are shown immediately as queued input, the live status shows the queue depth, and queued turns are submitted automatically in order as soon as the active `claude --print` / `codex exec` stream finishes.
 - Codex resume follow-up: `codex exec resume` does not accept `-C`; the bridge now relies on spawned cwd for resumed Codex turns and appends `-` after the session ID so the new prompt is read from stdin. Simple greeting/status prompts no longer resume prior sessions, preventing stale context from dragging in tool-heavy behavior.
 - Root cause of the old "basic assistant" (confirmed in code + AGENTS.md):
   1. Bridge invoked the brain as `claude --print --output-format json` (one-shot text completion), collapsing the full Claude Code agent into a single answer.
