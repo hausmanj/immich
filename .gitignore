@@ -38,3 +38,7 @@ vite.config.js.timestamp-*
 # Dedup-agent container carries synced COPIES of the canonical tools/ scripts (avoid drift in git;
 # they are copied fresh from tools/ at deploy time — see tools/dedup-agent/README.md)
 /tools/dedup-agent/app/tools/
+
+# Build artifacts for the organizer progress monitor (compiled from organizer-progress-monitor.swift)
+/tools/__pycache__/
+/tools/OrganizerProgressMonitor.app/

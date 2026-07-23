@@ -6,6 +6,7 @@ container with **no coupling to the Immich image** — Immich rebuilds (which ha
 affect it. The second agent (final album organizing *inside* Immich) is deferred.
 
 ## Architecture
+- The standalone console UI is kept in sync with `tools/immich-agent/agent-console.html`; update both deployment targets together when changing layout, bridge status, prompts, or execution-host guidance.
 - **Brain:** Claude/Codex on the Mac (subscription, no paid API), reached over the existing bridge (`3737`)
   + reverse tunnel (`0.0.0.0:43737` on the NAS). Unchanged.
 - **This container** (`photo-dedup-agent`, NAS): serves the dedup console UI and **SSE-proxies** `/agent-stream`

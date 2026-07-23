@@ -127,7 +127,8 @@ VIDEO_EXTENSIONS = {
 
 # This is an operating boundary, not merely a default CLI preference.
 PROTECTED_EXCLUDED_COMPONENTS = {"jellyfinmedia"}
-DEFAULT_EXCLUDED_COMPONENTS = {"@eadir"}
+DEFAULT_EXCLUDED_COMPONENTS = {"@eadir", "#recycle", "#snapshot", ".stversions", ".stfolder", "thumbs", "encoded-video"}
+DEFAULT_EXCLUDED_TOP_LEVEL_NAMES = {"downloads", "docker", "jellyfinmedia", "music"}
 
 
 SCHEMA = """
@@ -272,12 +273,17 @@ def exclusion_reason(
     relative = os.path.relpath(path, root)
     components = relative.split(os.sep)
     folded = {component.casefold() for component in components}
+    if any(component.startswith("._") for component in folded):
+        return "excluded_component:._*"
     protected = folded.intersection(PROTECTED_EXCLUDED_COMPONENTS)
     if protected:
         return "protected_component:JellyfinMedia"
     configured = folded.intersection(excluded_components)
     if configured:
         return f"excluded_component:{sorted(configured)[0]}"
+    top_level = folded.intersection(DEFAULT_EXCLUDED_TOP_LEVEL_NAMES)
+    if len(components) == 1 and top_level:
+        return f"excluded_top_level:{sorted(top_level)[0]}"
     if len(components) == 1 and excluded_top_level_prefixes and components[0].startswith(excluded_top_level_prefixes):
         return "excluded_top_level_system_tree"
     return None
@@ -516,6 +522,19 @@ def scan_directory(
                         continue
                     if not entry.is_file(follow_symlinks=False):
                         continue
+                    reason = exclusion_reason(
+                        root,
+                        path,
+                        excluded_components,
+                        excluded_top_level_prefixes,
+                    )
+                    if reason:
+                        connection.execute(
+                            "INSERT OR IGNORE INTO scan_exclusion(run_id, path, reason) VALUES (?, ?, ?)",
+                            (run_id, path, reason),
+                        )
+                        exclusions += 1
+                        continue
                     files_seen += 1
                     identified = media_kind(entry.name)
                     if not identified:
@@ -620,6 +639,7 @@ def run_scan(arguments: argparse.Namespace) -> int:
     policy = {
         "protectedExcludedComponents": sorted(PROTECTED_EXCLUDED_COMPONENTS),
         "excludedComponents": sorted(excluded_components),
+        "excludedTopLevelNames": sorted(DEFAULT_EXCLUDED_TOP_LEVEL_NAMES),
         "excludedTopLevelPrefixes": sorted(arguments.exclude_top_level_prefix),
         "followSymlinks": False,
         "detection": "extension",

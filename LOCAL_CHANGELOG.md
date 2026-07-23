@@ -2,6 +2,32 @@
 
 This file tracks local-only changes in this checkout that have not necessarily been pulled from upstream Immich.
 
+## 2026-07-23 - Current NAS assistant state and rollback boundary
+
+- There are two NAS-facing assistant windows and they must remain consistent:
+  - Immich-hosted console: `tools/immich-agent/agent-console.html`, served at `/api/assistant/agent-console` from the Synology `immich-server` container.
+  - Standalone NAS dedup console: `tools/dedup-agent/app/console.html`, served by `photo-dedup-agent`.
+- Both consoles retain the previously implemented split conversation/tool layout, draggable divider, compact tool rows, persistent conversation where configured, queued live input, bridge health/error states, voice controls, and image-paste support. The Mac terminal/bridge UI is a separate surface.
+- The Haus AI sidebar, palette redesign, emblem favicon, logo asset, and favicon endpoint were explicitly rejected and fully rolled back. Do not reintroduce them unless explicitly requested again.
+- A targeted chat-input fix remains deployed: the footer input wrapper and `#input` textarea have explicit full-width sizing so the typing area does not collapse.
+- Current deployment after rollback: `photo-dedup-agent` restarted successfully; `immich-server` restarted successfully and was observed in normal `health: starting` warm-up state immediately afterward. Verify health before diagnosing a failure.
+
+## 2026-07-23 - Three Immich instance boundary
+
+- Recorded the authoritative library topology:
+  - `immich-server` on Synology: assistant-enabled instance for the newest iPhone -> iCloud -> Mac -> NAS transfer pipeline.
+  - `immichgo` on Synology: separate stack, with its own Postgres/ML, indexing the laptop-backup photo collection.
+  - Local Immich on the Mac: viewer/index for Google Photos folders stored on an external hard drive; those files are not on the NAS or Mac internal storage.
+- Reports, progress checks, and counts must identify the instance and must not mix these three datasets.
+
+## 2026-07-23 - Exclude Immich derivatives from filesystem scans
+
+- Future census and organizer runs exclude Synology metadata/system paths plus Immich-generated `thumbs` and `encoded-video` directories.
+- Scans rooted at `/volume1` also exclude `/volume1/downloads`, `/volume1/docker`, `/volume1/JellyfinMedia`, and `/volume1/music`.
+- Original media under Immich `upload` directories remains in scope.
+- Updated canonical scripts and the standalone NAS dedup-agent copy; no existing files were deleted or moved.
+- `._*` files are now excluded as files as well as directories.
+
 ## 2026-07-22 - Synology-wide media census
 
 - Added `tools/media-census.py`, a read-only, SQLite-backed filesystem census for the 1-2M-file NAS discovery phase.
@@ -18,6 +44,18 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - progress: `/volume1/photosync/assistant-census/volume1-progress.json`;
   - final summary: `/volume1/photosync/assistant-census/volume1-summary.json`;
   - log: `/volume1/photosync/assistant-census/volume1-census-20260722.log`.
+- The whole-namespace census completed successfully at `2026-07-23T02:37:36.684433Z` after about 2 hours 13 minutes.
+  - It scanned 418,461 directories and 6,663,342 filesystem entries.
+  - It cataloged 5,855,855 extension-matched media candidates totaling 6,749,783,592,660 bytes: 5,735,870 images and 119,985 videos.
+  - This is a namespace census, not a count of real personal originals. The dominant result is application-generated derivatives:
+    - `/volume1/photosync/uploads_immich`: 4,767,264 files / 3,535,384,332,351 bytes, consisting only of 4,662,496 thumbnails and 104,768 encoded videos;
+    - `/volume1/docker/photoprism/storage`: 817,734 files / 49,326,046,763 bytes, consisting of 805,680 cache files plus 12,054 sidecar files;
+    - `/volume1/docker/jellyfin`: 126,357 image files / 57,485,696,221 bytes under `config` and `cache`.
+  - Primary source/review cohorts, before hashing or deduplication, are approximately 83,411 paths / 701.7 GB after excluding the apparent duplicate mirror `/volume1/photo/originals` and excluding app derivatives/entertainment trees. The main cohorts are `photosync/originals_clean` (29,826), `photosync/uploads_macbookpro` (27,053), `web/uploads_nextcloud` (12,514), `photosync/uploads_imazing` (6,240), `photo/archive` (5,361), `backups` (2,060; needs classification), `homes/hausmanj` (241; needs classification), and `photosync/hold` (116).
+  - `/volume1/photosync/originals_clean` and `/volume1/photo/originals` each contain 29,826 cataloged paths and exactly the same aggregate bytes. 29,825 relative paths also have the same file size; one path exists only on each side. This is a high-confidence mirror/copy candidate, but content hashing is still required before any duplicate action.
+  - No same-device/inode groups were present, so the apparent originals mirror is not represented as hardlinks in the catalog.
+  - The 28 scan errors were permission/race errors in application/database paths plus `/volume1/web/web_images`; neither `/volume1/photosync` nor `/volume1/photo` had a census error.
+  - HARD SCOPE RULE: questions about this Synology-wide catalog must be answered from the SQLite census, not Immich Postgres or Immich's `assistant_index_*` tables.
 - Local fixture validation passed: one image and one video were cataloged; `JellyfinMedia`, top-level `@*`, and nested `@eaDir` media were excluded; a directory symlink was skipped; zero errors were recorded.
 
 ## 2026-07-22 - True streaming agent engine (Claude Code via bridge)
@@ -29,6 +67,7 @@ This file tracks local-only changes in this checkout that have not necessarily b
 - Voice customization follow-up: added browser speech controls to `agent-console.html` for voice selection, speed, pitch, and volume. These settings are stored in localStorage and apply to every rendered assistant text response, so they work for both Claude and ChatGPT/Codex because speech synthesis is handled entirely in the shared browser console layer.
 - Voice dropdown follow-up: filtered the browser voice selector to English voices only, plus the system default option, to avoid the long list of non-English Chrome/macOS voices.
 - Console preference follow-up: selected engine and per-engine model are now persisted in localStorage, so reloading the standalone console preserves ChatGPT/Codex vs Claude instead of defaulting back to Claude.
+- Automatic prompt memory follow-up: every valid incoming agent-console prompt is now durably archived by the Mac bridge before Claude/Codex starts. Each prompt gets a mode-`0600` Markdown record and an accepted/dispatched/finished event trail in a daily JSONL index under `assistant-agent-sessions/prompt-archive/`; records include the full user and console/system prompts plus engine, model, requested/resulting session, cwd, tool/permission settings, status, and transcript-log path. The bridge fails closed if the initial archive cannot be written, `/health` exposes `promptArchive`, legacy `/claude` and `/codex` requests use the same archive, and the web console displays the saved path. An isolated HTTP/SSE smoke with a no-op model verified exact Unicode prompt preservation and all three lifecycle records without spending a provider turn.
 - Live input follow-up: the standalone console now accepts typed or dictated prompts while an agent stream is active. New prompts are shown immediately as queued input, the live status shows the queue depth, and queued turns are submitted automatically in order as soon as the active `claude --print` / `codex exec` stream finishes.
 - Codex resume follow-up: `codex exec resume` does not accept `-C`; the bridge now relies on spawned cwd for resumed Codex turns and appends `-` after the session ID so the new prompt is read from stdin. Simple greeting/status prompts no longer resume prior sessions, preventing stale context from dragging in tool-heavy behavior.
 - Root cause of the old "basic assistant" (confirmed in code + AGENTS.md):
@@ -202,14 +241,12 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - The initial pass records source directory, file extension, type, file size, dimensions, dates, camera/location fields, checksum semantics, GPS/camera presence, noise labels, risk labels, and JSON evidence.
   - Group generation currently covers source directories, file extensions, cameras, locations, noise labels, and risk labels.
   - Content-hash persistence is intentionally blocked for now; byte-level hash evidence still uses `content_hash_audit`.
-  - Smoke test through the API against `/external/desktop-icloud-originals` completed with `indexedAssets=1813` and `groupCount=89`; top groups included `path_checksum_only`, `no_gps`, `SONY DSC-HX100V`, `OLYMPUS IMAGING CORP. uT8000,ST8000`, and `/external/desktop-icloud-originals/Feb 24, 2012`.
   - A temporary API key named `Codex assistant index smoke test` was created for the smoke test and deleted afterward.
-- Runtime follow-up after importing the Desktop originals:
+- Runtime follow-up after development import testing:
   - Fixed assistant cohort SQL generation after chat produced `column "undefined" does not exist`.
   - Cause: Kysely raw SQL fragments used for dynamic full-library audit cohorts were interpolated incorrectly inside a larger raw query.
   - Fix: cohort SQL is now selected from trusted internal string helpers and inserted with `sql.raw(...)`; user-provided cohort keys remain parameterized.
   - Restarted `immich-server`; server startup logs were clean.
-  - The in-app assistant subsequently returned a full deterministic audit for `/external/desktop-icloud-originals`, including 1,824 external assets, 1,822 images, 2 videos, 2.92 GB, date span 2010-04-22 through 2012-12-27, source/date/camera/location cohorts, duplicate-candidate status, and cohort-backed review album actions.
   - A temporary local API key named `Codex local assistant smoke test` was created for probing and deleted afterward.
 - Added a first-pass authenticated Immich web assistant at `/assistant`.
   - Sidebar entry: `Assistant`.
@@ -287,7 +324,7 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - `sidecar_pair_audit` scans source directories for AAE/XMP/JSON sidecars, MOV paired-media candidates, and probable rendered/variant filename groups.
   - `mobile_original_compare` compares mobile-upload metadata cohorts against the Desktop originals reference prefix, using filename, file size, dimensions, EXIF date, make, and model.
   - Tool results are read-only and do not move, delete, tag, or alter source files.
-  - Follow-up change: assistant tools no longer impose scan/result limits. If a tool matches 1,824 assets or 100,000 assets, it processes every owner-scoped match and preserves every result/error.
+  - Follow-up change: assistant tools no longer impose scan/result limits. They process every owner-scoped match and preserve every result/error.
   - Follow-up change: large assistant tool outputs are written as complete JSON audit logs under `/data/assistant-audits` inside the server container, with full `resultCount`, `errorCount`, and `logFilePath` returned to the UI/chat. In Docker and Synology deployments this path should live inside the existing host folder mapped to container `/data`.
 - Added assistant action support for executable tools.
   - The LLM action schema now accepts `toolType` and `toolInput`.
@@ -320,22 +357,6 @@ This file tracks local-only changes in this checkout that have not necessarily b
 
 ### Assistant Tool Runtime Probe
 
-- `metadata_search` over `/external/desktop-icloud-originals` with `fileExtension=JPG` returned 1,822 matching assets and explicit truncation for a limited probe.
-- Full `content_hash_audit` over `/external/desktop-icloud-originals` completed for 1,824/1,824 assets:
-  - `hashedAssets=1824`;
-  - `errorCount=0`;
-  - `storedSha1ComparableAssets=0` because the imported external library uses `sha1-path`;
-  - `exactContentDuplicateGroupCount=0`.
-- No-limit tool probe after removing caps:
-  - `content_hash_audit` over `/external/desktop-icloud-originals` returned `complete=true`;
-  - `scannedAssets=1824`;
-  - `hashedAssets=1824`;
-  - `resultCount=1824`;
-  - `errorCount=0`.
-- Log-backed no-limit tool probe:
-  - `content_hash_audit` over `/external/desktop-icloud-originals` again returned `complete=true`, `scannedAssets=1824`, `hashedAssets=1824`, `resultCount=1824`, and `errorCount=0`;
-  - inline result rows were omitted from the chat/API payload because the full result set was written to `/data/assistant-audits/2026-07-20T11-36-08-089Z-content_hash_audit-6e99b3f4-2bb7-4ec7-b325-5fce710837d7.json`;
-  - the JSON log was verified inside `immich_server` at 856,341 bytes with 1,824 `results` rows and 0 `errors` rows.
 - Undo-safety runtime probe:
   - Created a one-asset assistant review album named `Codex undo smoke test album`;
   - verified the pre-change journal at `/data/assistant-audits/change-journal/2026-07-20T11-56-32-703Z-assistant_review_album_create-3d7a919a-f1e2-40d6-bf5f-5a56b0dae95b.json`;
@@ -380,8 +401,6 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - Added persisted group types for `inventory_kind`, `exact_content_duplicate`, `file_trait_duplicate`, `variant_family`, and `coverage_state`.
   - Fixed raw inventory double-counting by batch-filtering raw filesystem paths against already-indexed imported asset `originalPath` values before insertion.
   - Fixed file-trait duplicate grouping SQL and file-extension asset counts.
-  - Final corrected desktop smoke run `2dcd2584-0852-499f-85b3-7718b2d4723a` completed with `indexedAssets=1825`, `indexedImportedAssets=1813`, `indexedRawFiles=12`, `contentHashIndexedAssets=1825`, `contentHashErrorCount=0`, `uniqueContentHashCount=1825`, `groupCount=105`, and `variant_family=8`.
-  - The corrected run produced no exact-content duplicate groups. The 12 raw inventory entries are files present on disk but not imported as Immich assets, including `.DS_Store`, several `IMG_4596(1).JPG`-style variants, and nearby missed JPGs.
   - Follow-up after laptop-backup scan: changed `POST /assistant/index-runs` to return immediately with `status=running` and execute imported-asset indexing, raw inventory, content hashing, and grouping in the background.
   - Background index progress is persisted in the run summary with phases including `raw_inventory`, `content_hash`, and `grouping`.
   - Laptop-backup non-blocking smoke run `31f094f6-c9cc-485f-a7e9-f695184b37f5` returned from POST in 48 ms, then showed persisted progress with `indexedImportedAssets=9637` while raw inventory continued.
@@ -426,14 +445,6 @@ This file tracks local-only changes in this checkout that have not necessarily b
     - Executing approved review-album plans now asks the assistant for the next plan after the journaled album creation completes.
     - Earlier action cards become stale after any later assistant/tool result, preventing old buttons from being reused after context has changed.
     - Metadata-search tool output now formats top date/place/camera/media/extension breakdowns instead of dumping the large JSON `breakdown` object into the conversation.
-- Full `sidecar_pair_audit` over `/external/desktop-icloud-originals` completed:
-  - `directoriesScanned=56`;
-  - `sidecarFileCount=0`;
-  - `sidecarMatchCount=0`;
-  - `orphanSidecarCount=0`;
-  - `probableRenderedPairCount=8`.
-- The 8 probable variant groups are all under `/external/desktop-icloud-originals/Feb 16, 2011` and use names like `IMG_4596.JPG` plus `IMG_4596(1).JPG`. They differ in size and orientation/dimensions and should be treated as review candidates, not automatically skipped duplicates.
-- `mobile_original_compare` returned zero mobile cohorts for the current external import, which is expected until iPhone/mobile uploads with `mobile-app` metadata exist.
 - Temporary local API keys named `Codex local assistant smoke test`, `Codex local assistant tool smoke test`, `Codex local assistant no-limit smoke test`, `Codex local assistant log smoke test`, `Codex local assistant undo smoke test`, `Codex local assistant mutation smoke test`, and `Codex local assistant stack mutation smoke test` were deleted after probing.
 
 ### Verification
@@ -500,7 +511,7 @@ This file tracks local-only changes in this checkout that have not necessarily b
 - Added the user's Desktop Apple Photos "Export Unmodified Original" folder as a read-only dev-server external-library mount:
   - Host path: `/Users/johnhausman/Desktop/Exported ICloud Photos - DO NOT DELETE`
   - Container path for Immich external library import: `/external/desktop-icloud-originals`
-  - Initial scan profile: about 2.7 GB, 56 date-named folders, 1,822 JPGs, 2 MOVs, one `.DS_Store`, and no AAE/XMP/JSON sidecars found.
+  - This path is a point-comparison dataset for iOS original-file verification, not production-library census evidence.
 - Upgraded mobile `photo_manager` from `3.9.0` to `3.10.0`.
   - Reason: `3.10.0` adds Darwin APIs for `AssetEntity.darwin.hasAdjustments` and `AssetEntity.darwin.getBaseFile()`.
   - Source: https://pub.dev/packages/photo_manager/changelog
@@ -528,3 +539,6 @@ This file tracks local-only changes in this checkout that have not necessarily b
 - `git diff --check` passed.
 - Flutter/Dart tests were not run in the shell because `flutter`, `dart`, and `mise` were not available on `PATH`.
 - iPhone/simulator testing is available and should be used for the next validation pass.
+# 2026-07-23
+
+- Agent console consistency: `tools/immich-agent/agent-console.html` and `tools/dedup-agent/app/console.html` are now synchronized. Both use the split conversation/tool layout, explicit bridge failure states, compact tool rows, and NAS-local SSH/Tailscale guidance. Future console UI changes must update both targets.

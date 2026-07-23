@@ -2,13 +2,13 @@
 
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import { dirname, join, resolve } from 'node:path';
 
 const host = process.env.ASSISTANT_BRIDGE_HOST ?? '127.0.0.1';
 const port = Number.parseInt(process.env.ASSISTANT_BRIDGE_PORT ?? '3737', 10);
-const maxBodyBytes = Number.parseInt(process.env.ASSISTANT_BRIDGE_MAX_BODY_BYTES ?? String(4 * 1024 * 1024), 10);
+const maxBodyBytes = Number.parseInt(process.env.ASSISTANT_BRIDGE_MAX_BODY_BYTES ?? String(16 * 1024 * 1024), 10);
 const agentRoot = resolve(process.env.ASSISTANT_BRIDGE_AGENT_ROOT ?? '/Users/johnhausman');
 const agentDefaultCwd = resolve(process.env.ASSISTANT_BRIDGE_AGENT_DEFAULT_CWD ?? process.cwd());
 const agentLogDirectory = resolve(
@@ -104,6 +104,9 @@ const sessionStateDir = resolve(
   process.env.ASSISTANT_BRIDGE_SESSION_STATE_DIR ?? join(dirname(agentLogDirectory), 'assistant-agent-sessions'),
 );
 const sessionStateFile = join(sessionStateDir, 'sessions.json');
+const promptArchiveDir = resolve(
+  process.env.ASSISTANT_BRIDGE_PROMPT_ARCHIVE_DIR ?? join(sessionStateDir, 'prompt-archive'),
+);
 const checkpointTokens = Number.parseInt(process.env.ASSISTANT_BRIDGE_CHECKPOINT_TOKENS ?? '120000', 10);
 const checkpointTurns = Number.parseInt(process.env.ASSISTANT_BRIDGE_CHECKPOINT_TURNS ?? '40', 10);
 const checkpointSummaryTimeoutSeconds = Number.parseInt(
@@ -265,6 +268,97 @@ function buildReseedPreamble(summary, priorSessionId, checkpointFile) {
     summary +
     '\n===== END HANDOFF SUMMARY =====\n'
   );
+}
+
+function promptRequestDetails(body) {
+  return {
+    model: typeof body.model === 'string' ? body.model : null,
+    codexModel: typeof body.codexModel === 'string' ? body.codexModel : null,
+    codexEffort: typeof body.codexEffort === 'string' ? body.codexEffort : null,
+    permissionMode: typeof body.permissionMode === 'string' ? body.permissionMode : null,
+    allowedTools: Array.isArray(body.allowedTools) ? body.allowedTools.map(String) : [],
+    disallowedTools: Array.isArray(body.disallowedTools) ? body.disallowedTools.map(String) : [],
+    addDirs: Array.isArray(body.addDirs) ? body.addDirs.map(String) : [],
+    mcpConfig: typeof body.mcpConfig === 'string' ? body.mcpConfig : null,
+    strictMcpConfig: body.strictMcpConfig === true,
+    dangerouslySkipPermissions: body.dangerouslySkipPermissions === true,
+  };
+}
+
+async function archivePromptAccepted({ body, cwd, engine, receivedAt, runId, timeoutSeconds }) {
+  await mkdir(promptArchiveDir, { recursive: true });
+  const stamp = toSafeLogName(receivedAt);
+  const archiveFilePath = join(promptArchiveDir, `prompt-${engine}-${stamp}-${runId}.md`);
+  const archiveIndexPath = join(promptArchiveDir, `${receivedAt.slice(0, 10)}.jsonl`);
+  const requestedSessionId = typeof body.sessionId === 'string' && body.sessionId.trim() ? body.sessionId.trim() : null;
+  const appendSystemPrompt =
+    typeof body.appendSystemPrompt === 'string' && body.appendSystemPrompt.trim() ? body.appendSystemPrompt : null;
+  const requestDetails = promptRequestDetails(body);
+  const accepted = {
+    schemaVersion: 1,
+    event: 'accepted',
+    promptId: runId,
+    runId,
+    receivedAt,
+    engine,
+    requestedSessionId,
+    cwd,
+    timeoutSeconds,
+    inputBytes: Buffer.byteLength(body.input, 'utf8'),
+    input: body.input,
+    appendSystemPrompt,
+    requestDetails,
+    archiveFilePath,
+  };
+  const markdown =
+    '# Archived agent prompt\n\n' +
+    `- promptId: ${runId}\n` +
+    `- receivedAt: ${receivedAt}\n` +
+    `- engine: ${engine}\n` +
+    `- requestedSessionId: ${requestedSessionId ?? 'new'}\n` +
+    `- cwd: ${cwd}\n` +
+    `- timeoutSeconds: ${timeoutSeconds}\n` +
+    `- dailyIndex: ${archiveIndexPath}\n\n` +
+    '## Request details\n\n' +
+    '```json\n' +
+    JSON.stringify(requestDetails, null, 2) +
+    '\n```\n\n' +
+    '## User prompt\n\n' +
+    body.input +
+    '\n\n' +
+    '## Console/system prompt\n\n' +
+    (appendSystemPrompt ?? '(none)') +
+    '\n';
+
+  // The prompt file is written first and exclusively. If this fails, the model is not started: no prompt
+  // should execute without its durable memory record already existing.
+  await writeFile(archiveFilePath, markdown, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+  await appendFile(archiveIndexPath, JSON.stringify(accepted) + '\n', { encoding: 'utf8', mode: 0o600 });
+  return { archiveFilePath, archiveIndexPath };
+}
+
+async function archivePromptEvent(archive, event) {
+  const recordedAt = new Date().toISOString();
+  const record = { schemaVersion: 1, promptId: event.runId, recordedAt, ...event };
+  await appendFile(archive.archiveIndexPath, JSON.stringify(record) + '\n', { encoding: 'utf8', mode: 0o600 });
+  await appendFile(
+    archive.archiveFilePath,
+    '\n## ' +
+      event.event.replaceAll('_', ' ') +
+      '\n\n```json\n' +
+      JSON.stringify({ recordedAt, ...event }, null, 2) +
+      '\n```\n',
+    { encoding: 'utf8' },
+  );
+}
+
+async function tryArchivePromptEvent(archive, event) {
+  try {
+    await archivePromptEvent(archive, event);
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
 }
 
 function parseArgs(value, defaults) {
@@ -643,7 +737,7 @@ function buildAgentStreamArgs(body) {
   return args;
 }
 
-function buildCodexArgs(body, cwd) {
+function buildCodexArgs(body, cwd, imageFiles = []) {
   // Older assistant used `codex exec -` (stdin); streaming uses `codex exec --json`.
   const args = ['exec'];
   const resumeSessionId = typeof body.sessionId === 'string' && body.sessionId.trim() ? body.sessionId.trim() : '';
@@ -659,10 +753,31 @@ function buildCodexArgs(body, cwd) {
       ? body.codexModel.trim()
       : (process.env.ASSISTANT_BRIDGE_AGENT_STREAM_CODEX_MODEL ?? 'gpt-5.6-sol');
   if (codexModel) args.push('-m', codexModel);
+  for (const imageFile of imageFiles) args.push('--image', imageFile);
   const effort = typeof body.codexEffort === 'string' && body.codexEffort.trim() ? body.codexEffort.trim() : 'high';
   args.push('-c', 'model_reasoning_effort="' + effort + '"');
   if (resumeSessionId) args.push(resumeSessionId, '-');
   return args;
+}
+
+async function materializeImages(body) {
+  const images = Array.isArray(body.images) ? body.images : [];
+  if (images.length > 5) throw new Error('At most 5 pasted images can be attached to one prompt');
+  const files = [];
+  for (const [index, image] of images.entries()) {
+    const dataUrl = typeof image === 'string' ? image : image?.dataUrl;
+    if (typeof dataUrl !== 'string' || !/^data:image\/(png|jpe?g|gif|webp|heic);base64,/i.test(dataUrl)) {
+      throw new Error(`Invalid pasted image ${index + 1}`);
+    }
+    const match = dataUrl.match(/^data:image\/(png|jpe?g|gif|webp|heic);base64,(.+)$/i);
+    const data = Buffer.from(match[2], 'base64');
+    if (!data.length || data.length > 12 * 1024 * 1024) throw new Error(`Pasted image ${index + 1} exceeds 12 MB`);
+    const extension = match[1].toLowerCase().replace('jpeg', 'jpg');
+    const path = `/private/tmp/immich-agent-image-${randomUUID()}.${extension}`;
+    await writeFile(path, data, { mode: 0o600 });
+    files.push(path);
+  }
+  return files;
 }
 
 async function runAgentStream(response, body) {
@@ -675,6 +790,8 @@ async function runAgentStream(response, body) {
   const engine = body.engine === 'codex' ? 'codex' : 'claude';
   const runId = randomUUID();
   const startedAt = new Date().toISOString();
+  const promptArchive = await archivePromptAccepted({ body, cwd, engine, receivedAt: startedAt, runId, timeoutSeconds });
+  const imageFiles = await materializeImages(body);
 
   response.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',
@@ -726,13 +843,37 @@ async function runAgentStream(response, body) {
   }
 
   const command = engine === 'codex' ? agentStreamCodex.command : agentStream.command;
-  const args = engine === 'codex' ? buildCodexArgs(body, cwd) : buildAgentStreamArgs(body);
+  const args = engine === 'codex' ? buildCodexArgs(body, cwd, imageFiles) : buildAgentStreamArgs(body);
   const stdinInput =
     engine === 'codex' && typeof body.appendSystemPrompt === 'string' && body.appendSystemPrompt.trim()
-      ? body.appendSystemPrompt + '\n\n==== USER REQUEST ====\n\n' + body.input
-      : body.input;
+      ? body.appendSystemPrompt + '\n\n==== USER REQUEST ====\n\n' + body.input + (engine === 'claude' && imageFiles.length ? `\n\n[Pasted image file(s): ${imageFiles.join(', ')}]` : '')
+      : body.input + (engine === 'claude' && imageFiles.length ? `\n\n[Pasted image file(s): ${imageFiles.join(', ')}]` : '');
 
-  sse('bridge_start', { runId, startedAt, engine, command, args, cwd, timeoutSeconds, checkpointed: didCheckpoint });
+  const dispatchArchiveError = await tryArchivePromptEvent(promptArchive, {
+    event: 'dispatched',
+    runId,
+    engine,
+    effectiveSessionId: typeof body.sessionId === 'string' && body.sessionId.trim() ? body.sessionId.trim() : null,
+    checkpointed: didCheckpoint,
+    effectiveAppendSystemPrompt:
+      typeof body.appendSystemPrompt === 'string' && body.appendSystemPrompt.trim() ? body.appendSystemPrompt : null,
+    command,
+    args,
+  });
+
+  sse('bridge_start', {
+    runId,
+    startedAt,
+    engine,
+    command,
+    args,
+    cwd,
+    timeoutSeconds,
+    checkpointed: didCheckpoint,
+    promptArchiveFilePath: promptArchive.archiveFilePath,
+    promptArchiveIndexPath: promptArchive.archiveIndexPath,
+    promptArchiveError: dispatchArchiveError,
+  });
 
   const child = spawn(command, args, { cwd, env: process.env, shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
   const transcript = [];
@@ -772,19 +913,29 @@ async function runAgentStream(response, body) {
     clearInterval(heartbeat);
     clearTimeout(timer);
     const message = error instanceof Error ? error.message : String(error);
+    await Promise.all(imageFiles.map((file) => rm(file, { force: true }).catch(() => {})));
+    const finishedAt = new Date().toISOString();
     const logFilePath = await writeAgentStreamLog({
       runId,
       command,
       args,
       cwd,
       startedAt,
-      finishedAt: new Date().toISOString(),
+      finishedAt,
       status: 'error',
       exitCode: null,
       stderr: message,
       transcript,
+      promptArchiveFilePath: promptArchive.archiveFilePath,
     });
-    sse('bridge_error', { runId, error: message, logFilePath });
+    const promptArchiveError = await tryArchivePromptEvent(promptArchive, {
+      event: 'start_failed',
+      runId,
+      finishedAt,
+      error: message,
+      logFilePath,
+    });
+    sse('bridge_error', { runId, error: message, logFilePath, promptArchiveFilePath: promptArchive.archiveFilePath, promptArchiveError });
     response.end();
   });
   child.on('close', async (code) => {
@@ -796,6 +947,7 @@ async function runAgentStream(response, body) {
       sse(null, rest);
     }
     const finishedAt = new Date().toISOString();
+    await Promise.all(imageFiles.map((file) => rm(file, { force: true }).catch(() => {})));
     const logFilePath = await writeAgentStreamLog({
       runId,
       command,
@@ -808,6 +960,7 @@ async function runAgentStream(response, body) {
       timedOut,
       stderr: stderrText,
       transcript,
+      promptArchiveFilePath: promptArchive.archiveFilePath,
     });
     // Record the resulting session's size so the NEXT turn can decide whether to checkpoint.
     let sessionInfo = null;
@@ -839,7 +992,30 @@ async function runAgentStream(response, body) {
       }
     }
 
-    sse('bridge_done', { runId, exitCode: code, timedOut, finishedAt, logFilePath, eventCount: transcript.length, session: sessionInfo });
+    const promptArchiveError = await tryArchivePromptEvent(promptArchive, {
+      event: 'finished',
+      runId,
+      finishedAt,
+      status: timedOut ? 'timed_out' : code === 0 ? 'completed' : 'failed',
+      exitCode: code,
+      timedOut,
+      eventCount: transcript.length,
+      resultingSession: sessionInfo,
+      logFilePath,
+    });
+
+    sse('bridge_done', {
+      runId,
+      exitCode: code,
+      timedOut,
+      finishedAt,
+      logFilePath,
+      eventCount: transcript.length,
+      session: sessionInfo,
+      promptArchiveFilePath: promptArchive.archiveFilePath,
+      promptArchiveIndexPath: promptArchive.archiveIndexPath,
+      promptArchiveError,
+    });
     response.end();
   });
 
@@ -864,6 +1040,11 @@ const server = http.createServer(async (request, response) => {
         stateDir: sessionStateDir,
         trackedSessions: sessionState.size,
       },
+      promptArchive: {
+        enabled: true,
+        mode: 'fail-closed-before-dispatch',
+        directory: promptArchiveDir,
+      },
     });
     return;
   }
@@ -883,6 +1064,10 @@ const server = http.createServer(async (request, response) => {
     runAgentStream(response, body).catch((error) => {
       const message = error instanceof Error ? error.message : String(error);
       if (!response.writableEnded) {
+        if (!response.headersSent) {
+          sendJson(response, 500, { error: `Prompt archive failed; agent was not started: ${message}` });
+          return;
+        }
         try {
           response.write(`event: bridge_error\ndata: ${JSON.stringify({ error: message })}\n\n`);
         } catch {
@@ -923,8 +1108,32 @@ const server = http.createServer(async (request, response) => {
         ? Math.min(Math.max(Math.trunc(body.timeoutSeconds), 1), 600)
         : provider.timeoutSeconds;
     const providerName = request.url.slice(1);
+    const runId = randomUUID();
+    const startedAt = new Date().toISOString();
+    const promptArchive = await archivePromptAccepted({
+      body,
+      cwd: process.cwd(),
+      engine: providerName,
+      receivedAt: startedAt,
+      runId,
+      timeoutSeconds,
+    });
     const { statusCode, payload } = await runProvider(providerName, provider, body.input, timeoutSeconds);
-    sendJson(response, statusCode, payload);
+    const finishedAt = new Date().toISOString();
+    const promptArchiveError = await tryArchivePromptEvent(promptArchive, {
+      event: 'finished',
+      runId,
+      finishedAt,
+      status: statusCode === 200 ? 'completed' : 'failed',
+      statusCode,
+      logFilePath: payload.logFilePath ?? null,
+    });
+    sendJson(response, statusCode, {
+      ...payload,
+      promptArchiveFilePath: promptArchive.archiveFilePath,
+      promptArchiveIndexPath: promptArchive.archiveIndexPath,
+      promptArchiveError,
+    });
   } catch (error) {
     sendJson(response, error.statusCode ?? 500, {
       error: error instanceof Error ? error.message : String(error),

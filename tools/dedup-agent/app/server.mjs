@@ -49,9 +49,20 @@ const server = http.createServer(async (req, res) => {
       'Cache-Control': 'no-cache, no-transform',
       Connection: 'keep-alive',
       'X-Accel-Buffering': 'no',
+      'Content-Encoding': 'identity',
     });
+    // Flush the headers and keepalive comments immediately so an upstream model
+    // pause cannot look like an idle or buffered connection to the reverse proxy.
+    if (typeof res.flushHeaders === 'function') res.flushHeaders();
+    res.write(': connected\n\n');
+    const heartbeat = setInterval(() => {
+      if (!res.writableEnded) res.write(': proxy-ping\n\n');
+    }, 10000);
     const ac = new AbortController();
-    res.on('close', () => ac.abort());
+    res.on('close', () => {
+      clearInterval(heartbeat);
+      ac.abort();
+    });
     try {
       const upstream = await fetch(BRIDGE_URL, {
         method: 'POST',
@@ -76,6 +87,7 @@ const server = http.createServer(async (req, res) => {
         res.write('event: bridge_error\ndata: ' + JSON.stringify({ error: String(error?.message ?? error) }) + '\n\n');
       }
     } finally {
+      clearInterval(heartbeat);
       if (!res.writableEnded) res.end();
     }
     return;
