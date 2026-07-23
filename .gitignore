@@ -34,3 +34,7 @@ vite.config.js.timestamp-*
 
 # Assistant CLI bridge runtime state: rolling-checkpoint session summaries + tracking
 /assistant-agent-sessions/
+
+# Dedup-agent container carries synced COPIES of the canonical tools/ scripts (avoid drift in git;
+# they are copied fresh from tools/ at deploy time — see tools/dedup-agent/README.md)
+/tools/dedup-agent/app/tools/
