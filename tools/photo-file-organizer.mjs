@@ -43,6 +43,17 @@ const mediaExtensions = new Set([
   '.tiff',
   '.webp',
 ]);
+const excludedDirectoryNames = new Set(['@eadir', '#recycle', '#snapshot', '.stversions', '.stfolder', 'thumbs', 'encoded-video']);
+const excludedTopLevelNames = new Set(['downloads', 'docker', 'jellyfinmedia', 'music']);
+
+function isExcludedEntry(name) {
+  const folded = String(name).toLowerCase();
+  return folded.startsWith('._') || excludedDirectoryNames.has(folded);
+}
+
+function isExcludedTopLevelEntry(name, currentPath, sourceRoot) {
+  return currentPath === sourceRoot && excludedTopLevelNames.has(String(name).toLowerCase());
+}
 const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 // ffmpeg does not cleanly fail on these — it "succeeds" but decodes the raw sensor data to a black/garbage
 // frame (an all-zero hash). So for RAW we hash the embedded JPEG preview instead of trusting a direct decode.
@@ -460,6 +471,13 @@ async function reconcilePlanPerceptual() {
   };
   await emitProgress(progressFile, progress);
   const flushEvery = 250;
+  let lastProgressFlushAt = 0;
+  const flushProgress = async (force = false) => {
+    const now = Date.now();
+    if (!force && now - lastProgressFlushAt < 2000) return;
+    lastProgressFlushAt = now;
+    await emitProgress(progressFile, progress);
+  };
 
   // Resumable hash cache (see loadResumeIndex): reuse sha1/phash for files whose size+mtime are unchanged.
   const resumeFile = typeof args['resume-file'] === 'string' ? resolve(String(args['resume-file'])) : null;
@@ -534,9 +552,9 @@ async function reconcilePlanPerceptual() {
       originalPerceptualHashed++;
     }
     progress.counters.originalsHashed++;
-    if (progress.counters.originalsHashed % flushEvery === 0) {
-      await emitProgress(progressFile, progress);
-      await flushResume();
+    if (Date.now() - lastProgressFlushAt >= 2000) {
+      await flushProgress();
+      if (progress.counters.originalsHashed % flushEvery === 0) await flushResume();
     }
   }
   await flushResume();
@@ -585,9 +603,9 @@ async function reconcilePlanPerceptual() {
     };
     records.push(record);
     progress.counters.sourceScanned++;
-    if (progress.counters.sourceScanned % flushEvery === 0) {
-      await emitProgress(progressFile, progress);
-      await flushResume();
+    if (Date.now() - lastProgressFlushAt >= 2000) {
+      await flushProgress();
+      if (progress.counters.sourceScanned % flushEvery === 0) await flushResume();
     }
 
     const originalMatches = originalHashIndex.get(sha1) ?? [];
@@ -1206,6 +1224,9 @@ async function walkFiles(root, extensions, maxDepth, sourceRoot = root) {
     const current = stack.pop();
     const directory = await opendir(current.path);
     for await (const entry of directory) {
+      if (isExcludedEntry(entry.name) || isExcludedTopLevelEntry(entry.name, current.path, sourceRoot)) {
+        continue;
+      }
       const path = join(current.path, entry.name);
       if (entry.isDirectory()) {
         if (maxDepth === null || current.depth < maxDepth) {

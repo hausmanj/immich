@@ -8,6 +8,25 @@
 
 ## Critical Current Memory - 2026-07-21
 
+- HARD PROTECTED-TREE BOUNDARY — ORIGINALS:
+  - `/volume1/photo/originals` and `/volume1/photosync/originals_clean` are protected reference trees and must not be touched.
+  - Read-only inspection, census queries, content hashing, and comparison are allowed.
+  - Never move, rename, delete, quarantine, copy into, overwrite, rewrite metadata in, or run `photo-file-organizer.mjs apply` against either tree.
+  - Do not treat either side of their apparent mirror relationship as a dedupe-action target. Any duplicate or organization plan must exclude both paths from mutations and operate only on other source cohorts.
+- HARD SCOPE BOUNDARY — SYNOLOGY-WIDE CENSUS VS IMMICH:
+  - When the user asks about "the database that cataloged all Synology assets," "the Synology database," the 1-2M asset census, or findings across `/volume1`, they mean the read-only SQLite census at `/volume1/photosync/assistant-census/media-census.sqlite`, currently associated with run `7430d3fb-c21d-42e2-ae21-c2bf41b0ecb6`.
+  - Do **not** answer those questions from the Immich Postgres database, Immich assistant index tables, or the ~55K assets imported into Immich. Those are a separate, much smaller UI/database surface.
+  - For Synology-wide findings, inspect the live census SQLite database plus its progress and summary artifacts under `/volume1/photosync/assistant-census/` before concluding.
+  - Immich Postgres should be queried only when the user explicitly asks about imported Immich state, albums, stacks, visibility, external-library rows, or other Immich-specific behavior.
+- HARD INSTANCE BOUNDARY — THREE IMMICH SURFACES:
+  - `immich-server` is the assistant-enabled NAS instance for the newest photo pipeline: iPhone -> iCloud -> Mac -> NAS. Treat its indexed content as the recent/import pipeline, not the complete photo universe.
+  - `immichgo` is a separate NAS stack with its own Postgres/ML services and indexes the laptop-backup photo collection. Do not combine its counts, database state, or library findings with `immich-server` unless the user explicitly asks for a cross-instance comparison.
+  - A third Immich instance runs locally on the Mac and exists only to view/index Google Photos folders. Those Google Photos files are on an external hard drive, not on the NAS or Mac internal storage. Do not claim they are NAS-resident or include them in NAS census/dedupe totals.
+  - Every status report must identify the instance and execution/data location: `immich-server` NAS recent pipeline, `immichgo` NAS laptop-backup library, or Mac-local Google Photos viewer/external-drive library.
+- DEFAULT DERIVATIVE EXCLUSIONS — all future filesystem scans:
+  - Exclude `@eaDir`, `._*`, `#recycle`, `#snapshot`, `.stversions`, `.stfolder`, `thumbs`, and `encoded-video` at scan time.
+  - The Immich `upload` directories contain original media and remain in scope; do not confuse them with `thumbs` or `encoded-video` derivatives.
+  - When scanning from `/volume1`, also exclude the non-photo roots `/volume1/downloads`, `/volume1/docker`, `/volume1/JellyfinMedia`, and `/volume1/music`.
 - The user is not asking for a narrow "tagging" or description assistant. They want Codex-level operational capability inside Immich/Synology to assess, classify, deduplicate, and eventually organize extremely large messy photo/file libraries, potentially 1M to 2M files.
 - The correct mental model is a local AI operations layer for photo/library work:
   - Immich is the UI and database surface.
@@ -32,6 +51,24 @@
     - no persistent named shell sessions yet;
     - no pause/resume/cancel long-running job manager yet;
     - no separate Synology-wide Docker agent service yet.
+  - 2026-07-22 UPDATE — true streaming agent engine landed (see LOCAL_CHANGELOG 2026-07-22):
+    - Decision (user hard boundary): the agent MUST run on the Mac Claude Code SUBSCRIPTION via the bridge. NO paid Anthropic/OpenAI API loop. Confirmed `apiKeySource:"none"` + `rate_limit_event.five_hour` => subscription, not billed.
+    - Root cause of the old "basic assistant": bridge called `claude --print --output-format json` (one-shot); server `callAnthropic` used `tool_choice:{type:'tool'}` (structured output, not tool-calling) with `assistantAutoToolIterationLimit=1`, so the model never saw tool results; the second model pass was removed to dodge synchronous 504s. The cure is STREAMING, not removing the loop.
+    - Added (additive; existing `/claude`,`/codex`,`/command` untouched): `POST /agent-stream` SSE route in `tools/assistant-cli-bridge.mjs`. Spawns `claude --print --output-format stream-json --verbose` (+ `--resume`, `--model`, `--permission-mode`, `--allowedTools`, `--mcp-config`, etc.), pipes each JSONL line as an SSE frame, 15s heartbeats, per-run timeout, client-disconnect kills child, transcript log under `assistant-agent-logs/*-agent-stream-*.json`. `/health` reports `agentStream`. Reload the launchd bridge with `launchctl kickstart -k gui/$(id -u)/com.johnhausman.immich-assistant-bridge`.
+    - VERIFIED: live SSE through the launchd bridge streamed `tool_use Bash -> tool_result -> text`, `num_turns:2` (real loop); container reaches it via the reverse tunnel at `http://172.31.0.1:43737/agent-stream`.
+    - LIVE IN IMMICH 2026-07-22: hot-patched the running container's compiled `dist/controllers/assistant.controller.js` (backup `.pre-agent-stream` in container; service.js untouched) to add `GET /api/assistant/agent-console` (public streaming agent web console) + `POST /api/assistant/agent-stream` (`@Authenticated`, `@Res()` SSE proxy to the bridge). Deploy artifacts kept in repo `tools/immich-agent/` (`agent-console.html`, `patch-assistant-controller.mjs`); redeploy = docker cp both into container /tmp, `node /tmp/patch-assistant-controller.mjs`, `node --check`, `docker restart immich-server`. OPEN AT `http://drhaus:2283/api/assistant/agent-console` (or `...taildd6bd4.ts.net:2283/...`) while logged into Immich. Verified: console 200/HTML, stream 401 no-auth, container->bridge streamed `CONTAINER-STREAM-OK`. Needs Mac bridge(3737)+tunnel(43737) up.
+    - 2026-07-22 console UX follow-up:
+      - The console now supports both engines: `Claude` and `Codex (ChatGPT)`. Engine and per-engine model choices persist in browser `localStorage` (`immich_agent_engine`, `immich_agent_model_<engine>`), so reload should not default back to Claude after the user selects ChatGPT/Codex.
+      - The console keeps separate in-page session IDs for Claude and Codex to prevent cross-engine session bleed. Simple greeting/status prompts intentionally do not resume an old session; this avoids dragging stale context/tool-heavy behavior into `hello`, `ping`, `can you hear me`, etc.
+      - ChatGPT/Codex streaming uses `codex exec --json`; resumed turns use `codex exec resume --json ... <sessionId> -`. IMPORTANT: `codex exec resume` does not accept `-C`; the bridge relies on the spawned `cwd` instead. Verified local smoke: fresh Codex returned `first ok`; resumed Codex returned `resume ok`; both exit 0.
+      - Simple greetings/status checks use a lightweight `SIMPLE_BRIEF`, not the full operator system prompt, so they should return one short response and not read `AGENTS.md`/`LOCAL_CHANGELOG.md` or dump tool output.
+      - Tool output is hidden by default behind `show tool output`; this prevents large `AGENTS.md`/changelog command results from filling the browser during normal interactions.
+      - Browser-only voice features are implemented in `tools/immich-agent/agent-console.html`: `Mic` uses Chrome/Web Speech recognition to fill the prompt; `speak replies` uses browser `speechSynthesis`; `Test voice` speaks immediately; voice selector, speed, pitch, and volume persist in localStorage. Voice output is frontend-only and applies to both Claude and ChatGPT/Codex because it speaks shared rendered assistant text. No OpenAI Realtime/API audio and no extra subscription/API spend.
+      - The voice selector is filtered to English voices only plus `System default` (`/^en(-|_|$)/i` on `SpeechSynthesisVoice.lang`). Better voices come from macOS enhanced/premium voices; on macOS 26 use `System Settings -> Accessibility -> Read & Speak -> System voice -> info button` to download English voices, then restart Chrome/hard-refresh.
+      - If voice is silent: first click `Test voice`, make sure `speak replies` is checked, check Chrome/site audio permissions and system output device, and verify an English voice is selected. Speech synthesis happens in Chrome only; terminal smoke tests cannot verify actual audio.
+      - Every valid incoming Claude/Codex prompt is now archived automatically by `tools/assistant-cli-bridge.mjs` before model dispatch. The bridge writes a private per-prompt Markdown record plus a daily append-only JSONL index under `assistant-agent-sessions/prompt-archive/`, including the full user prompt, console/system prompt, engine/model/session/cwd/tool settings, dispatch details, and final status/log/session result. This is fail-closed: if the initial archive write fails, the agent process is not started. `/health` reports the archive directory and mode, and the console shows the saved prompt path. Legacy `/claude` and `/codex` provider requests use the same archive path. The automatic raw prompt archive complements rolling handoff summaries; it does not replace the curated operator facts in this file or the live library profile.
+    - NEXT: (1) Immich MCP server wrapping existing journaled ops (audits/review-album/mutation/undo/index-runs) via `--mcp-config` for safe reversible Immich tools (today it drives Immich via bash/SSH/`docker exec`, not native MCP); (2) proper Svelte sidebar nav entry (currently a standalone origin page); (3) drive 1-2M assets via the deterministic index + coverage-execution-ledger, cohort-by-cohort.
+    - **2026-08-31 note:** item (2) above is done — `/assistant` is now a real Svelte route (`web/src/routes/(user)/assistant/`) backed by `assistant.controller.ts`. The standalone `tools/immich-agent/agent-console.html` hot-patch console and its `patch-assistant-controller.mjs` deploy script described in this block were dropped when merging this branch's dedup/RAW-handling work forward — the SSE streaming and prompt-archiving backend work in `tools/assistant-cli-bridge.mjs` is still present and current, only the standalone-page delivery mechanism was superseded.
 - Current command bridge target model:
   - `local`: Mac host commands under `/Users/johnhausman` by default; use this for host tools such as `exiftool`, `osxphotos`, local scripts, Docker CLI, and mounted Desktop paths.
   - `synology`: Synology commands through exactly `ssh -p 22222 hausmanj@drhaus`, rooted at `/volume1` by default; use this for NAS-resident bulk file inventory, hashing, metadata extraction, and reports.
@@ -114,6 +151,7 @@
   - After the SSH restart, `ssh -p 22222 -N -R 0.0.0.0:43737:127.0.0.1:3737 hausmanj@drhaus` succeeded, and the Immich container successfully fetched `http://172.31.0.1:43737/health`.
   - If exposing a Mac/Synology agent endpoint later, prefer LAN/VPN-only access or an authenticated reverse proxy. Do not expose an unauthenticated command bridge to the public internet.
 - The user explicitly does not want repeated user prompts while implementing. Continue autonomously when safe, especially for local code changes, audits, and non-destructive verification. Ask only for true blockers.
+- Operational failures must be flagged loudly, clearly, and immediately. Never leave the user waiting under the impression that a requested process is running when its start, PID, heartbeat, command path, or monitoring path is unconfirmed or not responding; state exactly what is confirmed, what is not confirmed, and the blocking error.
 - The user explicitly objected to repeated lint checks before the capability is finished. Avoid lint loops during active implementation. Use focused TypeScript/runtime checks when the feature is coherent, then final validation before commit.
 - Source files and external libraries must remain untouched unless the user explicitly approves a specific impactful operation. For any future impactful tool, including metadata edits, stack changes, archive/favorite changes, folder moves, or duplicate resolution, require:
   - typed pre-change journal,
@@ -159,13 +197,7 @@
   - raw filesystem inventory records files under the target import roots that are not already represented by an imported Immich asset, including sidecars, unsupported files, raw-camera files, and missed media files;
   - group output includes source-directory, file-extension, camera, location, noise-label, risk-label, inventory-kind, exact-content-duplicate, file-trait-duplicate, variant-family, and coverage-state cohorts;
   - exact-content duplicate groups are byte-level evidence from freshly computed SHA1 values, not `sha1-path` database checksums.
-- Observed reference export profile:
-  - about 2.7 GB;
-  - 56 date-named folders;
-  - 1,822 `.JPG` files, 2 `.MOV` files, and one `.DS_Store`;
-  - no `.AAE`, `.XMP`, or `.JSON` sidecars found in the initial scan;
-  - sampled JPEGs preserve EXIF camera make/model, image dimensions, `DateTimeOriginal`, `CreateDate`, `ModifyDate`, and orientation;
-  - sampled MOVs preserve QuickTime creation dates, dimensions, duration, and media type.
+- The Desktop Apple Photos export remains a point-comparison dataset for iOS original-file verification. Do not use its asset counts or earlier development audits as production-library census evidence.
 - Locally adopted changes:
   - `photo_manager` package updated from `3.9.0` to `3.10.0` in `mobile/pubspec.yaml` and `mobile/pubspec.lock`.
   - Full local adoption of upstream PR #29351, `fix(mobile): treat wired ethernet as unmetered on ios`.
@@ -260,18 +292,8 @@
   - `/Users/johnhausman/.local/pnpm/node_modules/.bin/pnpm --filter immich run check`
   - `/Users/johnhausman/.local/pnpm/node_modules/.bin/pnpm --filter immich run lint`
   - `git diff --check`
-- After the deterministic-audit upgrade, the in-app assistant successfully returned full-library chat output for `/external/desktop-icloud-originals`: 1,824 external assets, 1,822 images, 2 videos, 2010-04-22 through 2012-12-27, 2.92 GB, 228 GPS-backed assets, and 1,596 assets with no visible location.
-- After assistant tool upgrade:
-  - Full Desktop-originals byte-hash audit completed for 1,824/1,824 assets with zero file read errors and zero exact byte-duplicate groups.
-  - Full Desktop-originals sidecar/pair audit scanned 56/56 directories with zero AAE/XMP/JSON sidecars and zero sidecar errors.
-  - Sidecar/pair audit found 8 probable filename variant groups under `/external/desktop-icloud-originals/Feb 16, 2011`, involving paired names such as `IMG_4596.JPG` and `IMG_4596(1).JPG`; those are review candidates, not automatic duplicates.
-  - `mobile_original_compare` currently returns zero mobile cohorts for the Desktop external import because `mobile-app` metadata is not present on these external-library assets.
-- After no-limit tool update:
-  - `content_hash_audit` over `/external/desktop-icloud-originals` returned `complete=true`, `scannedAssets=1824`, `hashedAssets=1824`, `errorCount=0`, and `resultCount=1824`.
-  - Cohort-backed review album actions no longer cap cohort size; they materialize every matching asset ID.
-- After log-backed tool update:
-  - Large tool output is compacted in the chat/API response but not skipped; the full result/error arrays are written to `/data/assistant-audits`.
-  - Verified probe: `/external/desktop-icloud-originals` hash audit wrote `/data/assistant-audits/2026-07-20T11-36-08-089Z-content_hash_audit-6e99b3f4-2bb7-4ec7-b325-5fce710837d7.json` with 1,824 result rows, 0 error rows, and 856,341 bytes.
+- Cohort-backed review album actions do not cap cohort size; they materialize every matching asset ID.
+- Large tool output is compacted in the chat/API response but not skipped; the full result/error arrays are written to `/data/assistant-audits`.
 - After assistant undo-safety update:
   - Review-album creation writes a pre-change journal before creating the album, then updates it with the created album ID and undo strategy.
   - Verified probe: created `Codex undo smoke test album` with one asset, wrote `/data/assistant-audits/change-journal/2026-07-20T11-56-32-703Z-assistant_review_album_create-3d7a919a-f1e2-40d6-bf5f-5a56b0dae95b.json`, then `POST /assistant/undo` deleted the album and updated the journal to `status=undone`.
@@ -305,8 +327,6 @@
   - Persisted assistant index capability follow-up:
     - `POST /assistant/index-runs` now defaults `includeContentHash=true`, `includeRawFiles=true`, and `includeSidecars=true`.
     - Raw inventory is batch-filtered against already-indexed `originalPath` values, so imported media is not double-counted as raw files.
-    - Verified corrected Desktop-originals smoke run `2dcd2584-0852-499f-85b3-7718b2d4723a`: `indexedAssets=1825`, `indexedImportedAssets=1813`, `indexedRawFiles=12`, `contentHashIndexedAssets=1825`, `contentHashErrorCount=0`, `uniqueContentHashCount=1825`, `groupCount=105`, `variant_family=8`, and no exact-content duplicate groups.
-    - The 12 raw inventory entries under `/external/desktop-icloud-originals` are evidence of files present on disk but not imported as assets, including `.DS_Store`, several `IMG_4596(1).JPG`-style variant names, and nearby missed JPGs.
     - `POST /assistant/index-runs` now returns immediately with a running persisted run and continues indexing in the background. Progress is written to the run summary with phases such as `raw_inventory`, `content_hash`, and `grouping`.
     - Laptop-backup non-blocking smoke run `31f094f6-c9cc-485f-a7e9-f695184b37f5` returned from POST in 48 ms and showed background progress in Postgres instead of timing out the HTTP client.
     - Assistant chat crash fix: `BaseService.create()` was missing `ctx.assistantIndexRepository`, shifting every later dependency for locally-created services. The visible failure was `LibraryService.getAll()` crashing with `this.libraryRepository.getAll is not a function` from `AssistantService.getLibraryContext`. Fixed by passing `ctx.assistantIndexRepository` in the correct constructor slot.
@@ -327,7 +347,6 @@
     - The Assistant web UI now continues after completed tool/review actions: it appends the result, asks the assistant for the next plan, and marks earlier action cards stale. Tool display should summarize metadata-search breakdowns instead of dumping the full `breakdown` JSON into chat.
 - Temporary local Codex assistant smoke-test API keys were created only for probing and deleted afterward.
 - Mobile validation is still pending because `flutter` and `dart` were not on PATH in this shell. Do not claim the mobile upload patch is device-verified until it has run on iPhone or iOS Simulator.
-- Next practical test after import: ask the in-app Codex assistant to audit `/external/desktop-icloud-originals` for original-file evidence, then compare sampled external-library assets against the Desktop export by filename, size, dimensions, EXIF dates/GPS/camera fields, and checksum.
 - If the assistant returns an album/review action with concrete `assetIds` or `cohortType`/`cohortKey`, the web UI should show a `Create review album` button. This is the only current in-app organization mutation path and should remain reversible.
 
 ## Repo Hygiene

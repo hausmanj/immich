@@ -1,0 +1,762 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Photo Dedup Agent</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #0f1216; color: #d7dde5; display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+    background: #151a21; border-bottom: 1px solid #232c37; flex-wrap: wrap;
+  }
+  header .brand { font-weight: 700; color: #7cc4ff; letter-spacing: .3px; }
+  header .brand small { color: #64748b; font-weight: 400; margin-left: 6px; }
+  header .spacer { flex: 1; }
+  header label { color: #9aa7b6; display: inline-flex; align-items: center; gap: 6px; }
+  select, button {
+    background: #1c232c; color: #d7dde5; border: 1px solid #2c3742; border-radius: 8px;
+    padding: 6px 10px; font: inherit; cursor: pointer;
+  }
+  button.primary { background: #2563eb; border-color: #2563eb; color: #fff; font-weight: 600; }
+  button.recording { background: #7f1d1d; border-color: #ef4444; color: #fff; font-weight: 700; }
+  button:disabled { opacity: .5; cursor: default; }
+  input[type="range"] { width: 86px; accent-color: #3b82f6; }
+  #status { font-size: 12px; padding: 3px 9px; border-radius: 999px; background: #1c232c; color: #94a3b8; }
+  #status.running { background: #0b3a2e; color: #34d399; }
+  #status.error { background: #3a1414; color: #f87171; }
+  main {
+    flex: 1; min-height: 0; padding: 10px 18px; display: grid; grid-template-columns: minmax(280px, 1.25fr) 8px minmax(360px, .9fr); gap: 0;
+    max-width: none; width: 100%; margin: 0;
+  }
+  #conversation, #toolPanel { min-height: 0; overflow-y: auto; }
+  #conversation { display: flex; flex-direction: column; gap: 6px; padding-right: 4px; }
+  #splitter { cursor: col-resize; position: relative; touch-action: none; }
+  #splitter::after { content: ''; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px; background: #2b3642; border-radius: 2px; }
+  #splitter:hover::after, #splitter:focus::after { background: #5b9bd5; }
+  #toolPanel { border-left: 0; padding-left: 14px; }
+  #toolPanelTitle { position: sticky; top: 0; z-index: 1; padding: 3px 0 8px; color: #8fa0b2; background: #0f1216; font-size: 11px; text-transform: uppercase; letter-spacing: .6px; }
+  #toolTranscript { display: flex; flex-direction: column; gap: 4px; }
+  .row { display: flex; flex-direction: column; gap: 2px; }
+  .role { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: #64748b; }
+  .user .bubble { background: #1d2836; border: 1px solid #2b3b52; }
+  .queued .bubble { background: #221d36; border: 1px dashed #4c3b72; color: #c8bbf7; }
+  .bubble {
+    background: #161c24; border: 1px solid #232c37; border-radius: 10px; padding: 8px 11px;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .thinking .bubble { background: #141922; border-style: dashed; color: #8b98a8; font-style: italic; }
+  .tool, .result-block { display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: baseline; column-gap: 8px; }
+  .tool .role, .result-block .role { margin: 0; }
+  .tool .bubble { background: #202832; border-color: #354352; color: #cbd5e1; border-radius: 6px; padding: 5px 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .tool .toolname { color: #d8e2ed; font-weight: 700; }
+  .result-block .bubble {
+    background: #252d36; border-color: #354352; color: #b8c4d1; border-radius: 6px; padding: 5px 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; max-height: 180px; overflow: auto;
+  }
+  .chip { align-self: flex-start; font-size: 11px; color: #64748b; padding: 2px 8px; border: 1px solid #232c37; border-radius: 999px; }
+  .done { align-self: flex-start; font-size: 12px; color: #34d399; }
+  .err .bubble { background: #2a1414; border-color: #5b2020; color: #f87171; }
+  #bridgeState { font-size: 11px; padding: 3px 8px; border: 1px solid #354352; border-radius: 999px; color: #aab7c5; background: #202832; }
+  #bridgeState.ok { color: #6ee7b7; border-color: #23624d; background: #12372e; }
+  #bridgeState.bad { color: #fca5a5; border-color: #713333; background: #3a1818; }
+  footer {
+    display: flex; gap: 10px; padding: 12px 16px; border-top: 1px solid #232c37; background: #12161c;
+    max-width: none; width: 100%; margin: 0; align-items: flex-end;
+  }
+  textarea {
+    flex: 1; resize: none; min-height: 46px; max-height: 200px; background: #0d1116; color: #e5e9ef;
+    border: 1px solid #2c3742; border-radius: 10px; padding: 11px 12px; font: inherit;
+  }
+  footer > div:first-child { flex: 1 1 auto; width: 100%; min-width: 0; }
+  #input { display: block; width: 100%; }
+  textarea:focus { outline: none; border-color: #3b82f6; }
+  #mic { min-width: 46px; }
+  #attachments { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 0 6px; }
+  .attachment { position: relative; width: 54px; height: 54px; }
+  .attachment img { width: 54px; height: 54px; object-fit: cover; border: 1px solid #3b82f6; border-radius: 6px; }
+  .attachment button { position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; padding: 0; border-radius: 50%; background: #3a1818; color: #fecaca; border-color: #713333; }
+  @media (max-width: 900px) {
+    main { grid-template-columns: 1fr; overflow-y: auto; }
+    #splitter { display: none; }
+    #conversation, #toolPanel { overflow: visible; }
+    #toolPanel { border-left: 0; border-top: 1px solid #232c37; padding: 10px 0 0; }
+  }
+</style>
+</head>
+<body>
+  <header>
+    <span class="brand">Immich Agent <small>live</small></span>
+    <label>engine
+      <select id="engine">
+        <option value="claude" selected>Claude</option>
+        <option value="codex">Codex (ChatGPT)</option>
+      </select>
+    </label>
+    <label>model
+      <select id="model">
+        <option value="opus" selected>Opus (deep — matches Claude Code)</option>
+        <option value="sonnet">Sonnet (balanced)</option>
+        <option value="haiku">Haiku (fast)</option>
+        <option value="">CLI default</option>
+      </select>
+    </label>
+    <label><input type="checkbox" id="bypass" checked /> auto-run tools</label>
+    <label><input type="checkbox" id="speakReplies" /> speak replies</label>
+    <label><input type="checkbox" id="showToolOutput" /> show tool output</label>
+    <label>voice
+      <select id="voiceSelect" style="max-width:180px">
+        <option value="">System default</option>
+      </select>
+    </label>
+    <label>speed <input type="range" id="voiceRate" min="0.75" max="1.5" step="0.05" value="1" /></label>
+    <label>pitch <input type="range" id="voicePitch" min="0.7" max="1.3" step="0.05" value="1" /></label>
+    <label>volume <input type="range" id="voiceVolume" min="0" max="1" step="0.05" value="1" /></label>
+    <button id="voiceTest" type="button">Test voice</button>
+    <input id="apikey" type="password" placeholder="Immich API key (if login fails)" autocomplete="off" spellcheck="false" style="min-width:200px;background:#0d1116;color:#e5e9ef;border:1px solid #2c3742;border-radius:8px;padding:6px 10px;font:inherit;" />
+    <span class="spacer"></span>
+    <span id="live" style="font-size:11px;color:#64748b;font-family:ui-monospace,SFMono-Regular,Menlo,monospace"></span>
+    <span id="bridgeState">Mac bridge: not checked</span>
+    <span id="status">idle</span>
+    <button id="newSession" type="button">New session</button>
+  </header>
+  <main id="workspace">
+    <section id="conversation" aria-label="Conversation">
+      <span class="chip">New agent session — ask it to inspect, audit, hash, or plan reversible organization. It can use the Mac, SSH to Synology, and query this Immich host.</span>
+    </section>
+    <div id="splitter" role="separator" aria-label="Resize conversation and tool panes" aria-orientation="vertical" tabindex="0"></div>
+    <aside id="toolPanel" aria-label="Tool activity">
+      <div id="toolPanelTitle">Tool activity</div>
+      <div id="toolTranscript"></div>
+    </aside>
+  </main>
+  <footer>
+    <div style="flex:1;min-width:0"><div id="attachments" aria-live="polite"></div><textarea id="input" placeholder="e.g. Inspect /external and report source folders, counts, date spans, and which look like noise vs real trips. Read-only." autofocus></textarea></div>
+    <button id="mic" type="button" title="Dictate prompt" aria-pressed="false">Mic</button>
+    <button id="send" class="primary" type="button">Send</button>
+    <button id="stop" type="button" disabled style="background:#3a1414;border-color:#5b2020;color:#f87171;font-weight:600">Stop</button>
+  </footer>
+
+<script>
+(function () {
+  var transcript = document.getElementById('conversation');
+  var toolTranscript = document.getElementById('toolTranscript');
+  var toolPanel = document.getElementById('toolPanel');
+  var workspace = document.getElementById('workspace');
+  var splitter = document.getElementById('splitter');
+  var input = document.getElementById('input');
+  var attachmentsEl = document.getElementById('attachments');
+  var sendBtn = document.getElementById('send');
+  var newBtn = document.getElementById('newSession');
+  var modelSel = document.getElementById('model');
+  var bypass = document.getElementById('bypass');
+  var statusEl = document.getElementById('status');
+  var bridgeStateEl = document.getElementById('bridgeState');
+  var apikeyEl = document.getElementById('apikey');
+  var engineSel = document.getElementById('engine');
+  var stopBtn = document.getElementById('stop');
+  var liveEl = document.getElementById('live');
+  var micBtn = document.getElementById('mic');
+  var speakReplies = document.getElementById('speakReplies');
+  var showToolOutput = document.getElementById('showToolOutput');
+  var voiceTest = document.getElementById('voiceTest');
+  var voiceSelect = document.getElementById('voiceSelect');
+  var voiceRate = document.getElementById('voiceRate');
+  var voicePitch = document.getElementById('voicePitch');
+  var voiceVolume = document.getElementById('voiceVolume');
+  var sessionId = null;
+  var sessionByEngine = { claude: null, codex: null };
+  var running = false;
+  var promptQueue = [];
+  var processingQueuedPrompt = false;
+  var controller = null;
+  var runStart = 0, evCount = 0, toolCount = 0, lastActivity = 0, liveTimer = null;
+  var toolRows = {};
+  var recognition = null, recognizing = false, speechBase = '', speechFinal = '';
+  var pastedImages = [];
+  var splitRatio = 58;
+  try { splitRatio = Math.max(28, Math.min(72, Number(localStorage.getItem('immich_agent_split_ratio')) || 58)); } catch (e) {}
+  function applySplit() {
+    workspace.style.gridTemplateColumns = window.matchMedia('(max-width: 900px)').matches ? '1fr' : 'minmax(280px, ' + splitRatio + 'fr) 8px minmax(360px, ' + (100 - splitRatio) + 'fr)';
+    splitter.setAttribute('aria-valuenow', String(Math.round(splitRatio)));
+  }
+  function setSplitFromPointer(clientX) {
+    var rect = workspace.getBoundingClientRect();
+    var usable = rect.width - 8;
+    splitRatio = Math.max(28, Math.min(72, ((clientX - rect.left - 8) / usable) * 100));
+    applySplit();
+  }
+  splitter.addEventListener('pointerdown', function (e) {
+    splitter.setPointerCapture(e.pointerId);
+    document.body.style.cursor = 'col-resize';
+    function move(ev) { setSplitFromPointer(ev.clientX); }
+    function end() {
+      splitter.removeEventListener('pointermove', move);
+      splitter.removeEventListener('pointerup', end);
+      document.body.style.cursor = '';
+      try { localStorage.setItem('immich_agent_split_ratio', String(splitRatio)); } catch (e) {}
+    }
+    splitter.addEventListener('pointermove', move);
+    splitter.addEventListener('pointerup', end);
+  });
+  splitter.addEventListener('keydown', function (e) {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    splitRatio = Math.max(28, Math.min(72, splitRatio + (e.key === 'ArrowLeft' ? -2 : 2)));
+    applySplit();
+    try { localStorage.setItem('immich_agent_split_ratio', String(splitRatio)); } catch (x) {}
+  });
+  window.addEventListener('resize', applySplit);
+  applySplit();
+
+  try { apikeyEl.value = localStorage.getItem('immich_agent_api_key') || ''; } catch (e) {}
+  apikeyEl.addEventListener('change', function () {
+    try { localStorage.setItem('immich_agent_api_key', apikeyEl.value.trim()); } catch (e) {}
+  });
+  try { speakReplies.checked = localStorage.getItem('immich_agent_speak_replies') !== '0'; } catch (e) { speakReplies.checked = true; }
+  speakReplies.addEventListener('change', function () {
+    try { localStorage.setItem('immich_agent_speak_replies', speakReplies.checked ? '1' : '0'); } catch (e) {}
+    if (!speakReplies.checked && window.speechSynthesis) window.speechSynthesis.cancel();
+  });
+  try { showToolOutput.checked = localStorage.getItem('immich_agent_show_tool_output') === '1'; } catch (e) {}
+  showToolOutput.addEventListener('change', function () {
+    try { localStorage.setItem('immich_agent_show_tool_output', showToolOutput.checked ? '1' : '0'); } catch (e) {}
+  });
+  function loadVoiceSetting(key, fallback) {
+    try {
+      var value = localStorage.getItem(key);
+      return value == null || value === '' ? fallback : value;
+    } catch (e) {
+      return fallback;
+    }
+  }
+  voiceRate.value = loadVoiceSetting('immich_agent_voice_rate', '1');
+  voicePitch.value = loadVoiceSetting('immich_agent_voice_pitch', '1');
+  voiceVolume.value = loadVoiceSetting('immich_agent_voice_volume', '1');
+  function persistVoiceSetting(el, key) {
+    el.addEventListener('input', function () {
+      try { localStorage.setItem(key, el.value); } catch (e) {}
+    });
+    el.addEventListener('change', function () {
+      try { localStorage.setItem(key, el.value); } catch (e) {}
+    });
+  }
+  persistVoiceSetting(voiceRate, 'immich_agent_voice_rate');
+  persistVoiceSetting(voicePitch, 'immich_agent_voice_pitch');
+  persistVoiceSetting(voiceVolume, 'immich_agent_voice_volume');
+  var MODELS = {
+    claude: [['opus', 'Opus (deep — matches Claude Code)'], ['sonnet', 'Sonnet (balanced)'], ['haiku', 'Haiku (fast)'], ['', 'CLI default']],
+    codex: [['gpt-5.6-sol', 'GPT-5.6 Sol (advanced)'], ['gpt-5.5', 'GPT-5.5 (high effort)'], ['', 'Codex default']]
+  };
+  function populateModels() {
+    var list = MODELS[engineSel.value] || MODELS.claude;
+    var savedModel = loadVoiceSetting('immich_agent_model_' + engineSel.value, '');
+    modelSel.innerHTML = '';
+    list.forEach(function (o, i) {
+      var opt = document.createElement('option');
+      opt.value = o[0]; opt.textContent = o[1]; if ((!savedModel && i === 0) || savedModel === o[0]) opt.selected = true;
+      modelSel.appendChild(opt);
+    });
+  }
+  function setSessionForCurrentEngine(id) {
+    sessionId = id || null;
+    sessionByEngine[engineSel.value] = sessionId;
+  }
+  engineSel.addEventListener('change', function () {
+    populateModels();
+    sessionId = simpleMode ? null : (sessionByEngine[engineSel.value] || null);
+    try { localStorage.setItem('immich_agent_engine', engineSel.value); } catch (e) {}
+    addChip((engineSel.value === 'codex' ? 'Codex' : 'Claude') + ' selected' + (sessionId ? ' · resumed local session' : ' · new local session'));
+  });
+  modelSel.addEventListener('change', function () {
+    try { localStorage.setItem('immich_agent_model_' + engineSel.value, modelSel.value); } catch (e) {}
+  });
+  try {
+    var savedEngine = localStorage.getItem('immich_agent_engine');
+    if (savedEngine && MODELS[savedEngine]) engineSel.value = savedEngine;
+  } catch (e) {}
+  populateModels();
+
+  function fmtElapsed(ms) { var s = Math.floor(ms / 1000), m = Math.floor(s / 60); s = s % 60; return m + ':' + (s < 10 ? '0' : '') + s; }
+  function tickLive() {
+    if (!running) { liveEl.textContent = ''; return; }
+    var idle = Math.floor((Date.now() - lastActivity) / 1000);
+    liveEl.textContent = '▶ ' + fmtElapsed(Date.now() - runStart) + '  ' + toolCount + ' tools  ' + evCount + ' events' + (promptQueue.length ? '  · ' + promptQueue.length + ' queued' : '') + '  · last activity ' + idle + 's ago';
+    liveEl.style.color = idle > 90 ? '#fbbf24' : '#64748b';
+  }
+  function bump() { lastActivity = Date.now(); evCount++; }
+  function setRunning(on) {
+    running = on;
+    sendBtn.disabled = false; stopBtn.disabled = !on; engineSel.disabled = on;
+    modelSel.disabled = on;
+    sendBtn.textContent = on ? 'Queue' : 'Send';
+    if (on) { runStart = Date.now(); lastActivity = Date.now(); evCount = 0; toolCount = 0; toolRows = {}; liveTimer = setInterval(tickLive, 1000); tickLive(); }
+    else { if (liveTimer) clearInterval(liveTimer); liveTimer = null; controller = null; liveEl.textContent = ''; }
+  }
+
+  var SYSTEM_BRIEF = [
+    'You are the senior operations engineer for organizing a very large, messy personal photo/video library (target 1-2M assets). Immich (on a Synology NAS) is the UI + database surface; the real source files live on the NAS under /volume1. You are NOT a chat assistant that summarizes — you are an operator who investigates with real tools and produces runbook-grade answers.',
+    '',
+    'GROUND YOURSELF FIRST. At the start of a session, read /Users/johnhausman/source/immich/AGENTS.md and LOCAL_CHANGELOG.md, and the memory profile at /Users/johnhausman/.claude/projects/-Users-johnhausman-source-immich/memory/immich-assistant-library-profile.md. Do not answer library questions from priors; verify against these + live tool output.',
+    '',
+    'ENVIRONMENT & TOOLS.',
+    '- Mac (M4 Pro): Bash/Read/Grep. Preferred for heavy hashing, EXIF extraction, clustering, report generation. 10Gbps link to the NAS.',
+    '- Synology: exactly `ssh -p 22222 hausmanj@drhaus` (NAS data under /volume1). Run near the data for bulk file inventory/hashing.',
+    '- Immich container: `ssh -p 22222 hausmanj@drhaus /usr/local/bin/docker exec immich-server ...` for /data, /external, and the Immich API on http://127.0.0.1:2283.',
+    '- HOST VISIBILITY: Treat Synology as the source of truth for NAS work. For NAS status, processes, files, and progress, use SSH/Tailscale and inspect locally under `/volume1`; do not look for a Mac PID or require a `/Volumes` mount. The Mac is only relevant when the user explicitly asks about a Mac-local operation or the Codex/Claude bridge. If the required host cannot be reached, report `NAS check unavailable; SSH/Tailscale interaction required` rather than claiming the NAS process stopped. Ask for the missing interaction clearly before continuing.',
+    '- EXECUTION LOCATION CHECKPOINT: Before a Mac-side scan, verify the required NAS share exists under /Volumes. If it is missing, pause and ask: "I cannot see /Volumes/<share>. Can you create or mount a network share for /volume1/<share> at that path? If not, I can run this on the NAS instead." State the exact share/path and why it is needed, then wait for the user response. Do not silently fall back or launch a long scan until the user chooses Mac-share setup or NAS execution.',
+    '- Immich assistant API (already built, reversible): persisted index-runs (POST/GET /api/assistant/index-runs) record source folder/type/size/dims/dates/camera/GPS + noise & risk labels + content SHA1 + raw-inventory of files on disk not imported; deterministicAudits.organizationCoveragePlan and coverageExecutionLedger (ordered work queue proving every asset is covered/deferred/risky/unclassified); read-only tools via POST /api/assistant/tool (content_hash_audit, sidecar_pair_audit, metadata_search, mobile_original_compare); reversible review albums (review-album, review-plan); journaled mutations + undo (metadata_edit, archive_favorite, stack_change apply+undo work; folder_move and duplicate_resolution are apply-BLOCKED until typed undo exists).',
+    '- Outside Immich (source files): /Users/johnhausman/source/immich/tools/photo-file-organizer.mjs. For the big pre-import dedup pass ALWAYS use `reconcile-plan --perceptual`: on top of exact content-SHA1 it groups visually-identical copies that differ in bytes (same photo at different resolutions, and RAW like NEF/CR2/DNG vs its exported JPEG via embedded-preview hashing), keeps the LARGEST file of each visual group and quarantines the smaller copies (never deletes; never modifies the --originals tree — a source matching an existing original is quarantined and flagged largerThanOriginalMatch for manual review).',
+    '  This scan runs for HOURS over 1-2M files, so NEVER run it synchronously in one agent_command. Launch it DETACHED on the NAS and write every artifact under /volume1/docker/immich/agent/ (durable; NOT the ephemeral container /data): `nohup node tools/photo-file-organizer.mjs reconcile-plan --perceptual --source S --originals O --duplicates Q --plan-file /volume1/docker/immich/agent/plan.json --progress-file /volume1/docker/immich/agent/progress.json --resume-file /volume1/docker/immich/agent/resume.jsonl >/volume1/docker/immich/agent/run.log 2>&1 &`. Poll cheaply with `node tools/photo-file-organizer.mjs status --progress-file <path>` (reports phase/percent; flags `stalled` if the pid died) — never block on it or re-read the plan. If it stalls or the box reboots, re-run the SAME command with the same --resume-file and it resumes (already-hashed files are skipped).',
+    '  Only after reviewing the plan JSON run `apply` (writes a typed journal; moves dupes->quarantine, keepers->date-prefixed event folders like "2012-10-15 French Polynesia") then `undo` if needed. Use `reconcile-plan` without --perceptual only for a lighter exact-SHA1-only comparison. Immich external mounts are read-only, so moves run on the raw /volume1 tree, not inside the container.',
+    '',
+    'METHOD (every phase read-only until the user approves; every mutation journaled + undoable): Phase 0 Census (run index-runs / organizer plan across the tree; classify real media vs noise vs unknown; content-hash). Phase 1 Signal-vs-noise (quarantine movie-art *-poster/-backdrop/-logo, thumbnails, caches, app/doc folders, Takeout/iMazing blobs via noise/smallDimension/generatedLike cohorts). Phase 2 Dedupe (reconcile-plan --perceptual = exact SHA1 + perceptual near-dupes incl. RAW-vs-JPEG and resolution variants; keep the LARGEST copy of each visual group as canonical, quarantine the rest; never auto-delete). Phase 3 Cohorts (GPS is only an ANCHOR in old libraries; backbone = source folder + capture date + camera + EXIF/dimensions; build event cohorts first, then date/source/camera; DECOMPOSE broad containers like "Raw Photo and Video Files"/"Pictures"/"GoPro" with exact-folder audits before any album). Phase 4 Reversible review queues (review albums in Immich and/or dated event folders on the source tree). Phase 5 Guarded commit (albums/stacks/metadata in Immich; organizer apply for source files).',
+    '',
+    'SAFETY: read-only by default; never delete; never bypass the journal/undo path with raw shell mutations; if reorganizing source files that are ALSO an Immich external library, note the path-desync and plan an Immich rescan.',
+    '',
+    'ANSWER QUALITY BAR (this is required): Lead with the direct answer / outcome in the first line, then the supporting detail. Be concrete and specific — cite exact tools, endpoints, paths, counts, and cohort names; no hedging, no generic filler, no shallow summaries. When asked HOW to organize, give the actual phased methodology grounded in the real tools above, not platitudes. When asked what is missing, give an honest gap list ranked by impact. Write like a senior engineer producing a runbook a peer could execute. If you have not yet gathered evidence, run the tools and gather it before concluding.'
+  ].join('\n');
+  var SIMPLE_BRIEF = [
+    'You are the Immich Agent console assistant.',
+    'For simple greetings, status checks, or voice tests: answer conversationally in one short sentence.',
+    'Do not read files, run tools, inspect the repository, or ground yourself unless the user asks for actual investigation.'
+  ].join('\n');
+
+  function scroll(target) { target.scrollTop = target.scrollHeight; }
+  var savedConversationKey = 'photo_dedup_agent_conversation_v1';
+  function saveConversation() {
+    try { sessionStorage.setItem(savedConversationKey, JSON.stringify({ conversation: transcript.innerHTML, draft: input.value, scroll: transcript.scrollTop })); } catch (e) {}
+  }
+  function renderAttachments() {
+    attachmentsEl.innerHTML = '';
+    pastedImages.forEach(function (image, index) {
+      var item = document.createElement('div'); item.className = 'attachment';
+      var img = document.createElement('img'); img.src = image.dataUrl; img.alt = image.name || 'Pasted image';
+      var remove = document.createElement('button'); remove.type = 'button'; remove.textContent = '×'; remove.title = 'Remove image';
+      remove.onclick = function () { pastedImages.splice(index, 1); renderAttachments(); };
+      item.append(img, remove); attachmentsEl.appendChild(item);
+    });
+  }
+  input.addEventListener('paste', function (event) {
+    var items = Array.from((event.clipboardData && event.clipboardData.items) || []).filter(function (item) { return item.type.indexOf('image/') === 0; });
+    if (!items.length) return;
+    event.preventDefault();
+    items.slice(0, 5 - pastedImages.length).forEach(function (item) {
+      var file = item.getAsFile(); if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function () { pastedImages.push({ dataUrl: reader.result, name: file.name || 'pasted-image', type: file.type }); renderAttachments(); };
+      reader.readAsDataURL(file);
+    });
+  });
+  function restoreConversation() {
+    try {
+      var saved = JSON.parse(sessionStorage.getItem(savedConversationKey) || 'null');
+      if (!saved) return;
+      if (saved.conversation) transcript.innerHTML = saved.conversation;
+      if (typeof saved.draft === 'string') input.value = saved.draft;
+      requestAnimationFrame(function () { transcript.scrollTop = Number(saved.scroll) || transcript.scrollHeight; });
+    } catch (e) {}
+  }
+  restoreConversation();
+  window.addEventListener('beforeunload', saveConversation);
+
+  function populateVoices() {
+    if (!('speechSynthesis' in window)) {
+      voiceSelect.disabled = true;
+      voiceSelect.title = 'Speech synthesis is not available in this browser';
+      return;
+    }
+    var selected = loadVoiceSetting('immich_agent_voice_name', '');
+    var voices = window.speechSynthesis.getVoices() || [];
+    var current = voiceSelect.value || selected;
+    voiceSelect.innerHTML = '';
+    var def = document.createElement('option');
+    def.value = '';
+    def.textContent = 'System default';
+    voiceSelect.appendChild(def);
+    voices
+      .slice()
+      .filter(function (v) { return /^en(-|_|$)/i.test(v.lang || ''); })
+      .sort(function (a, b) { return (a.lang + a.name).localeCompare(b.lang + b.name); })
+      .forEach(function (v) {
+        var opt = document.createElement('option');
+        opt.value = v.name;
+        opt.textContent = v.name + (v.lang ? ' · ' + v.lang : '');
+        voiceSelect.appendChild(opt);
+      });
+    voiceSelect.value = current;
+  }
+  voiceSelect.addEventListener('change', function () {
+    try { localStorage.setItem('immich_agent_voice_name', voiceSelect.value); } catch (e) {}
+  });
+  if ('speechSynthesis' in window) {
+    populateVoices();
+    window.speechSynthesis.onvoiceschanged = populateVoices;
+  } else {
+    voiceSelect.disabled = true;
+    voiceTest.disabled = true;
+  }
+
+  function selectedVoice() {
+    if (!('speechSynthesis' in window) || !voiceSelect.value) return null;
+    var voices = window.speechSynthesis.getVoices() || [];
+    for (var i = 0; i < voices.length; i++) {
+      if (voices[i].name === voiceSelect.value) return voices[i];
+    }
+    return null;
+  }
+
+  function speakText(text) {
+    if (!speakReplies.checked || !('speechSynthesis' in window) || !text) return;
+    var clean = String(text).replace(/\s+/g, ' ').trim();
+    if (!clean) return;
+    window.speechSynthesis.cancel();
+    var chunk = clean.length > 1200 ? clean.slice(0, 1200) + '...' : clean;
+    var u = new SpeechSynthesisUtterance(chunk);
+    var v = selectedVoice();
+    if (v) u.voice = v;
+    u.rate = Number.parseFloat(voiceRate.value) || 1;
+    u.pitch = Number.parseFloat(voicePitch.value) || 1;
+    u.volume = Number.parseFloat(voiceVolume.value);
+    if (!Number.isFinite(u.volume)) u.volume = 1;
+    window.speechSynthesis.speak(u);
+  }
+  voiceTest.addEventListener('click', function () {
+    speakReplies.checked = true;
+    try { localStorage.setItem('immich_agent_speak_replies', '1'); } catch (e) {}
+    speakText('Voice replies are enabled.');
+  });
+
+  function addRow(cls, role, text, isHtml) {
+    var row = document.createElement('div');
+    row.className = 'row ' + cls;
+    if (role) {
+      var r = document.createElement('div'); r.className = 'role'; r.textContent = role; row.appendChild(r);
+    }
+    var b = document.createElement('div'); b.className = 'bubble';
+    if (cls === 'result-block' && !showToolOutput.checked) {
+      var compact = String(text || '').replace(/\s+/g, ' ').trim();
+      b.textContent = compact
+        ? 'tool output hidden (' + compact.length + ' chars). Enable "show tool output" to inspect it.'
+        : 'tool output hidden. Enable "show tool output" to inspect it.';
+    } else if (isHtml) b.innerHTML = text; else b.textContent = text;
+    row.appendChild(b);
+    var target = cls === 'tool' || cls === 'result-block' ? toolPanel : transcript;
+    target.appendChild(row); scroll(target); if (target === transcript) saveConversation();
+    if ((cls === 'assistant' || role === 'codex') && !isHtml) speakText(text);
+    return b;
+  }
+  function addChip(text) {
+    var c = document.createElement('span'); c.className = 'chip'; c.textContent = text;
+    transcript.appendChild(c); scroll(transcript); saveConversation();
+  }
+  function addDone(text) {
+    var c = document.createElement('span'); c.className = 'done'; c.textContent = text;
+    transcript.appendChild(c); scroll(transcript); saveConversation();
+  }
+  function setStatus(s, cls) { statusEl.textContent = s; statusEl.className = cls || ''; }
+  function setBridgeState(text, good) { bridgeStateEl.textContent = text; bridgeStateEl.className = good === true ? 'ok' : good === false ? 'bad' : ''; }
+  function updateQueueStatus() {
+    if (running && promptQueue.length) setStatus('running · ' + promptQueue.length + ' queued', 'running');
+  }
+  function processNextQueuedPrompt() {
+    if (running || statusEl.className === 'error' || !promptQueue.length) return;
+    var next = promptQueue.shift();
+    processingQueuedPrompt = true;
+    input.value = next.text;
+    pastedImages = next.images || []; renderAttachments();
+    addChip('processing queued input' + (promptQueue.length ? ' · ' + promptQueue.length + ' still queued' : ''));
+    send();
+    processingQueuedPrompt = false;
+  }
+
+  function setRecognizing(on) {
+    recognizing = on;
+    micBtn.className = on ? 'recording' : '';
+    micBtn.textContent = on ? 'Stop' : 'Mic';
+    micBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    if (on) setStatus('listening...', 'running');
+    else if (running) setStatus(promptQueue.length ? 'running · ' + promptQueue.length + ' queued' : 'running…', 'running');
+    else if (statusEl.textContent === 'listening...') setStatus('idle');
+  }
+
+  function setupSpeechRecognition() {
+    var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      micBtn.disabled = true;
+      micBtn.title = 'Speech recognition is not available in this browser';
+      return;
+    }
+    recognition = new SpeechRecognition();
+    recognition.lang = 'en-US';
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+    recognition.onstart = function () { setRecognizing(true); };
+    recognition.onend = function () { setRecognizing(false); input.focus(); };
+    recognition.onerror = function (e) {
+      setRecognizing(false);
+      addChip('speech input error: ' + (e && e.error ? e.error : 'unknown'));
+    };
+    recognition.onresult = function (e) {
+      var interim = '';
+      for (var i = e.resultIndex; i < e.results.length; i++) {
+        var text = e.results[i][0] && e.results[i][0].transcript ? e.results[i][0].transcript : '';
+        if (e.results[i].isFinal) speechFinal += text + ' ';
+        else interim += text;
+      }
+      input.value = (speechBase + ' ' + speechFinal + ' ' + interim).replace(/\s+/g, ' ').trim();
+    };
+  }
+
+  function toggleDictation() {
+    if (!recognition) return;
+    if (recognizing) {
+      recognition.stop();
+      return;
+    }
+    speechBase = input.value.trim();
+    speechFinal = '';
+    try { recognition.start(); } catch (e) { addChip('speech input could not start'); }
+  }
+  setupSpeechRecognition();
+
+  function renderClaudeEvent(j) {
+    if (j.type === 'system' && j.subtype === 'init') {
+      if (j.session_id) setSessionForCurrentEngine(j.session_id);
+      addChip('session ' + (j.session_id ? j.session_id.slice(0, 8) : '?') + ' · ' + (j.model || 'model') + ' · ' + ((j.tools || []).length) + ' tools');
+      return;
+    }
+    if (j.type === 'assistant' && j.message && j.message.content) {
+      j.message.content.forEach(function (c) {
+        if (c.type === 'thinking' && c.thinking) addRow('thinking', 'thinking', c.thinking);
+        else if (c.type === 'text' && c.text) addRow('assistant', 'agent', c.text);
+        else if (c.type === 'tool_use') {
+          toolCount++;
+          var arg = c.input && (c.input.command || c.input.file_path || c.input.pattern);
+          var label = arg ? String(arg) : JSON.stringify(c.input || {});
+          var trow = addRow('tool', 'tool · ' + c.name, '', true);
+          trow.innerHTML = '<span class="toolname">' + escapeHtml(c.name) + '</span> <span class="run" style="font-size:11px;color:#fbbf24">▶ running</span>  ' + escapeHtml(label);
+          if (c.id) toolRows[c.id] = trow;
+        }
+      });
+      return;
+    }
+    if (j.type === 'user' && j.message && j.message.content) {
+      j.message.content.forEach(function (c) {
+        if (c.type === 'tool_result') {
+          var trow = c.tool_use_id && toolRows[c.tool_use_id];
+          if (trow) { var rr = trow.querySelector('.run'); if (rr) { rr.textContent = '✓'; rr.style.color = '#34d399'; } }
+          var t = typeof c.content === 'string' ? c.content : JSON.stringify(c.content);
+          addRow('result-block', 'result', t || '(empty)');
+        }
+      });
+      return;
+    }
+    if (j.type === 'result') {
+      if (j.session_id) setSessionForCurrentEngine(j.session_id);
+      if (j.is_error && j.result) addRow('err', 'error', j.result);
+      var secs = j.duration_ms ? (j.duration_ms / 1000).toFixed(1) + 's' : '';
+      addDone('done · ' + (j.num_turns || '?') + ' turns · ' + secs);
+      return;
+    }
+  }
+
+  function renderCodexEvent(j) {
+    if (j.type === 'thread.started') { if (j.thread_id) setSessionForCurrentEngine(j.thread_id); addChip('codex thread ' + (j.thread_id ? j.thread_id.slice(0, 8) : '?')); return; }
+    if (j.type === 'turn.started') { addChip('codex turn started'); return; }
+    if (j.type === 'turn.completed') { addDone('done' + (j.usage ? ' · ' + (j.usage.output_tokens || 0) + ' out tok' : '')); return; }
+    if (j.type === 'item.started' || j.type === 'item.completed') {
+      var it = j.item || {}; var done = j.type === 'item.completed';
+      if (it.type === 'agent_message') { if (done && it.text) addRow('assistant', 'codex', it.text); }
+      else if (it.type === 'reasoning') { var tx = it.text || it.summary; if (done && tx) addRow('thinking', 'reasoning', tx); }
+      else if (it.type === 'command_execution') {
+        if (!done) {
+          toolCount++;
+          var crow = addRow('tool', 'tool · bash', '', true);
+          crow.innerHTML = '<span class="toolname">bash</span> <span class="run" style="font-size:11px;color:#fbbf24">▶ running</span>  ' + escapeHtml(it.command || '');
+          if (it.id) toolRows[it.id] = crow;
+        } else {
+          var drow = it.id && toolRows[it.id];
+          if (drow) { var r = drow.querySelector('.run'); if (r) { r.textContent = it.exit_code === 0 ? '✓' : ('exit ' + it.exit_code); r.style.color = it.exit_code === 0 ? '#34d399' : '#f87171'; } }
+          var out = it.aggregated_output || it.output; if (out) addRow('result-block', 'result', String(out).slice(0, 6000));
+        }
+      } else if (done) { addRow('tool', 'codex · ' + (it.type || 'item'), JSON.stringify(it).slice(0, 300)); }
+      return;
+    }
+  }
+
+  function renderEvent(j) {
+    if (engineSel.value === 'codex') renderCodexEvent(j); else renderClaudeEvent(j);
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"]/g, function (ch) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch];
+    });
+  }
+
+  function handleFrame(frame) {
+    var lines = frame.split('\n');
+    var event = null; var dataLines = [];
+    for (var i = 0; i < lines.length; i++) {
+      var ln = lines[i];
+      if (ln.charAt(0) === ':') { lastActivity = Date.now(); continue; } // heartbeat = liveness
+      if (ln.indexOf('event: ') === 0) event = ln.slice(7);
+      else if (ln.indexOf('data: ') === 0) dataLines.push(ln.slice(6));
+    }
+    if (!dataLines.length) return;
+    var data = dataLines.join('\n');
+    bump();
+    if (event && event !== 'stderr') {
+      if (event === 'bridge_error') { var e; try { e = JSON.parse(data); } catch (x) { e = { error: data }; } addRow('err', 'bridge unavailable', e.error || data); if (e.logFilePath) addChip('log ' + e.logFilePath); setBridgeState('Mac bridge: unavailable', false); setStatus('error · interaction required', 'error'); }
+      else if (event === 'bridge_start') {
+        var s; try { s = JSON.parse(data); } catch (x) { s = {}; }
+        setBridgeState('Mac bridge: connected', true);
+        addChip('bridge started · ' + (s.engine || engineSel.value) + ' · ' + (s.command || 'agent') + ' ' + ((s.args || []).slice(0, 3).join(' ')));
+        if (s.promptArchiveFilePath) addChip('prompt saved · ' + s.promptArchiveFilePath);
+        if (s.promptArchiveError) addRow('err', 'prompt archive warning', s.promptArchiveError);
+      }
+      else if (event === 'bridge_done') {
+        var d; try { d = JSON.parse(data); } catch (x) { d = {}; }
+        addDone('bridge done · exit ' + (d.exitCode == null ? '?' : d.exitCode) + (d.timedOut ? ' · timed out' : ''));
+        if (d.exitCode && d.exitCode !== 0) { addRow('err', 'agent failed · interaction required', 'Agent process exited with ' + d.exitCode + (d.logFilePath ? '. Log: ' + d.logFilePath : '')); setBridgeState('Mac bridge: check required', false); setStatus('error · interaction required', 'error'); }
+        if (d.promptArchiveError) addRow('err', 'prompt archive warning', d.promptArchiveError);
+        if (statusEl.className !== 'error') setStatus('idle');
+      }
+      return;
+    }
+    if (event === 'stderr') {
+      try {
+        var se = JSON.parse(data);
+        var txt = String(se.text || '').trim();
+        if (txt) addChip(txt.length > 160 ? txt.slice(0, 157) + '...' : txt);
+      } catch (x) {}
+      return;
+    }
+    try { renderEvent(JSON.parse(data)); } catch (x) { /* partial / non-json (codex 'Reading prompt...') */ }
+  }
+
+  function send() {
+    var text = input.value.trim();
+    if (!text && !pastedImages.length) return;
+    if (running) {
+      promptQueue.push({ text: text, images: pastedImages.slice(), queuedAt: Date.now() });
+      input.value = '';
+      pastedImages = []; renderAttachments();
+      addRow('queued', 'you · queued #' + promptQueue.length, text);
+      updateQueueStatus();
+      tickLive();
+      input.focus();
+      return;
+    }
+    var simpleMode = isSimplePrompt(text);
+    input.value = '';
+    var imagesForPrompt = pastedImages.slice();
+    pastedImages = []; renderAttachments();
+    addRow('user', processingQueuedPrompt ? 'you · queued input' : 'you', text + (imagesForPrompt.length ? `\n[${imagesForPrompt.length} image${imagesForPrompt.length === 1 ? '' : 's'} attached]` : ''));
+    controller = new AbortController();
+    setRunning(true); setStatus('running…', 'running');
+    setBridgeState('Mac bridge: connecting', null);
+
+    var payload = {
+      input: text,
+      images: imagesForPrompt.map(function (image) { return image.dataUrl; }),
+      engine: engineSel.value,
+      permissionMode: simpleMode ? 'default' : (bypass.checked ? 'bypassPermissions' : 'default'),
+      appendSystemPrompt: simpleMode ? SIMPLE_BRIEF : SYSTEM_BRIEF,
+      timeoutSeconds: simpleMode ? 120 : 1800
+    };
+    if (engineSel.value === 'codex') { if (modelSel.value) payload.codexModel = modelSel.value; }
+    else if (modelSel.value) payload.model = modelSel.value;
+    sessionId = sessionByEngine[engineSel.value] || null;
+    if (sessionId) payload.sessionId = sessionId;
+
+    var headers = { 'Content-Type': 'application/json' };
+    var apiKey = apikeyEl.value.trim();
+    if (apiKey) headers['x-api-key'] = apiKey;
+
+    fetch('agent-stream', {
+      method: 'POST',
+      headers: headers,
+      credentials: 'include',
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    }).then(function (res) {
+      if (!res.ok || !res.body) {
+        if (res.status === 401) {
+          addRow('err', 'authentication required', 'HTTP 401 — sign into Immich at this URL or provide an API key, then send again.');
+          apikeyEl.focus();
+        } else {
+          addRow('err', 'connection failed · interaction required', 'Stream failed: HTTP ' + res.status + '. Check the Immich proxy and Mac bridge, then send again.');
+        }
+        setStatus('error', 'error'); setRunning(false); return;
+      }
+      var reader = res.body.getReader();
+      var dec = new TextDecoder();
+      var buf = '';
+      function pump() {
+        return reader.read().then(function (r) {
+          if (r.done) {
+            setRunning(false);
+            if (statusEl.className !== 'error') setStatus(promptQueue.length ? 'idle · queued' : 'idle');
+            processNextQueuedPrompt();
+            return;
+          }
+          buf += dec.decode(r.value, { stream: true });
+          var idx;
+          while ((idx = buf.indexOf('\n\n')) >= 0) {
+            handleFrame(buf.slice(0, idx));
+            buf = buf.slice(idx + 2);
+          }
+          return pump();
+        });
+      }
+      return pump();
+    }).catch(function (e) {
+      if (e && e.name === 'AbortError') { addChip('■ stopped by you'); if (statusEl.className !== 'error') setStatus('idle'); }
+      else { addRow('err', 'connection failed · interaction required', 'Stream error: ' + (e && e.message ? e.message : e) + '. Check the Immich proxy and Mac bridge, then send again.'); setBridgeState('Mac bridge: unavailable', false); setStatus('error · interaction required', 'error'); }
+      setRunning(false);
+      if (statusEl.className !== 'error') processNextQueuedPrompt();
+    });
+  }
+
+  function stop() {
+    if (controller) { try { controller.abort(); } catch (e) {} }
+    setStatus('stopping…', 'running');
+  }
+
+  function isSimplePrompt(text) {
+    var t = String(text || '').toLowerCase().replace(/[^\w\s?]/g, '').replace(/\s+/g, ' ').trim();
+    if (!t) return false;
+    if (/^(hi|hello|hey|yo|ping|test|testing|working|are you there|you there|status)$/.test(t)) return true;
+    if (/^(hi|hello|hey)\b/.test(t) && t.length <= 80) return true;
+    if (/^how are you\b/.test(t) && t.length <= 80) return true;
+    if (/^(is this working|are you working|can you hear me)\??$/.test(t)) return true;
+    return false;
+  }
+
+  sendBtn.addEventListener('click', send);
+  stopBtn.addEventListener('click', stop);
+  micBtn.addEventListener('click', toggleDictation);
+  newBtn.addEventListener('click', function () {
+    setSessionForCurrentEngine(null);
+    transcript.innerHTML = '';
+    toolTranscript.innerHTML = '';
+    try { sessionStorage.removeItem(savedConversationKey); } catch (e) {}
+    addChip('New ' + (engineSel.value === 'codex' ? 'Codex' : 'Claude') + ' session started.');
+    input.focus();
+  });
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+  });
+})();
+</script>
+</body>
+</html>

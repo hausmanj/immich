@@ -1,0 +1,59 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Photo Organizer Progress</title>
+<style>
+  body { margin: 0; padding: 24px; width: 520px; font: 15px -apple-system, BlinkMacSystemFont, sans-serif; background: #f5f5f7; color: #1d1d1f; }
+  h2 { margin: 0 0 14px; font-size: 20px; }
+  #phase { font-weight: 700; margin-bottom: 8px; }
+  #detail { color: #555; margin-bottom: 14px; }
+  progress { width: 100%; height: 18px; }
+  #eta { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px 18px; color: #555; margin-top: 12px; font-variant-numeric: tabular-nums; }
+  #eta span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #error { color: #b00020; margin-top: 12px; }
+</style>
+<h2>Photo Organizer Progress</h2>
+<div id="phase">Connecting…</div>
+<div id="detail">Reading progress file…</div>
+<progress id="bar" max="100" value="0"></progress>
+<div id="eta"><span id="elapsed">Elapsed --</span><span id="rate">Rate --</span><span id="etaValue">ETA --</span><span id="freshness">Update --</span></div>
+<div id="error"></div>
+<script>
+const phase = document.querySelector('#phase'), detail = document.querySelector('#detail'), bar = document.querySelector('#bar'), elapsedLabel = document.querySelector('#elapsed'), rateLabel = document.querySelector('#rate'), etaLabel = document.querySelector('#etaValue'), freshnessLabel = document.querySelector('#freshness'), error = document.querySelector('#error');
+let samples = [], lastPhase = null;
+const phases = ['starting', 'indexing_originals', 'walking_sources', 'reading_metadata', 'scanning_sources', 'clustering', 'assigning_destinations', 'completed'];
+function fmt(n) { return Math.round(n).toLocaleString(); }
+function dur(s) { s = Math.max(0, Math.round(s)); if (s >= 86400) return `${Math.floor(s/86400)}d ${Math.floor(s/3600)%24}h`; if (s >= 3600) return `${Math.floor(s/3600)}h ${Math.floor(s/60)%60}m`; return `${Math.floor(s/60)}m ${s%60}s`; }
+function render(root) {
+  try {
+    const counters = root.counters || root.progress || {}, totals = root.totals || counters, originals = root.phase === 'indexing_originals';
+    const done = Number(counters[originals ? 'originalsHashed' : 'sourceScanned'] || 0), total = Number(totals[originals ? 'originalsFiles' : 'sourceFiles'] || 0);
+    const now = Date.now();
+    if (lastPhase !== root.phase) { samples = []; lastPhase = root.phase; }
+    const updatedAt = root.updatedAt || '';
+    if (!samples.length || samples[samples.length - 1].updatedAt !== updatedAt) {
+      samples.push({ done, at: now, updatedAt });
+    }
+    samples = samples.filter(s => now - s.at <= 300000);
+    const base = samples.find(s => now - s.at >= 60000) || samples[0];
+    const rate = base && now > base.at && done > base.done ? (done - base.done) / ((now - base.at) / 1000) : null;
+    const phaseIndex = phases.indexOf(root.phase), phaseName = root.status === 'completed' ? 'Complete' : String(root.phase || 'working').replaceAll('_', ' ');
+    phase.textContent = phaseIndex >= 0 ? `${phaseName} · Phase ${phaseIndex + 1} of ${phases.length}` : phaseName;
+    if (total > 0) { const pct = Math.min(100, done / total * 100); bar.value = pct; detail.textContent = `Processed ${fmt(done)} of ${fmt(total)} files (${pct.toFixed(1)}%)`; }
+    else { bar.removeAttribute('value'); detail.textContent = `Processed ${fmt(done)} files (total not yet known)`; }
+    const started = Date.parse(root.startedAt || '') || now, elapsed = (now - started) / 1000, remaining = total - done;
+    const updated = Date.parse(updatedAt), age = updated ? Math.max(0, Math.round((now - updated) / 1000)) : null;
+    elapsedLabel.textContent = `Elapsed ${dur(elapsed)}`;
+    rateLabel.textContent = rate ? `Rate ${rate.toFixed(1)}/s` : 'Rate warming';
+    etaLabel.textContent = root.status === 'completed' ? 'Finished' : rate && remaining > 0 ? `ETA ${dur(remaining / rate)}` : 'ETA warming';
+    freshnessLabel.textContent = age === null ? 'Update --' : `Update ${age}s ago`;
+    error.textContent = '';
+  } catch (e) { error.textContent = 'Waiting for progress data: ' + e.message; }
+}
+window.renderProgress = render;
+async function refresh() {
+  if (window.__nativeMonitor) return;
+  try { render(await fetch('/progress?ts=' + Date.now(), { cache: 'no-store' }).then(r => r.json())); }
+  catch (e) { error.textContent = 'Waiting for progress data: ' + e.message; }
+}
+refresh(); setInterval(refresh, 1000);
+</script>
