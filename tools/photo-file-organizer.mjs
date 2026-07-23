@@ -5,6 +5,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import {
   access,
+  appendFile,
   copyFile,
   mkdir,
   opendir,
@@ -43,6 +44,9 @@ const mediaExtensions = new Set([
   '.webp',
 ]);
 const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+// ffmpeg does not cleanly fail on these — it "succeeds" but decodes the raw sensor data to a black/garbage
+// frame (an all-zero hash). So for RAW we hash the embedded JPEG preview instead of trusting a direct decode.
+const rawExtensions = new Set(['.ari', '.arw', '.cr2', '.cr3', '.dng', '.nef', '.orf', '.raf', '.rw2']);
 
 const command = process.argv[2];
 const args = parseArgs(process.argv.slice(3));
@@ -132,9 +136,11 @@ For a long (1-2M-file) reconcile-plan, pass --progress-file PATH: the scan rewri
 command, e.g.:
   nohup node tools/photo-file-organizer.mjs reconcile-plan --perceptual \
     --source S --originals O --duplicates Q --plan-file /path/plan.json \
-    --progress-file /path/progress.json >/path/run.log 2>&1 &
+    --progress-file /path/progress.json --resume-file /path/resume.jsonl >/path/run.log 2>&1 &
   node tools/photo-file-organizer.mjs status --progress-file /path/progress.json
 status reports "stalled" if the job's pid is gone and the heartbeat is stale (died without completing).
+--resume-file PATH makes the scan resumable: re-running the SAME command reuses sha1/perceptual hashes
+for files whose size+mtime are unchanged, so a killed job continues instead of re-hashing from zero.
 
 reconcile-plan routes byte-identical copies (content SHA1) to the duplicates quarantine and new files to
 date-prefixed event folders. Add --perceptual to also group visually-identical copies that differ in bytes
@@ -455,6 +461,53 @@ async function reconcilePlanPerceptual() {
   await emitProgress(progressFile, progress);
   const flushEvery = 250;
 
+  // Resumable hash cache (see loadResumeIndex): reuse sha1/phash for files whose size+mtime are unchanged.
+  const resumeFile = typeof args['resume-file'] === 'string' ? resolve(String(args['resume-file'])) : null;
+  const resumeIndex = await loadResumeIndex(resumeFile);
+  let resumeBuffer = '';
+  progress.counters.reusedFromResume = 0;
+  const flushResume = async () => {
+    if (!resumeFile || resumeBuffer.length === 0) return;
+    const data = resumeBuffer;
+    resumeBuffer = '';
+    try {
+      await mkdir(dirname(resumeFile), { recursive: true });
+      await appendFile(resumeFile, data);
+    } catch {
+      // best-effort; the scan still completes, just without a resume checkpoint for these files
+    }
+  };
+  const recordResume = (file, fields) => {
+    if (!resumeFile) return;
+    const existing = resumeIndex.get(file.path);
+    if (existing && existing.size === file.size && existing.mtime === file.mtimeMs) Object.assign(existing, fields);
+    else resumeIndex.set(file.path, { size: file.size, mtime: file.mtimeMs, ...fields });
+    resumeBuffer += JSON.stringify({ p: file.path, s: file.size, m: file.mtimeMs, ...fields }) + '\n';
+  };
+  const cachedEntry = (file) => {
+    const e = resumeIndex.get(file.path);
+    return e && e.size === file.size && e.mtime === file.mtimeMs ? e : null;
+  };
+  const cachedSha1 = async (file) => {
+    const e = cachedEntry(file);
+    if (e && typeof e.sha1 === 'string') {
+      progress.counters.reusedFromResume++;
+      return e.sha1;
+    }
+    const sha1 = await sha1File(file.path);
+    recordResume(file, { sha1 });
+    return sha1;
+  };
+  const cachedPhash = (file) => {
+    const e = cachedEntry(file);
+    if (e && e.phash !== undefined) {
+      return e.phash === null ? { phash: null, status: 'unavailable' } : { phash: phashFromHex(e.phash), status: 'ok' };
+    }
+    const phash = perceptualHashFile(file.path, ffmpegBin);
+    recordResume(file, { phash: phash ? phash.hex : null });
+    return { phash, status: phash ? 'ok' : 'unavailable' };
+  };
+
   try {
   // Index the known-good originals tree: SHA1 (byte identity) + perceptual dHash (visual identity).
   progress.phase = 'indexing_originals';
@@ -465,7 +518,7 @@ async function reconcilePlanPerceptual() {
   const originalsTree = createBKTree();
   let originalPerceptualHashed = 0;
   for (const original of originals) {
-    const sha1 = await sha1File(original.path);
+    const sha1 = await cachedSha1(original);
     const entries = originalHashIndex.get(sha1) ?? [];
     entries.push({
       path: original.path,
@@ -475,7 +528,7 @@ async function reconcilePlanPerceptual() {
     });
     originalHashIndex.set(sha1, entries);
 
-    const phash = perceptualHashFile(original.path, ffmpegBin);
+    const { phash } = cachedPhash(original);
     if (phash) {
       originalsTree.add(phash, { path: original.path, relativePath: original.relativePath, fileSizeBytes: original.size });
       originalPerceptualHashed++;
@@ -483,8 +536,10 @@ async function reconcilePlanPerceptual() {
     progress.counters.originalsHashed++;
     if (progress.counters.originalsHashed % flushEvery === 0) {
       await emitProgress(progressFile, progress);
+      await flushResume();
     }
   }
+  await flushResume();
 
   progress.phase = 'walking_sources';
   await emitProgress(progressFile, progress);
@@ -512,7 +567,7 @@ async function reconcilePlanPerceptual() {
   for (const file of sourceFiles) {
     const meta = metadata.get(file.path);
     const capture = getCaptureDate(file.path, meta, file.mtimeMs);
-    const sha1 = await sha1File(file.path);
+    const sha1 = await cachedSha1(file);
     const record = {
       id: randomUUID(),
       file,
@@ -532,6 +587,7 @@ async function reconcilePlanPerceptual() {
     progress.counters.sourceScanned++;
     if (progress.counters.sourceScanned % flushEvery === 0) {
       await emitProgress(progressFile, progress);
+      await flushResume();
     }
 
     const originalMatches = originalHashIndex.get(sha1) ?? [];
@@ -571,14 +627,15 @@ async function reconcilePlanPerceptual() {
     }
 
     // Eligible to reach the originals tree — compute its perceptual hash for visual grouping.
-    const phash = perceptualHashFile(file.path, ffmpegBin);
+    const { phash, status } = cachedPhash(file);
     record.phash = phash;
-    record.phashStatus = phash ? 'ok' : 'unavailable';
+    record.phashStatus = status;
     record.decision = 'candidate';
     if (phash) {
       progress.counters.sourcePerceptualHashed++;
     }
   }
+  await flushResume();
 
   progress.phase = 'clustering';
   await emitProgress(progressFile, progress);
@@ -739,6 +796,7 @@ async function reconcilePlanPerceptual() {
       perceptual: true,
       phashDistance,
       ffmpeg: ffmpegBin,
+      resumeFile,
     },
     originalIndexSummary: {
       files: originals.length,
@@ -860,19 +918,29 @@ function ensureFfmpeg(ffmpegBin) {
   return probe.status === 0;
 }
 
-// dHash: decode to a 9x8 grayscale frame and emit a 64-bit hash from left>right pixel gradients.
-// Same image at different resolutions normalizes to the same 9x8 grid, so its hash is identical or near.
-function perceptualHashFile(path, ffmpegBin) {
-  const output = spawnSync(
-    ffmpegBin,
-    ['-v', 'error', '-i', path, '-frames:v', '1', '-vf', 'scale=9:8,format=gray', '-f', 'rawvideo', '-'],
-    { maxBuffer: 4 * 1024 * 1024 },
-  );
-  if (output.status !== 0 || !output.stdout || output.stdout.length < 72) {
-    return null;
-  }
+function ffmpegGrayFrame(ffmpegBin, { path, input }) {
+  const args = ['-v', 'error', '-i', path ?? '-', '-frames:v', '1', '-vf', 'scale=9:8,format=gray', '-f', 'rawvideo', '-'];
+  const options = { maxBuffer: 8 * 1024 * 1024 };
+  if (input) options.input = input;
+  const output = spawnSync(ffmpegBin, args, options);
+  return output.status === 0 && output.stdout && output.stdout.length >= 72 ? output.stdout : null;
+}
 
-  const pixels = output.stdout;
+// RAW files (NEF/CR2/DNG/ARW/…) are not reliably decodable by ffmpeg; extract the largest embedded JPEG
+// preview via exiftool instead. Because a RAW and its exported JPEG share the same embedded render, this
+// makes them hash alike so largest-wins keeps the RAW. JpgFromRaw (full-size) is preferred over the smaller
+// PreviewImage/ThumbnailImage.
+function extractEmbeddedPreview(path) {
+  for (const tag of ['-JpgFromRaw', '-PreviewImage', '-ThumbnailImage']) {
+    const output = spawnSync('exiftool', ['-b', tag, path], { maxBuffer: 64 * 1024 * 1024 });
+    if (output.status === 0 && output.stdout && output.stdout.length > 0) {
+      return output.stdout;
+    }
+  }
+  return null;
+}
+
+function dHashFromGrayFrame(pixels) {
   let hi = 0;
   let lo = 0;
   let bitIndex = 0;
@@ -896,6 +964,28 @@ function perceptualHashFile(path, ffmpegBin) {
   lo >>>= 0;
   const hex = `${hi.toString(16).padStart(8, '0')}${lo.toString(16).padStart(8, '0')}`;
   return { hi, lo, hex };
+}
+
+// dHash: decode to a 9x8 grayscale frame and emit a 64-bit hash from left>right pixel gradients.
+// Same image at different resolutions normalizes to the same 9x8 grid, so its hash is identical or near.
+function perceptualHashFile(path, ffmpegBin) {
+  const isRaw = rawExtensions.has(extname(path).toLowerCase());
+  let pixels = null;
+  if (isRaw) {
+    // RAW: hash the embedded JPEG preview (a RAW and its exported JPEG share this render, so they hash alike
+    // and largest-wins keeps the RAW). Direct ffmpeg decode is only a last resort here.
+    const preview = extractEmbeddedPreview(path);
+    if (preview) pixels = ffmpegGrayFrame(ffmpegBin, { input: preview });
+    if (!pixels) pixels = ffmpegGrayFrame(ffmpegBin, { path });
+  } else {
+    // JPEG/PNG/HEIC/TIFF decode directly; fall back to an embedded preview for anything ffmpeg can't decode.
+    pixels = ffmpegGrayFrame(ffmpegBin, { path });
+    if (!pixels) {
+      const preview = extractEmbeddedPreview(path);
+      if (preview) pixels = ffmpegGrayFrame(ffmpegBin, { input: preview });
+    }
+  }
+  return pixels ? dHashFromGrayFrame(pixels) : null;
 }
 
 function popcount32(value) {
@@ -1513,6 +1603,47 @@ async function sha1File(path) {
     stream.on('end', resolvePromise);
   });
   return hash.digest('hex');
+}
+
+function phashFromHex(hex) {
+  return { hi: Number.parseInt(hex.slice(0, 8), 16) >>> 0, lo: Number.parseInt(hex.slice(8, 16), 16) >>> 0, hex };
+}
+
+// Append-only resume index: one JSONL record per computed sha1/phash, keyed by path+size+mtime. A killed
+// scan re-run with the same --resume-file replays this log and skips files already hashed, so a multi-hour
+// 1-2M-file pass continues instead of restarting. Append is O(1); no whole-file rewrite at scale.
+async function loadResumeIndex(resumeFile) {
+  const index = new Map();
+  if (!resumeFile) {
+    return index;
+  }
+  let raw;
+  try {
+    raw = await readFile(resumeFile, 'utf8');
+  } catch {
+    return index; // first run
+  }
+  for (const line of raw.split('\n')) {
+    if (!line) continue;
+    let record;
+    try {
+      record = JSON.parse(line);
+    } catch {
+      continue; // tolerate a torn final line from a crash
+    }
+    if (typeof record.p !== 'string') continue;
+    const existing = index.get(record.p);
+    if (existing && existing.size === record.s && existing.mtime === record.m) {
+      if (record.sha1 !== undefined) existing.sha1 = record.sha1;
+      if (record.phash !== undefined) existing.phash = record.phash;
+    } else {
+      const entry = { size: record.s, mtime: record.m };
+      if (record.sha1 !== undefined) entry.sha1 = record.sha1;
+      if (record.phash !== undefined) entry.phash = record.phash;
+      index.set(record.p, entry);
+    }
+  }
+  return index;
 }
 
 async function writeJournal(path, journal) {
