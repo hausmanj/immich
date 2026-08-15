@@ -61,6 +61,7 @@ describe('DateSelectionModal component', () => {
       assetBulkUpdateDto: {
         ids: [],
         dateTimeOriginal: '2024-01-01T00:00:00.000+01:00',
+        writeMetadataToOriginal: true,
       },
     });
   });
@@ -128,6 +129,7 @@ describe('DateSelectionModal component', () => {
         assetBulkUpdateDto: {
           ids: [],
           dateTimeOriginal: '2024-07-01T00:00:00.000+02:00',
+          writeMetadataToOriginal: true,
         },
       });
     });
@@ -159,6 +161,7 @@ describe('DateSelectionModal component', () => {
         ids: [],
         dateTimeRelative: days * 60 * 24 + hours * 60 + minutes,
         timeZone: 'Europe/Berlin',
+        writeMetadataToOriginal: true,
       },
     });
   });
@@ -181,6 +184,7 @@ describe('DateSelectionModal component', () => {
         ids: [],
         dateTimeRelative: 0,
         timeZone: 'Europe/Berlin',
+        writeMetadataToOriginal: true,
       },
     });
   });

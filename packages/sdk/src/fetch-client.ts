@@ -702,6 +702,8 @@ export type AssetBulkUpdateDto = {
     /** Time zone (IANA timezone) */
     timeZone?: string;
     visibility?: AssetVisibility;
+    /** Write changed metadata fields to the original media file, not only the Immich database/sidecar */
+    writeMetadataToOriginal?: boolean;
 };
 export type AssetBulkUploadCheckItem = {
     /** Base64 or hex encoded SHA1 hash */
@@ -947,6 +949,8 @@ export type UpdateAssetDto = {
     /** Rating in range [1-5] (starred), -1 (rejected), or null (unrated) */
     rating?: number | null;
     visibility?: AssetVisibility;
+    /** Write changed metadata fields to the original media file, not only the Immich database/sidecar */
+    writeMetadataToOriginal?: boolean;
 };
 export type CropParameters = {
     /** Height of the crop */

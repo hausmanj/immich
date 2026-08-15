@@ -30,6 +30,10 @@ const UpdateAssetBaseSchema = z
           .getExtensions(),
       }),
     description: z.string().optional().describe('Asset description'),
+    writeMetadataToOriginal: z
+      .boolean()
+      .optional()
+      .describe('Write changed metadata fields to the original media file, not only the Immich database/sidecar'),
   })
   .refine(
     (data) =>

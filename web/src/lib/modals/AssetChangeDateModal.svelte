@@ -34,7 +34,7 @@
     // Get the local date/time components from the selected string using neutral timezone
     const isoDate = toIsoDate(selectedDate, selectedOption);
     try {
-      await updateAsset({ id: asset.id, updateAssetDto: { dateTimeOriginal: isoDate } });
+      await updateAsset({ id: asset.id, updateAssetDto: { dateTimeOriginal: isoDate, writeMetadataToOriginal: true } });
       onClose(true);
     } catch (error) {
       handleError(error, $t('errors.unable_to_change_date'));

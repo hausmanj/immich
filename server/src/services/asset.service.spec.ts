@@ -214,6 +214,25 @@ describe(AssetService.name, () => {
       );
     });
 
+    it('should write changed date metadata to the original file when requested', async () => {
+      const asset = AssetFactory.from({ originalPath: '/library/photo.jpg' })
+        .exif({ dateTimeOriginal: new Date('2024-01-01T18:30:00.000Z'), timeZone: 'UTC-7' })
+        .build();
+      mocks.access.asset.checkOwnerAccess.mockResolvedValue(new Set([asset.id]));
+      mocks.asset.getById.mockResolvedValue(getForAsset(asset));
+      mocks.asset.update.mockResolvedValue(getForAsset(asset));
+      mocks.asset.getByIdsWithAllRelationsButStacks.mockResolvedValue([getForAsset(asset)] as never);
+
+      await sut.update(authStub.admin, asset.id, {
+        dateTimeOriginal: '2024-01-01T11:30:00.000-07:00',
+        writeMetadataToOriginal: true,
+      });
+
+      expect(mocks.metadata.writeTags).toHaveBeenCalledWith('/library/photo.jpg', {
+        DateTimeOriginal: '2024-01-01T11:30:00.000-07:00',
+      });
+    });
+
     it('should fail linking a live video if the motion part could not be found', async () => {
       const auth = AuthFactory.create();
       const asset = AssetFactory.create();
@@ -455,6 +474,26 @@ describe(AssetService.name, () => {
         timeZone,
       });
       expect(mocks.asset.updateDateTimeOriginal).toHaveBeenCalledWith(['asset-1'], dateTimeRelative, timeZone);
+      expect(mocks.job.queueAll).toHaveBeenCalledWith([{ name: JobName.SidecarWrite, data: { id: 'asset-1' } }]);
+    });
+
+    it('should write changed bulk date metadata to original files when requested', async () => {
+      const asset = AssetFactory.from({ id: 'asset-1', originalPath: '/library/photo.jpg' })
+        .exif({ dateTimeOriginal: new Date('2020-02-25T02:41:00.000Z'), timeZone: 'UTC+2' })
+        .build();
+      mocks.access.asset.checkOwnerAccess.mockResolvedValue(new Set(['asset-1']));
+      mocks.asset.getByIdsWithAllRelationsButStacks.mockResolvedValue([getForAsset(asset)] as never);
+
+      await sut.updateAll(authStub.admin, {
+        ids: ['asset-1'],
+        dateTimeRelative: 35,
+        timeZone: 'UTC+2',
+        writeMetadataToOriginal: true,
+      });
+
+      expect(mocks.metadata.writeTags).toHaveBeenCalledWith('/library/photo.jpg', {
+        DateTimeOriginal: '2020-02-25T04:41:00.000+02:00',
+      });
       expect(mocks.job.queueAll).toHaveBeenCalledWith([{ name: JobName.SidecarWrite, data: { id: 'asset-1' } }]);
     });
   });

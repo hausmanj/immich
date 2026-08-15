@@ -39,13 +39,14 @@
             ids,
             dateTimeRelative: selectedDuration,
             timeZone: selectedOption?.value,
+            writeMetadataToOriginal: true,
           },
         });
         onClose(true);
         return;
       }
       const isoDate = toIsoDate(selectedDate, selectedOption);
-      await updateAssets({ assetBulkUpdateDto: { ids, dateTimeOriginal: isoDate } });
+      await updateAssets({ assetBulkUpdateDto: { ids, dateTimeOriginal: isoDate, writeMetadataToOriginal: true } });
       onClose(true);
     } catch (error) {
       handleError(error, $t('errors.unable_to_change_date'));

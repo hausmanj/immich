@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import { Tags } from 'exiftool-vendored';
 import _ from 'lodash';
 import { DateTime, Duration } from 'luxon';
 import { AssetFile } from 'src/database';
@@ -44,7 +45,7 @@ import {
   onBeforeUnlink,
 } from 'src/utils/asset.util';
 import { updateLockedColumns } from 'src/utils/database';
-import { extractTimeZone } from 'src/utils/date';
+import { extractTimeZone, mergeTimeZone } from 'src/utils/date';
 import { batched, findOrFail } from 'src/utils/misc';
 import { transformOcrBoundingBox } from 'src/utils/transform';
 
@@ -95,7 +96,7 @@ export class AssetService extends BaseService {
   async update(auth: AuthDto, id: string, dto: UpdateAssetDto): Promise<AssetResponseDto> {
     await this.requireAccess({ auth, permission: Permission.AssetUpdate, ids: [id] });
 
-    const { description, dateTimeOriginal, latitude, longitude, rating, ...rest } = dto;
+    const { description, dateTimeOriginal, latitude, longitude, rating, writeMetadataToOriginal, ...rest } = dto;
     const repos = { asset: this.assetRepository, event: this.eventRepository };
 
     let previousMotion: { id: string } | null = null;
@@ -109,6 +110,15 @@ export class AssetService extends BaseService {
     }
 
     await this.updateExif({ id, description, dateTimeOriginal, latitude, longitude, rating });
+    if (writeMetadataToOriginal) {
+      await this.writeOriginalMetadata([id], {
+        description: description !== undefined,
+        dateTimeOriginal: dateTimeOriginal !== undefined,
+        latitude: latitude !== undefined,
+        longitude: longitude !== undefined,
+        rating: rating !== undefined,
+      });
+    }
 
     const asset = await this.assetRepository.update({ id, ...rest });
 
@@ -140,6 +150,7 @@ export class AssetService extends BaseService {
       duplicateId,
       dateTimeRelative,
       timeZone,
+      writeMetadataToOriginal,
     } = dto;
     await this.requireAccess({ auth, permission: Permission.AssetUpdate, ids });
 
@@ -171,6 +182,20 @@ export class AssetService extends BaseService {
 
     if (Object.keys(assetDto).length > 0) {
       await this.assetRepository.updateAll(ids, assetDto);
+    }
+
+    if (writeMetadataToOriginal) {
+      await this.writeOriginalMetadata(ids, {
+        description: description !== undefined,
+        dateTimeOriginal:
+          dateTimeOriginal !== undefined ||
+          dateTimeRelative !== undefined ||
+          timeZone !== undefined ||
+          extractedTimeZone?.type === 'fixed',
+        latitude: latitude !== undefined,
+        longitude: longitude !== undefined,
+        rating: rating !== undefined,
+      });
     }
 
     if (visibility === AssetVisibility.Locked) {
@@ -511,6 +536,47 @@ export class AssetService extends BaseService {
         lockedPropertiesBehavior: 'append',
       });
       await this.jobRepository.queue({ name: JobName.SidecarWrite, data: { id } });
+    }
+  }
+
+  private async writeOriginalMetadata(
+    ids: string[],
+    changed: {
+      description?: boolean;
+      dateTimeOriginal?: boolean;
+      latitude?: boolean;
+      longitude?: boolean;
+      rating?: boolean;
+    },
+  ) {
+    if (!Object.values(changed).some(Boolean)) {
+      return;
+    }
+
+    const assets = await this.assetRepository.getByIdsWithAllRelationsButStacks(ids);
+    for (const asset of assets) {
+      const exifInfo = asset.exifInfo;
+      if (!exifInfo) {
+        continue;
+      }
+
+      const tags = _.omitBy(
+        <Tags>{
+          Description: changed.description ? exifInfo.description : undefined,
+          ImageDescription: changed.description ? exifInfo.description : undefined,
+          DateTimeOriginal: changed.dateTimeOriginal
+            ? mergeTimeZone(exifInfo.dateTimeOriginal, exifInfo.timeZone)?.toISO()
+            : undefined,
+          GPSLatitude: changed.latitude ? exifInfo.latitude : undefined,
+          GPSLongitude: changed.longitude ? exifInfo.longitude : undefined,
+          Rating: changed.rating ? (exifInfo.rating ?? 0) : undefined,
+        },
+        _.isUndefined,
+      );
+
+      if (Object.keys(tags).length > 0) {
+        await this.metadataRepository.writeTags(asset.originalPath, tags);
+      }
     }
   }
 
