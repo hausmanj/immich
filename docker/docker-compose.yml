@@ -19,6 +19,15 @@ services:
     volumes:
       # Do not edit the next line. If you want to change the media storage location on your system, edit the value of UPLOAD_LOCATION in the .env file
       - ${UPLOAD_LOCATION}:/data
+      # Mount user-content directories individually. The exFAT root contains macOS
+      # folders such as .Trashes that cause Immich's recursive scanner to fail.
+      # All mounts remain read-only so Immich cannot alter the drive.
+      - ${WINDOWS_SSD_LOCATION}/Pictures:/external/windows-ssd:ro
+      - ${WINDOWS_SSD_LOCATION}/Videos:/external/windows-videos:ro
+      - ${WINDOWS_SSD_LOCATION}/Google Takeout July 11:/external/google-takeout-july-11:ro
+      - ${WINDOWS_SSD_LOCATION}/Google Takeout July 12 127223:/external/google-takeout-july-12:ro
+      - ${WINDOWS_SSD_LOCATION}/GoogleTest:/external/google-test:ro
+      - ${WINDOWS_SSD_LOCATION}/J127223_New_Extract:/external/google-extract:ro
       - /etc/localtime:/etc/localtime:ro
     env_file:
       - .env

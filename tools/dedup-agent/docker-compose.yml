@@ -13,6 +13,7 @@ services:
       - PORT=8095
       - DEDUP_BRIDGE_URL=http://host.docker.internal:43737/agent-stream
       - DEDUP_BRIDGE_HEALTH=http://host.docker.internal:43737/health
+      - DEDUP_BRIDGE_KEEPALIVE_INTERVAL_MS=20000
     volumes:
       # Live code (edit on the NAS, restart — no image rebuild)
       - ./app:/app

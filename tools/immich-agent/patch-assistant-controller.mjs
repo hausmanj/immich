@@ -16,6 +16,18 @@ const methods = `
         res.setHeader('Cache-Control', 'no-store');
         res.send(AGENT_CONSOLE_HTML);
     }
+    async activeProcessStatus(res) {
+        const statusUrl = process.env.IMMICH_ASSISTANT_ACTIVE_PROCESS_STATUS_URL || 'http://172.31.0.1:8095/active-process-status';
+        try {
+            const upstream = await fetch(statusUrl, { cache: 'no-store' });
+            const text = await upstream.text();
+            res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/json; charset=utf-8');
+            res.setHeader('Cache-Control', 'no-store');
+            res.status(upstream.status).send(text);
+        } catch (e) {
+            res.status(502).json({ status: 'unknown', error: String((e && e.message) || e) });
+        }
+    }
     async agentStream(auth, body, res) {
         const bridgeUrl = process.env.IMMICH_ASSISTANT_AGENT_STREAM_URL || 'http://172.31.0.1:43737/agent-stream';
         res.writeHead(200, {
@@ -71,6 +83,13 @@ __decorate([
     __metadata("design:paramtypes", [Object]),
     __metadata("design:returntype", void 0)
 ], AssistantController.prototype, "agentConsole", null);
+__decorate([
+    (0, common_1.Get)('active-process-status'),
+    __param(0, (0, common_1.Res)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", Promise)
+], AssistantController.prototype, "activeProcessStatus", null);
 __decorate([
     (0, common_1.Post)('agent-stream'),
     (0, auth_guard_1.Authenticated)({ permission: enum_1.Permission.AssetRead }),

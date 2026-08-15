@@ -2,6 +2,13 @@
 
 This file tracks local-only changes in this checkout that have not necessarily been pulled from upstream Immich.
 
+## 2026-07-25 - NAS agent Mac bridge idle hardening
+
+- Standalone `photo-dedup-agent` now keeps the NAS -> Mac bridge path warm while idle by polling bridge health every 20 seconds (`DEDUP_BRIDGE_KEEPALIVE_INTERVAL_MS=20000`), and `/health` reports the keepalive state.
+- Disabled Node HTTP server idle/request/header/keep-alive timeouts in both the standalone NAS proxy and the Mac assistant bridge.
+- Reloaded the Mac bridge and reverse tunnel. The tunnel now runs with `ServerAliveCountMax=86400` instead of dropping after two missed 10-second probes.
+- Verified `photo-dedup-agent` health from the NAS host and inside the container: `bridge:"ok"` and keepalive `lastOkAt` advanced after an idle wait. The active `photo-organizer-worker-*` container was not restarted.
+
 ## 2026-07-23 - Current NAS assistant state and rollback boundary
 
 - There are two NAS-facing assistant windows and they must remain consistent:
@@ -27,6 +34,33 @@ This file tracks local-only changes in this checkout that have not necessarily b
 - Original media under Immich `upload` directories remains in scope.
 - Updated canonical scripts and the standalone NAS dedup-agent copy; no existing files were deleted or moved.
 - `._*` files are now excluded as files as well as directories.
+
+## 2026-07-23 - Census log overwrite prevention
+
+- Added `tools/run-media-census-safe.sh` and the synchronized NAS dedup-agent copy.
+- The safe launcher allocates a unique attempt log and never truncates an existing log, including when a completed run is incorrectly requested with `--resume-latest`.
+- Runbooks now forbid `>` redirection to census logs. The completed `/volume1` database, progress, and summary remain authoritative; the overwritten historical log is not used as evidence.
+
+## 2026-07-23 - Active process visibility in NAS consoles
+
+- Added a third dynamic pane at the bottom of Tool activity in both NAS assistant windows: `Active process`.
+- It tracks the current agent turn, Claude tool, or Codex Bash command; shows elapsed time, phase, command, latest output, and completion/failure state.
+- It recognizes common progress forms such as `processed N of M`, `sourceScanned N/M`, percentages, rates, and ETA text when the running tool reports them.
+- Tool/result rows now scroll inside the upper tool transcript, leaving the active process pane visible during long operations.
+- Verified live in the Immich-served console; both NAS web services restarted successfully and remained up.
+- Agent narrative handoff added: operational assistant messages mentioning PID, heartbeat, resume, hashing, checkpoints, attempts, read-only work, progress, or ETA now update the Active process pane. Raw tool commands/results stay isolated in the upper Tool activity transcript.
+- Added a second draggable horizontal divider between Tool activity and Active process. Its ratio persists in browser storage per console; keyboard focus plus Up/Down arrows adjusts it, and mobile falls back to a stacked layout.
+
+## 2026-07-23 - NAS job continuity across Mac disconnects
+
+- Long Synology operations are now explicitly required to run detached on the NAS with closed stdin, unique durable logs, PID, and progress/resume artifacts. They must not depend on the Mac bridge or laptop network remaining connected.
+- Both consoles preserve the last Active process state in session storage and display `connection lost` with guidance that a detached NAS job may continue and must be checked through its durable artifacts.
+- This protects the NAS operation model when the work MacBook Pro sleeps, changes networks, or leaves the house.
+
+## 2026-07-23 - Persist agent selection with conversation
+
+- Both NAS consoles now save the selected engine and model inside the same session record as the conversation.
+- Restoring a console session restores Claude vs Codex and the selected model before continuing, so the visible conversation and active agent remain aligned.
 
 ## 2026-07-22 - Synology-wide media census
 
@@ -542,3 +576,41 @@ This file tracks local-only changes in this checkout that have not necessarily b
 # 2026-07-23
 
 - Agent console consistency: `tools/immich-agent/agent-console.html` and `tools/dedup-agent/app/console.html` are now synchronized. Both use the split conversation/tool layout, explicit bridge failure states, compact tool rows, and NAS-local SSH/Tailscale guidance. Future console UI changes must update both targets.
+### Active NAS process pane detached-job fix (2026-07-23)
+
+- Fixed both NAS consoles so a successful agent turn does not mark a detached Synology job `COMPLETE`.
+- Detached narratives containing a PID, heartbeat, independent NAS execution, or resume/attempt evidence now set the pane to `running on NAS`.
+- The elapsed timer continues after the bridge turn ends and after a browser restore; an animated indeterminate bar remains visible until numeric progress is reported.
+- Deployed to `photo-dedup-agent` and the Immich-hosted console in `immich-server`; the compiled Immich controller passed `node --check`.
+- Incident correction: the deployment restarted `photo-dedup-agent` while organizer worker 86 was detached. Docker recorded `die 137` followed by `restart`, so that worker was terminated by the deployment, not by OOM or organizer completion. The standalone console is bind-mounted at `/volume1/docker/photo-dedup-agent/app/console.html` and must be updated in place without restarting the container while a NAS job is active.
+- Resilience redesign: long organizer work now has a dedicated `photo-organizer-worker-*` container with `restart=on-failure:10`, separate from both UI containers. Its durable run directory includes an immutable command, append-only lifecycle log, attempt result, progress heartbeat, and resume artifact. UI/proxy restarts cannot terminate this worker; worker/container status must be checked separately.
+- Added `/organizer-status` to the standalone NAS agent. Both consoles poll durable organizer signals independently of the Mac bridge and show heartbeat age, phase, processed/total counts, stalled state, and lifecycle evidence after reload or stream disconnect.
+- Fixed signal rendering: durable counters now override narrative percentages, numeric progress removes the indeterminate animation, and the pane shows processed/total, calculated rate, ETA, resume-cache reuse count, and heartbeat age. Verified live payload: `6,418 / 29,826`, `15.97/s`, ETA about `24:27`, heartbeat current.
+- Added high-level process context to both panes: objective, staged grand-plan position, current task, scope counters, attempt/recovery context, and the detailed live signal below. `Attempt N` is now supporting context rather than the primary status.
+- Added slash clarification lane to both NAS consoles. Prompts beginning with `/` run as separate no-tools requests without the active session ID, normal prompt queue, or active NAS process; answers are labeled `clarification`.
+- Organizer hardening v2: added `ffprobe`-backed video evidence (duration, dimensions, codec/container), same-media-type perceptual matching, strict video compatibility gates, date-confidence review routing, collision suffix resolution, run/worker identity fields, and validator enforcement that larger-than-original or low-confidence results cannot enter quarantine. Added validator-backed classification fixtures for cross-media, Live Photo, video-duration, collision, and date-fallback cases.
+
+### Organizer hardening v3 (2026-07-24)
+
+- Added immutable `plan.json.review-manifest.json` output for every perceptual read-only plan, with review rows grouped by reason and media kind.
+- Added companion/sidecar inventory and apply safety for `.aae`, `.xmp`, `.dop`, `.pp3`, `.thm`, and same-stem `.json` files. Companion sources are preflighted, size-checked, journaled, copied/moved with the primary, verified at destination, and rolled back on partial failure.
+- Resume replay now preserves cached `videoEvidence`, avoiding re-probing unchanged video files after interruption.
+- Video perceptual matching now requires matching media type, duration, dimensions, aspect ratio, and codec; missing evidence remains non-matching/review-safe.
+- Added read-only `build-photo-companion-manifest.mjs`, `verify-photo-plan-sample.mjs`, and `generate-photo-review-contact-sheet.mjs`; contact-sheet failures are retained in `failures.json`.
+- Expanded classification fixtures to cover sidecars, manifest generation, sample verification, and review contact sheets. Local organizer, validator, safety, classification, and cohort-planner tests pass.
+- Deployed the updated tools to `/volume1/docker/photo-dedup-agent/app/tools` over authenticated SSH without restarting `photo-dedup-agent` or any worker. Container-side Node syntax checks pass.
+- Added ImageMagick/libheif to `tools/dedup-agent/Dockerfile` and built a separate NAS image `photo-dedup-agent:heif`; it exposes `/usr/bin/convert` with HEIC support. The active v5 worker remains on the original image and was not restarted.
+- Perceptual similarity is now review-only by policy: family burst/expression variations are never automatically quarantined. A fresh run may seed from a prior append-only resume cache with `--seed-resume-file` without resuming or overwriting the source run.
+
+### Mac bridge/tunnel reconnect hardening (2026-07-25)
+
+- The NAS-to-Mac SSH reverse tunnel now uses `BatchMode`, an 8-second connect timeout, one connection attempt, 10-second server keepalives, two missed probes, and a 3-second launchd throttle.
+- Reloaded the tunnel LaunchAgent definition rather than only kickstarting the old in-memory job. NAS-to-Mac bridge health returned HTTP 200 after reload.
+- The bridge and tunnel remain private internal services; detached NAS workers are independent and are not affected by tunnel reconnects.
+# 2026-07-25: V7 cache reuse correction
+
+- Stopped the V7 expanded-library worker after it began rehashing the protected originals instead of reusing V6a evidence. The stopped run remains immutable and no source/output files were modified.
+- Added explicit `--seed-originals-root` support to `tools/photo-file-organizer.mjs`. A fresh run can now reuse a prior protected-reference cache across a deliberate mirror-root change, subject to matching relative path, size, and mtime.
+- Deployed the tested organizer file to `/volume1/docker/photo-dedup-agent/app/tools/photo-file-organizer.mjs` on Synology, with the previous deployment retained as `photo-file-organizer.mjs.pre-cache-alias-20260725`.
+- The next V7 launch must use the canonical V6a originals root and seed cache, or explicitly pair `--seed-resume-file` with `--seed-originals-root`; do not launch another unseeded scan.
+- V6a's `resume.jsonl` is only a five-record overlay because it reused V6's cache. The actual full seed is V6's `20260725T023336Z-volume1-v6-heic-complete-6981-19707/resume.jsonl`; the corrected V7 launch uses that file and verified `29,826` protected-reference cache reuses.

@@ -22,12 +22,13 @@ node tools/photo-file-organizer.mjs plan \
   --plan-file "/path/to/audits/french-polynesia-plan.json"
 ```
 
-To reconcile backup folders against an existing originals tree, use `reconcile-plan`. This computes content SHA1 hashes for originals and source files. Files already present in originals are planned for the duplicates quarantine; files not present are planned into the originals folder convention.
+To reconcile backup folders against an existing originals tree, use `reconcile-plan`. This computes content SHA1 hashes for originals and source files. `--originals` is comparison evidence. New keeper candidates go to the separate `--dest` staging tree and matches go to the separate `--duplicates` quarantine tree.
 
 ```bash
 node tools/photo-file-organizer.mjs reconcile-plan \
   --source "/path/to/backup/folder" \
   --originals "/path/to/photo/originals" \
+  --dest "/path/to/photo/staged-new-candidates" \
   --duplicates "/path/to/photo/duplicates" \
   --plan-file "/path/to/audits/backup-reconcile-plan.json"
 ```
@@ -38,12 +39,28 @@ If the source folder does not already have a meaningful event name, pass one exp
 node tools/photo-file-organizer.mjs reconcile-plan \
   --source "/path/to/backup/french-polynesia-files" \
   --originals "/path/to/photo/originals" \
+  --dest "/path/to/photo/staged-new-candidates" \
   --duplicates "/path/to/photo/duplicates" \
   --event-name "French Polynesia Leeward Islands" \
   --start 2012-10-15 \
   --end 2012-10-20 \
   --plan-file "/path/to/audits/french-polynesia-reconcile-plan.json"
 ```
+
+For a detached perceptual run, use the safe launcher. It creates one unique run directory with immutable `plan.json`, mutable-until-complete `progress.json`, append-only `resume.jsonl`, and a new append-only log for every attempt:
+
+```bash
+tools/run-photo-file-organizer-safe.sh \
+  --artifact-root "/volume1/docker/immich/agent/photo-organizer-runs" \
+  --run-label "volume1-pilot" \
+  --source "/volume1/photosync/uploads_macbookpro" \
+  --originals "/volume1/photosync/originals_clean" \
+  --dest "/volume1/photosync/organizer-staging/volume1-pilot" \
+  --duplicates "/volume1/photosync/duplicates-quarantine/volume1-pilot" \
+  --ffmpeg /usr/local/bin/ffmpeg7
+```
+
+If an incomplete attempt stalls, rerun the safe launcher with `--run-dir <exact-run-directory> --resume-run` and the same source/comparison/destination arguments. A completed run cannot be resumed or overwritten.
 
 Apply writes a journal before moving or copying:
 
@@ -64,7 +81,9 @@ Safety behavior:
 
 - `plan` never changes source or destination files.
 - `reconcile-plan` never changes source, originals, or duplicates files.
+- `/volume1/photo/originals` and `/volume1/photosync/originals_clean` are hard protected references. They are comparison-only; planning requires a separate non-protected `--dest`, and `apply`/`undo` reject operations whose source or destination touches either tree.
 - `reconcile-plan` treats content SHA1 matches as duplicate evidence; filename/date similarity alone is not enough to move a file to duplicates.
+- Plan artifacts use exclusive creation and are never overwritten. Long runs keep all plan/progress/resume artifacts in one unique run directory and use one append-only log per attempt.
 - `apply` refuses plans with conflicts/skipped rows unless `--allow-partial` is passed.
 - `apply` never overwrites an existing destination.
 - `apply` re-checks file size and SHA1, when present, before moving/copying.

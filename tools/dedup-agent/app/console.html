@@ -43,8 +43,26 @@
   #splitter::after { content: ''; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px; background: #2b3642; border-radius: 2px; }
   #splitter:hover::after, #splitter:focus::after { background: #5b9bd5; }
   #toolPanel { border-left: 0; padding-left: 14px; }
+  #toolPanel { display:grid; grid-template-rows:auto minmax(120px,2fr) 8px minmax(150px,1fr); overflow:hidden; }
   #toolPanelTitle { position: sticky; top: 0; z-index: 1; padding: 3px 0 8px; color: #8fa0b2; background: #070809; font-size: 11px; text-transform: uppercase; letter-spacing: .6px; }
-  #toolTranscript { display: flex; flex-direction: column; gap: 4px; }
+  #toolTranscript { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+  #toolProcessSplitter { cursor: row-resize; position: relative; touch-action: none; }
+  #toolProcessSplitter::after { content:''; position:absolute; left:0; right:0; top:3px; height:2px; background:#2b3642; border-radius:2px; }
+  #toolProcessSplitter:hover::after, #toolProcessSplitter:focus::after { background:#5b9bd5; box-shadow:0 0 10px rgba(91,155,213,.35); }
+  #activeProcess { min-height:0; overflow:auto; padding:10px 0 0; border-top:0; }
+  #activeProcessHeader { display:flex; align-items:center; justify-content:space-between; gap:8px; color:#aab7c5; font-size:11px; text-transform:uppercase; letter-spacing:.6px; }
+  #activeProcessState { color:#64748b; font-size:10px; } #activeProcess.running #activeProcessState { color:#fbbf24; } #activeProcess.done #activeProcessState { color:#34d399; } #activeProcess.error #activeProcessState { color:#f87171; }
+  #activeProcessTitle { margin-top:7px; color:#e5e9ef; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #activeProcessObjective { margin-top:4px; color:#cbd5e1; font-size:11px; }
+  #activeProcessTask { margin-top:4px; color:#fbbf24; font-size:11px; }
+  #activeProcessMeta { display:flex; flex-wrap:wrap; gap:6px 12px; margin-top:5px; color:#8b98a8; font-size:11px; }
+  #activeProcessProgress { height:5px; margin:9px 0 7px; background:#202832; border-radius:999px; overflow:hidden; }
+  #activeProcessBar { height:100%; width:0; background:#fbbf24; border-radius:999px; transition:width .35s ease; }
+  #activeProcess.running.indeterminate #activeProcessBar { width:35%; animation:activeProcessPulse 1.8s ease-in-out infinite; }
+  @keyframes activeProcessPulse { 0%,100% { transform:translateX(-80%); opacity:.45; } 50% { transform:translateX(220%); opacity:1; } }
+  #activeProcessProgressLabel { color:#aab7c5; font-size:11px; }
+  #activeProcessCommand, #activeProcessLatest { margin-top:7px; color:#8b98a8; font:11px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace; white-space:pre-wrap; word-break:break-word; max-height:72px; overflow:auto; }
+  #activeProcessCommand::before { content:'command  '; color:#64748b; } #activeProcessLatest::before { content:'latest  '; color:#64748b; }
   .row { display: flex; flex-direction: column; gap: 2px; }
   .role { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: #64748b; }
   .user .bubble { background: #1d2836; border: 1px solid #2b3b52; }
@@ -86,9 +104,9 @@
   .attachment button { position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; padding: 0; border-radius: 50%; background: #3a1818; color: #fecaca; border-color: #713333; }
   @media (max-width: 900px) {
     main { grid-template-columns: 1fr; overflow-y: auto; }
-    #splitter { display: none; }
+    #splitter, #toolProcessSplitter { display: none; }
     #conversation, #toolPanel { overflow: visible; }
-    #toolPanel { border-left: 0; border-top: 1px solid #232c37; padding: 10px 0 0; }
+    #toolPanel { display: block; border-left: 0; border-top: 1px solid #232c37; padding: 10px 0 0; }
   }
 </style>
 </head>
@@ -136,6 +154,18 @@
     <aside id="toolPanel" aria-label="Tool activity">
       <div id="toolPanelTitle">Tool activity</div>
       <div id="toolTranscript"></div>
+      <div id="toolProcessSplitter" role="separator" aria-label="Resize tool activity and active process" aria-orientation="horizontal" tabindex="0"></div>
+      <section id="activeProcess" aria-live="polite" aria-label="Active process">
+        <div id="activeProcessHeader"><span>Active process</span><span id="activeProcessState">waiting</span></div>
+        <div id="activeProcessTitle">No active process</div>
+        <div id="activeProcessObjective">Objective: waiting for a durable NAS operation</div>
+        <div id="activeProcessTask">Task: waiting</div>
+        <div id="activeProcessMeta"><span id="activeProcessElapsed">elapsed 0:00</span><span id="activeProcessPhase">phase waiting</span></div>
+        <div id="activeProcessProgress"><div id="activeProcessBar"></div></div>
+        <div id="activeProcessProgressLabel">Waiting for a tool to start</div>
+        <div id="activeProcessCommand"></div>
+        <div id="activeProcessLatest"></div>
+      </section>
     </aside>
   </main>
   <footer>
@@ -150,6 +180,34 @@
   var transcript = document.getElementById('conversation');
   var toolTranscript = document.getElementById('toolTranscript');
   var toolPanel = document.getElementById('toolPanel');
+  var activeProcessEl = document.getElementById('activeProcess');
+  var toolProcessSplitter = document.getElementById('toolProcessSplitter');
+  var activeProcessStateEl = document.getElementById('activeProcessState');
+  var activeProcessTitleEl = document.getElementById('activeProcessTitle');
+  var activeProcessObjectiveEl = document.getElementById('activeProcessObjective');
+  var activeProcessTaskEl = document.getElementById('activeProcessTask');
+  var activeProcessElapsedEl = document.getElementById('activeProcessElapsed');
+  var activeProcessPhaseEl = document.getElementById('activeProcessPhase');
+  var activeProcessBarEl = document.getElementById('activeProcessBar');
+  var activeProcessProgressLabelEl = document.getElementById('activeProcessProgressLabel');
+  var activeProcessCommandEl = document.getElementById('activeProcessCommand');
+  var activeProcessLatestEl = document.getElementById('activeProcessLatest');
+  var activeProcessStartedAt = 0;
+  var activeProcessDetached = false;
+  var activeProcessTimer = null;
+  var activeProcessSignalTimer = null;
+  var activeProcessRunDir = '';
+  var activeProcessStorageKey = 'photo_dedup_agent_active_process_v1';
+  function saveActiveProcess() { try { sessionStorage.setItem(activeProcessStorageKey, JSON.stringify({ state:activeProcessStateEl.textContent,title:activeProcessTitleEl.textContent,elapsed:activeProcessElapsedEl.textContent,phase:activeProcessPhaseEl.textContent,progress:activeProcessProgressLabelEl.textContent,command:activeProcessCommandEl.textContent,latest:activeProcessLatestEl.textContent,startedAt:activeProcessStartedAt,detached:activeProcessDetached,runDir:activeProcessRunDir,className:activeProcessEl.className })); } catch (e) {} }
+  function restoreActiveProcess() { try { var saved=JSON.parse(sessionStorage.getItem(activeProcessStorageKey)||'null'); if (!saved || !saved.title || saved.title === 'No active process') return; activeProcessStartedAt=Number(saved.startedAt)||0; activeProcessDetached=Boolean(saved.detached); activeProcessRunDir=saved.runDir||''; activeProcessEl.className=saved.className||'running'; activeProcessStateEl.textContent=saved.state||'last known'; activeProcessTitleEl.textContent=saved.title; activeProcessElapsedEl.textContent=saved.elapsed||'elapsed unknown'; activeProcessPhaseEl.textContent=saved.phase||'phase unknown'; activeProcessProgressLabelEl.textContent=saved.progress||'Last known progress'; activeProcessCommandEl.textContent=saved.command||''; activeProcessLatestEl.textContent=saved.latest||''; startActiveProcessTimer(); startActiveProcessSignalPoll(); } catch (e) {} }
+  function markActiveProcessDisconnected() { if (!activeProcessStartedAt || activeProcessEl.className.indexOf('running') < 0) return; activeProcessStateEl.textContent=activeProcessDetached ? 'running on NAS' : 'connection lost'; activeProcessLatestEl.textContent='Laptop/agent connection lost. A detached NAS job may continue; reconnect and poll its durable progress artifact.'; saveActiveProcess(); }
+  var toolSplitRatio = 66;
+  try { toolSplitRatio = Math.max(35, Math.min(80, Number(localStorage.getItem('immich_agent_tool_split_ratio')) || 66)); } catch (e) {}
+  function applyToolSplit() { toolPanel.style.gridTemplateRows = 'auto minmax(120px,' + toolSplitRatio + 'fr) 8px minmax(150px,' + (100 - toolSplitRatio) + 'fr)'; toolProcessSplitter.setAttribute('aria-valuenow', String(Math.round(toolSplitRatio))); }
+  function setToolSplitFromPointer(clientY) { var rect = toolPanel.getBoundingClientRect(); var usable = rect.height - 8 - 28; toolSplitRatio = Math.max(35, Math.min(80, ((clientY - rect.top - 28) / usable) * 100)); applyToolSplit(); }
+  toolProcessSplitter.addEventListener('pointerdown', function (e) { toolProcessSplitter.setPointerCapture(e.pointerId); document.body.style.cursor = 'row-resize'; function move(ev) { setToolSplitFromPointer(ev.clientY); } function end() { toolProcessSplitter.removeEventListener('pointermove', move); toolProcessSplitter.removeEventListener('pointerup', end); document.body.style.cursor = ''; try { localStorage.setItem('immich_agent_tool_split_ratio', String(toolSplitRatio)); } catch (x) {} } toolProcessSplitter.addEventListener('pointermove', move); toolProcessSplitter.addEventListener('pointerup', end); });
+  toolProcessSplitter.addEventListener('keydown', function (e) { if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return; e.preventDefault(); toolSplitRatio = Math.max(35, Math.min(80, toolSplitRatio + (e.key === 'ArrowUp' ? -3 : 3))); applyToolSplit(); try { localStorage.setItem('immich_agent_tool_split_ratio', String(toolSplitRatio)); } catch (x) {} });
+  window.addEventListener('resize', applyToolSplit); applyToolSplit();
   var workspace = document.getElementById('workspace');
   var splitter = document.getElementById('splitter');
   var input = document.getElementById('input');
@@ -176,6 +234,7 @@
   var sessionByEngine = { claude: null, codex: null };
   var running = false;
   var promptQueue = [];
+  var clarificationRunning = false;
   var processingQueuedPrompt = false;
   var controller = null;
   var runStart = 0, evCount = 0, toolCount = 0, lastActivity = 0, liveTimer = null;
@@ -230,6 +289,7 @@
   showToolOutput.addEventListener('change', function () {
     try { localStorage.setItem('immich_agent_show_tool_output', showToolOutput.checked ? '1' : '0'); } catch (e) {}
   });
+  var activeProcessStatusUrl = window.location.pathname.indexOf('/api/assistant/') === 0 ? '/api/assistant/active-process-status' : '/active-process-status';
   function loadVoiceSetting(key, fallback) {
     try {
       var value = localStorage.getItem(key);
@@ -274,10 +334,12 @@
     populateModels();
     sessionId = simpleMode ? null : (sessionByEngine[engineSel.value] || null);
     try { localStorage.setItem('immich_agent_engine', engineSel.value); } catch (e) {}
+    saveConversation();
     addChip((engineSel.value === 'codex' ? 'Codex' : 'Claude') + ' selected' + (sessionId ? ' · resumed local session' : ' · new local session'));
   });
   modelSel.addEventListener('change', function () {
     try { localStorage.setItem('immich_agent_model_' + engineSel.value, modelSel.value); } catch (e) {}
+    saveConversation();
   });
   try {
     var savedEngine = localStorage.getItem('immich_agent_engine');
@@ -286,11 +348,69 @@
   populateModels();
 
   function fmtElapsed(ms) { var s = Math.floor(ms / 1000), m = Math.floor(s / 60); s = s % 60; return m + ':' + (s < 10 ? '0' : '') + s; }
+  function fmtDuration(ms) {
+    var s = Math.max(0, Math.floor(ms / 1000));
+    var d = Math.floor(s / 86400); s %= 86400;
+    var h = Math.floor(s / 3600); s %= 3600;
+    var m = Math.floor(s / 60); s %= 60;
+    if (d > 0) return d + 'd ' + h + 'h';
+    if (h > 0) return h + 'h ' + m + 'm';
+    if (m > 0) return m + 'm ' + (s < 10 ? '0' : '') + s + 's';
+    return s + 's';
+  }
+  function describeActiveSignal(d) {
+    var phase = d.phase || d.stage || 'unknown';
+    if (d.jobKind === 'media_assessment_catalog') {
+      var catalogStages = { starting:'Stage 1 of 3 · Preparing master catalog', enumerating_paths:'Stage 2 of 3 · Enumerating scoped media paths', assessing_files:'Stage 3 of 3 · Hashing, reading EXIF, probing video, and scoring files', completed:'Complete · Master assessment catalog written' };
+      var counts = d.counts || {};
+      activeProcessTitleEl.textContent = 'Master media assessment catalog';
+      activeProcessObjectiveEl.textContent = 'Objective: path-complete SQLite master catalog for current and future asset comparison';
+      activeProcessTaskEl.textContent = (catalogStages[phase] || 'Current stage · ' + phase) + ' · include ' + (counts.includeFiles || 0).toLocaleString() + ' · reference ' + (counts.referenceFiles || 0).toLocaleString() + ' · pending ' + (counts.assessmentPending || 0).toLocaleString();
+      return;
+    }
+    var stages = { starting:'Stage 1 of 8 · Preparing run', indexing_originals:'Stage 2 of 8 · Indexing protected originals', indexing_sources:'Stage 3 of 8 · Indexing source folders', reading_metadata:'Stage 4 of 8 · Reading metadata', hashing_sources:'Stage 5 of 8 · Hashing source files', perceptual_grouping:'Stage 6 of 8 · Comparing visual duplicates', writing_plan:'Stage 7 of 8 · Writing review plan', completed:'Stage 8 of 8 · Complete' };
+    var tasks = { indexing_originals:'Hashing originals for the comparison baseline', indexing_sources:'Enumerating candidate source files', reading_metadata:'Collecting EXIF and file attributes', hashing_sources:'Computing exact content hashes', perceptual_grouping:'Computing perceptual matches', writing_plan:'Building a reversible plan' };
+    activeProcessObjectiveEl.textContent = 'Objective: read-only deduplication assessment and reversible organization plan';
+    activeProcessTaskEl.textContent = (stages[phase] || 'Current stage · ' + phase) + ' · ' + (tasks[phase] || 'Monitoring durable NAS work') + ' · attempt ' + (d.attempt || '?') + ' · resumed cache ' + ((d.counters || {}).reusedFromResume || 0).toLocaleString();
+  }
+  function setActiveProcess(title, command) {
+    activeProcessDetached = false; if (activeProcessTimer) clearInterval(activeProcessTimer);
+    activeProcessStartedAt = Date.now(); activeProcessEl.className = 'running indeterminate'; activeProcessStateEl.textContent = 'running';
+    activeProcessTitleEl.textContent = title || 'Agent process'; activeProcessElapsedEl.textContent = 'elapsed 0:00'; activeProcessPhaseEl.textContent = 'phase starting';
+    activeProcessBarEl.style.width = '0%'; activeProcessProgressLabelEl.textContent = 'Progress data not reported yet'; activeProcessCommandEl.textContent = command || ''; activeProcessLatestEl.textContent = ''; saveActiveProcess(); startActiveProcessTimer(); startActiveProcessSignalPoll();
+  }
+  function startActiveProcessTimer() { if (activeProcessTimer) clearInterval(activeProcessTimer); if (!activeProcessStartedAt) return; activeProcessTimer = setInterval(function () { if (activeProcessEl.className.indexOf('running') >= 0) activeProcessElapsedEl.textContent = 'elapsed ' + fmtElapsed(Date.now() - activeProcessStartedAt); }, 1000); }
+  function startActiveProcessSignalPoll() { if (activeProcessSignalTimer) clearInterval(activeProcessSignalTimer); pollActiveProcessSignal(); activeProcessSignalTimer = setInterval(pollActiveProcessSignal, 5000); }
+  function pollActiveProcessSignal() { fetch(activeProcessStatusUrl + '?t=' + Date.now(), { cache:'no-store' }).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }).then(function (d) { if (!d || d.status === 'unknown') return; if (activeProcessRunDir && d.runDir && d.runDir !== activeProcessRunDir && activeProcessEl.className.indexOf('running') >= 0 && d.jobKind !== 'media_assessment_catalog') return; activeProcessRunDir = d.runDir || activeProcessRunDir; activeProcessDetached = true; describeActiveSignal(d); if (d.startedAt) activeProcessStartedAt = new Date(d.startedAt).getTime(); var c = d.counters || {}, t = d.totals || {}, counts = d.counts || {}, sig = d.signal || {}, done = sig.phaseDone || counts.assessedOk || c.originalsHashed || c.sourceScanned || 0, total = sig.phaseTotal || counts.catalogFiles || t.originalsFiles || t.sourceFiles || 0; activeProcessPhaseEl.textContent = 'phase ' + (d.phase || d.stage || 'unknown'); activeProcessEl.className = d.status === 'stalled' ? 'error' : d.status === 'completed' ? 'done' : 'running'; activeProcessStateEl.textContent = d.status === 'stalled' ? 'stalled' : d.status === 'completed' ? 'complete' : 'running on NAS'; if (total > 0 && (d.phase === 'assessing_files' || d.phase === 'completed' || d.jobKind !== 'media_assessment_catalog')) { activeProcessEl.classList.remove('indeterminate'); activeProcessBarEl.style.width = Math.min(100, done / total * 100) + '%'; var rate = sig.ratePerSecond > 0 ? sig.ratePerSecond.toFixed(1) + '/s' : 'rate warming'; var eta = sig.etaSeconds ? ' · ETA ' + fmtDuration(sig.etaSeconds * 1000) : ''; var extra = d.jobKind === 'media_assessment_catalog' ? ' · pending ' + (counts.assessmentPending || 0).toLocaleString() : ' · reused ' + (c.reusedFromResume || 0).toLocaleString(); activeProcessProgressLabelEl.textContent = done.toLocaleString() + ' of ' + total.toLocaleString() + ' · ' + rate + eta + extra + ' · heartbeat ' + d.heartbeatAgeSeconds + 's'; } else { activeProcessEl.classList.add('indeterminate'); activeProcessProgressLabelEl.textContent = (d.jobKind === 'media_assessment_catalog' ? 'Enumerated ' + (counts.catalogFiles || 0).toLocaleString() + ' catalog rows · scanned ' + (d.scanned_dirs || 0).toLocaleString() + ' dirs' : 'Heartbeat ' + d.heartbeatAgeSeconds + 's · progress warming') + ' · heartbeat ' + d.heartbeatAgeSeconds + 's'; } activeProcessLatestEl.textContent = d.status === 'stalled' ? 'Worker signal is stale or the worker container is gone. Inspect lifecycle log before resuming.' : (d.lifecycle || 'Durable NAS worker signal received.'); saveActiveProcess(); }).catch(function (e) { activeProcessLatestEl.textContent = 'Status poll failed: ' + String((e && e.message) || e) + ' via ' + activeProcessStatusUrl; }); }
+  function updateActiveProcess(text) {
+    var value = String(text || '').trim(); if (!value) return; activeProcessLatestEl.textContent = value.slice(-700);
+    var phase = value.match(/phase\s*(?:[:=]|\s)\s*([^\n,;]+)/i); if (phase) activeProcessPhaseEl.textContent = 'phase ' + phase[1].trim().slice(0, 80);
+    var progress = value.match(/(?:processed|sourceScanned|originalsHashed|filesSeen|filesProcessed|completed)\s*[:=]?\s*([\d,]+)\s*(?:of|\/)\s*([\d,]+)/i);
+    var percent = value.match(/(?:^|\s)(\d+(?:\.\d+)?)\s*%/); var eta = value.match(/(?:eta|remaining)\s*[:=]?\s*([^,;\n]+)/i); var rate = value.match(/(?:rate|at)\s*[:=]?\s*([\d,.]+\s*(?:files?|items?)?\s*\/\s*(?:s|sec|second))/i);
+    if (activeProcessDetached && activeProcessRunDir) { saveActiveProcess(); return; }
+    if (progress) { var done = Number(progress[1].replace(/,/g, '')), total = Number(progress[2].replace(/,/g, '')); if (total > 0) { activeProcessEl.classList.remove('indeterminate'); activeProcessBarEl.style.width = Math.min(100, done / total * 100) + '%'; activeProcessProgressLabelEl.textContent = progress[1] + ' of ' + progress[2] + (rate ? ' · ' + rate[1] : '') + (eta ? ' · ETA ' + eta[1].trim() : ''); } }
+    else if (percent) { activeProcessEl.classList.remove('indeterminate'); activeProcessBarEl.style.width = Math.min(100, Number(percent[1])) + '%'; activeProcessProgressLabelEl.textContent = percent[1] + '%' + (rate ? ' · ' + rate[1] : '') + (eta ? ' · ETA ' + eta[1].trim() : ''); }
+    else if (rate || eta) activeProcessProgressLabelEl.textContent = (rate ? rate[1] : '') + (eta ? ' · ETA ' + eta[1].trim() : '');
+    saveActiveProcess();
+  }
+  function finishActiveProcess(ok, latest) { if (latest) updateActiveProcess(latest); if (activeProcessDetached && ok) { activeProcessEl.className='running indeterminate'; activeProcessStateEl.textContent='running on NAS'; activeProcessLatestEl.textContent='Agent turn ended; detached NAS job remains active. Poll its durable progress artifact.'; startActiveProcessTimer(); saveActiveProcess(); return; } activeProcessEl.className = ok ? 'done' : 'error'; activeProcessStateEl.textContent = ok ? 'complete' : 'failed'; if (activeProcessStartedAt) activeProcessElapsedEl.textContent = 'elapsed ' + fmtElapsed(Date.now() - activeProcessStartedAt); if (activeProcessTimer) { clearInterval(activeProcessTimer); activeProcessTimer=null; } saveActiveProcess(); }
+  function captureProcessNarrative(text) {
+    var value = String(text || '').trim();
+    if (!value || !/\b(?:pid|heartbeat|resum(?:e|ed|ing)|hash(?:ing|ed)|scan(?:ning|ned)?|checkpoint|attempt\s+\d+|read[- ]only|process(?:ing)?|progress|eta|alive)\b/i.test(value)) return;
+    if (activeProcessEl.className.indexOf('running') < 0) setActiveProcess('Agent-reported operation', '');
+    var runMatch = value.match(/\/volume1\/(?:docker\/immich\/agent\/photo-organizer-runs|photosync\/assistant-catalog\/runs)\/[^\s`"']+/);
+    if (runMatch) { activeProcessRunDir = runMatch[0].replace(/[.,;)]$/, ''); startActiveProcessSignalPoll(); }
+    if (/\b(?:running independently|detached|pid\s+[`'\"]?\d+|heartbeat|attempt\s+\d+.*running|nas job)\b/i.test(value)) { activeProcessDetached=true; activeProcessEl.className='running indeterminate'; activeProcessStateEl.textContent='running on NAS'; startActiveProcessTimer(); }
+    var firstLine = value.split(/\n/)[0].replace(/^[-*]\s+/, '').trim();
+    activeProcessTitleEl.textContent = firstLine.slice(0, 140) || 'Agent-reported operation';
+    updateActiveProcess(value);
+  }
   function tickLive() {
     if (!running) { liveEl.textContent = ''; return; }
     var idle = Math.floor((Date.now() - lastActivity) / 1000);
     liveEl.textContent = '▶ ' + fmtElapsed(Date.now() - runStart) + '  ' + toolCount + ' tools  ' + evCount + ' events' + (promptQueue.length ? '  · ' + promptQueue.length + ' queued' : '') + '  · last activity ' + idle + 's ago';
     liveEl.style.color = idle > 90 ? '#fbbf24' : '#64748b';
+    if (activeProcessStartedAt && activeProcessEl.className.indexOf('running') >= 0) activeProcessElapsedEl.textContent = 'elapsed ' + fmtElapsed(Date.now() - activeProcessStartedAt);
   }
   function bump() { lastActivity = Date.now(); evCount++; }
   function setRunning(on) {
@@ -312,10 +432,12 @@
     '- Synology: exactly `ssh -p 22222 hausmanj@drhaus` (NAS data under /volume1). Run near the data for bulk file inventory/hashing.',
     '- Immich container: `ssh -p 22222 hausmanj@drhaus /usr/local/bin/docker exec immich-server ...` for /data, /external, and the Immich API on http://127.0.0.1:2283.',
     '- HOST VISIBILITY: Treat Synology as the source of truth for NAS work. For NAS status, processes, files, and progress, use SSH/Tailscale and inspect locally under `/volume1`; do not look for a Mac PID or require a `/Volumes` mount. The Mac is only relevant when the user explicitly asks about a Mac-local operation or the Codex/Claude bridge. If the required host cannot be reached, report `NAS check unavailable; SSH/Tailscale interaction required` rather than claiming the NAS process stopped. Ask for the missing interaction clearly before continuing.',
+    '- NAS JOB CONTINUITY: Any Synology operation expected to run longer than a few minutes must run in a dedicated worker container, separate from `photo-dedup-agent` and `immich-server`, with `--restart on-failure:10`, closed stdin, durable logs, lifecycle events, PID/container identity, and progress/resume artifacts under `/volume1/docker/immich/agent/`. Never run the worker inside a UI/proxy container and never restart a container that owns a long job. If the bridge disconnects, reconnect to Synology and poll the durable worker signals.',
+    '- CENSUS ARTIFACT SAFETY: For `media-census.py`, always launch `/volume1/docker/photo-dedup-agent/app/tools/run-media-census-safe.sh` (or the canonical repo copy). Never use shell `>` redirection to a census log and never reuse a completed run log; the safe launcher creates a unique attempt log so failed resume checks cannot truncate historical evidence.',
     '- EXECUTION LOCATION CHECKPOINT: Before a Mac-side scan, verify the required NAS share exists under /Volumes. If it is missing, pause and ask: "I cannot see /Volumes/<share>. Can you create or mount a network share for /volume1/<share> at that path? If not, I can run this on the NAS instead." State the exact share/path and why it is needed, then wait for the user response. Do not silently fall back or launch a long scan until the user chooses Mac-share setup or NAS execution.',
     '- Immich assistant API (already built, reversible): persisted index-runs (POST/GET /api/assistant/index-runs) record source folder/type/size/dims/dates/camera/GPS + noise & risk labels + content SHA1 + raw-inventory of files on disk not imported; deterministicAudits.organizationCoveragePlan and coverageExecutionLedger (ordered work queue proving every asset is covered/deferred/risky/unclassified); read-only tools via POST /api/assistant/tool (content_hash_audit, sidecar_pair_audit, metadata_search, mobile_original_compare); reversible review albums (review-album, review-plan); journaled mutations + undo (metadata_edit, archive_favorite, stack_change apply+undo work; folder_move and duplicate_resolution are apply-BLOCKED until typed undo exists).',
     '- Outside Immich (source files): /Users/johnhausman/source/immich/tools/photo-file-organizer.mjs. For the big pre-import dedup pass ALWAYS use `reconcile-plan --perceptual`: on top of exact content-SHA1 it groups visually-identical copies that differ in bytes (same photo at different resolutions, and RAW like NEF/CR2/DNG vs its exported JPEG via embedded-preview hashing), keeps the LARGEST file of each visual group and quarantines the smaller copies (never deletes; never modifies the --originals tree — a source matching an existing original is quarantined and flagged largerThanOriginalMatch for manual review).',
-    '  This scan runs for HOURS over 1-2M files, so NEVER run it synchronously in one agent_command. Launch it DETACHED on the NAS and write every artifact under /volume1/docker/immich/agent/ (durable; NOT the ephemeral container /data): `nohup node tools/photo-file-organizer.mjs reconcile-plan --perceptual --source S --originals O --duplicates Q --plan-file /volume1/docker/immich/agent/plan.json --progress-file /volume1/docker/immich/agent/progress.json --resume-file /volume1/docker/immich/agent/resume.jsonl >/volume1/docker/immich/agent/run.log 2>&1 &`. Poll cheaply with `node tools/photo-file-organizer.mjs status --progress-file <path>` (reports phase/percent; flags `stalled` if the pid died) — never block on it or re-read the plan. If it stalls or the box reboots, re-run the SAME command with the same --resume-file and it resumes (already-hashed files are skipped).',
+    '  This scan runs for HOURS over 1-2M files, so NEVER run it synchronously in one agent_command or inside the UI container. Launch `/volume1/docker/photo-dedup-agent/app/tools/run-photo-file-organizer-nas-worker.sh` on the NAS host; it creates a separate restartable worker container, immutable attempt log, lifecycle log, and durable progress/resume artifacts. Poll the progress artifact and worker container state. If the worker or NAS reboots, the restart policy resumes the same run; never invent a new run or overwrite old logs.',
     '  Only after reviewing the plan JSON run `apply` (writes a typed journal; moves dupes->quarantine, keepers->date-prefixed event folders like "2012-10-15 French Polynesia") then `undo` if needed. Use `reconcile-plan` without --perceptual only for a lighter exact-SHA1-only comparison. Immich external mounts are read-only, so moves run on the raw /volume1 tree, not inside the container.',
     '',
     'METHOD (every phase read-only until the user approves; every mutation journaled + undoable): Phase 0 Census (run index-runs / organizer plan across the tree; classify real media vs noise vs unknown; content-hash). Phase 1 Signal-vs-noise (quarantine movie-art *-poster/-backdrop/-logo, thumbnails, caches, app/doc folders, Takeout/iMazing blobs via noise/smallDimension/generatedLike cohorts). Phase 2 Dedupe (reconcile-plan --perceptual = exact SHA1 + perceptual near-dupes incl. RAW-vs-JPEG and resolution variants; keep the LARGEST copy of each visual group as canonical, quarantine the rest; never auto-delete). Phase 3 Cohorts (GPS is only an ANCHOR in old libraries; backbone = source folder + capture date + camera + EXIF/dimensions; build event cohorts first, then date/source/camera; DECOMPOSE broad containers like "Raw Photo and Video Files"/"Pictures"/"GoPro" with exact-folder audits before any album). Phase 4 Reversible review queues (review albums in Immich and/or dated event folders on the source tree). Phase 5 Guarded commit (albums/stacks/metadata in Immich; organizer apply for source files).',
@@ -333,7 +455,7 @@
   function scroll(target) { target.scrollTop = target.scrollHeight; }
   var savedConversationKey = 'photo_dedup_agent_conversation_v1';
   function saveConversation() {
-    try { sessionStorage.setItem(savedConversationKey, JSON.stringify({ conversation: transcript.innerHTML, draft: input.value, scroll: transcript.scrollTop })); } catch (e) {}
+    try { sessionStorage.setItem(savedConversationKey, JSON.stringify({ conversation: transcript.innerHTML, draft: input.value, scroll: transcript.scrollTop, engine: engineSel.value, model: modelSel.value })); } catch (e) {}
   }
   function renderAttachments() {
     attachmentsEl.innerHTML = '';
@@ -360,12 +482,15 @@
     try {
       var saved = JSON.parse(sessionStorage.getItem(savedConversationKey) || 'null');
       if (!saved) return;
+      if (saved.engine && MODELS[saved.engine]) { engineSel.value = saved.engine; populateModels(); if (saved.model != null) modelSel.value = saved.model; }
       if (saved.conversation) transcript.innerHTML = saved.conversation;
       if (typeof saved.draft === 'string') input.value = saved.draft;
       requestAnimationFrame(function () { transcript.scrollTop = Number(saved.scroll) || transcript.scrollHeight; });
     } catch (e) {}
   }
   restoreConversation();
+  restoreActiveProcess();
+  startActiveProcessSignalPoll();
   window.addEventListener('beforeunload', saveConversation);
 
   function populateVoices() {
@@ -449,9 +574,9 @@
         : 'tool output hidden. Enable "show tool output" to inspect it.';
     } else if (isHtml) b.innerHTML = text; else b.textContent = text;
     row.appendChild(b);
-    var target = cls === 'tool' || cls === 'result-block' ? toolPanel : transcript;
+    var target = cls === 'tool' || cls === 'result-block' ? toolTranscript : transcript;
     target.appendChild(row); scroll(target); if (target === transcript) saveConversation();
-    if ((cls === 'assistant' || role === 'codex') && !isHtml) speakText(text);
+    if ((cls === 'assistant' || role === 'codex') && !isHtml) { captureProcessNarrative(text); speakText(text); }
     return b;
   }
   function addChip(text) {
@@ -543,6 +668,7 @@
           toolCount++;
           var arg = c.input && (c.input.command || c.input.file_path || c.input.pattern);
           var label = arg ? String(arg) : JSON.stringify(c.input || {});
+          setActiveProcess(c.name || 'tool', label);
           var trow = addRow('tool', 'tool · ' + c.name, '', true);
           trow.innerHTML = '<span class="toolname">' + escapeHtml(c.name) + '</span> <span class="run" style="font-size:11px;color:#fbbf24">▶ running</span>  ' + escapeHtml(label);
           if (c.id) toolRows[c.id] = trow;
@@ -556,6 +682,7 @@
           var trow = c.tool_use_id && toolRows[c.tool_use_id];
           if (trow) { var rr = trow.querySelector('.run'); if (rr) { rr.textContent = '✓'; rr.style.color = '#34d399'; } }
           var t = typeof c.content === 'string' ? c.content : JSON.stringify(c.content);
+          finishActiveProcess(true, t || '(empty)');
           addRow('result-block', 'result', t || '(empty)');
         }
       });
@@ -581,6 +708,7 @@
       else if (it.type === 'command_execution') {
         if (!done) {
           toolCount++;
+          setActiveProcess('bash command', it.command || '');
           var crow = addRow('tool', 'tool · bash', '', true);
           crow.innerHTML = '<span class="toolname">bash</span> <span class="run" style="font-size:11px;color:#fbbf24">▶ running</span>  ' + escapeHtml(it.command || '');
           if (it.id) toolRows[it.id] = crow;
@@ -588,6 +716,7 @@
           var drow = it.id && toolRows[it.id];
           if (drow) { var r = drow.querySelector('.run'); if (r) { r.textContent = it.exit_code === 0 ? '✓' : ('exit ' + it.exit_code); r.style.color = it.exit_code === 0 ? '#34d399' : '#f87171'; } }
           var out = it.aggregated_output || it.output; if (out) addRow('result-block', 'result', String(out).slice(0, 6000));
+          finishActiveProcess(it.exit_code === 0, out || 'command completed');
         }
       } else if (done) { addRow('tool', 'codex · ' + (it.type || 'item'), JSON.stringify(it).slice(0, 300)); }
       return;
@@ -617,10 +746,11 @@
     var data = dataLines.join('\n');
     bump();
     if (event && event !== 'stderr') {
-      if (event === 'bridge_error') { var e; try { e = JSON.parse(data); } catch (x) { e = { error: data }; } addRow('err', 'bridge unavailable', e.error || data); if (e.logFilePath) addChip('log ' + e.logFilePath); setBridgeState('Mac bridge: unavailable', false); setStatus('error · interaction required', 'error'); }
+      if (event === 'bridge_error') { var e; try { e = JSON.parse(data); } catch (x) { e = { error: data }; } addRow('err', 'bridge unavailable', e.error || data); markActiveProcessDisconnected(); if (e.logFilePath) addChip('log ' + e.logFilePath); setBridgeState('Mac bridge: unavailable', false); setStatus('error · interaction required', 'error'); }
       else if (event === 'bridge_start') {
         var s; try { s = JSON.parse(data); } catch (x) { s = {}; }
         setBridgeState('Mac bridge: connected', true);
+        setActiveProcess('Agent turn', (s.command || 'agent') + ' ' + ((s.args || []).slice(0, 8).join(' ')));
         addChip('bridge started · ' + (s.engine || engineSel.value) + ' · ' + (s.command || 'agent') + ' ' + ((s.args || []).slice(0, 3).join(' ')));
         if (s.promptArchiveFilePath) addChip('prompt saved · ' + s.promptArchiveFilePath);
         if (s.promptArchiveError) addRow('err', 'prompt archive warning', s.promptArchiveError);
@@ -628,6 +758,7 @@
       else if (event === 'bridge_done') {
         var d; try { d = JSON.parse(data); } catch (x) { d = {}; }
         addDone('bridge done · exit ' + (d.exitCode == null ? '?' : d.exitCode) + (d.timedOut ? ' · timed out' : ''));
+        finishActiveProcess(!d.exitCode && !d.timedOut, d.timedOut ? 'timed out' : 'agent turn completed');
         if (d.exitCode && d.exitCode !== 0) { addRow('err', 'agent failed · interaction required', 'Agent process exited with ' + d.exitCode + (d.logFilePath ? '. Log: ' + d.logFilePath : '')); setBridgeState('Mac bridge: check required', false); setStatus('error · interaction required', 'error'); }
         if (d.promptArchiveError) addRow('err', 'prompt archive warning', d.promptArchiveError);
         if (statusEl.className !== 'error') setStatus('idle');
@@ -645,9 +776,21 @@
     try { renderEvent(JSON.parse(data)); } catch (x) { /* partial / non-json (codex 'Reading prompt...') */ }
   }
 
+  function sendClarification(question) {
+    if (clarificationRunning) { addChip('clarification already running · wait for its answer'); return; }
+    clarificationRunning = true;
+    addRow('user', 'you · clarification', question);
+    addChip('clarification lane · no tools · active process unaffected');
+    var payload = { input: question, engine: engineSel.value, permissionMode: 'default', appendSystemPrompt: SIMPLE_BRIEF + '\nTreat this as a side question. Do not use tools, do not resume the active work session, and answer only the clarification in a few concise paragraphs.', timeoutSeconds: 120 };
+    if (engineSel.value === 'codex') { if (modelSel.value) payload.codexModel = modelSel.value; } else if (modelSel.value) payload.model = modelSel.value;
+    var headers = { 'Content-Type': 'application/json' }, apiKey = apikeyEl.value.trim(); if (apiKey) headers['x-api-key'] = apiKey;
+    fetch('agent-stream', { method:'POST', headers:headers, credentials:'include', body:JSON.stringify(payload) }).then(function (res) { if (!res.ok || !res.body) throw new Error('HTTP ' + res.status); var reader=res.body.getReader(), dec=new TextDecoder(), buf='', answer=''; function pump() { return reader.read().then(function (r) { if (r.done) return; buf += dec.decode(r.value, {stream:true}); var idx; while ((idx=buf.indexOf('\n\n')) >= 0) { var frame=buf.slice(0,idx); buf=buf.slice(idx+2); var lines=frame.split('\n'), event='', data=[]; lines.forEach(function (line) { if (line.indexOf('event: ')===0) event=line.slice(7); else if (line.indexOf('data: ')===0) data.push(line.slice(6)); }); if (!data.length) continue; var j; try { j=JSON.parse(data.join('\n')); } catch (e) { continue; } if (event==='bridge_error') throw new Error(j.error || 'bridge error'); if (engineSel.value==='codex' && j.type==='item.completed' && j.item && j.item.type==='agent_message') answer += j.item.text || ''; if (engineSel.value!=='codex' && j.type==='assistant' && j.message && j.message.content) j.message.content.forEach(function (c) { if (c.type==='text') answer += c.text || ''; }); } return pump(); }); } return pump().then(function () { if (answer.trim()) addRow('assistant', 'clarification', answer.trim()); addDone('clarification answered'); }); }).catch(function (e) { addRow('err', 'clarification failed', String(e.message || e)); }).finally(function () { clarificationRunning=false; });
+  }
+
   function send() {
     var text = input.value.trim();
     if (!text && !pastedImages.length) return;
+    if (text.charAt(0) === '/' && text.length > 1) { input.value = ''; pastedImages=[]; renderAttachments(); sendClarification(text.slice(1).trim()); input.focus(); return; }
     if (running) {
       promptQueue.push({ text: text, images: pastedImages.slice(), queuedAt: Date.now() });
       input.value = '';
@@ -692,6 +835,7 @@
       signal: controller.signal
     }).then(function (res) {
       if (!res.ok || !res.body) {
+        markActiveProcessDisconnected();
         if (res.status === 401) {
           addRow('err', 'authentication required', 'HTTP 401 — sign into Immich at this URL or provide an API key, then send again.');
           apikeyEl.focus();
@@ -723,7 +867,7 @@
       return pump();
     }).catch(function (e) {
       if (e && e.name === 'AbortError') { addChip('■ stopped by you'); if (statusEl.className !== 'error') setStatus('idle'); }
-      else { addRow('err', 'connection failed · interaction required', 'Stream error: ' + (e && e.message ? e.message : e) + '. Check the Immich proxy and Mac bridge, then send again.'); setBridgeState('Mac bridge: unavailable', false); setStatus('error · interaction required', 'error'); }
+      else { addRow('err', 'connection failed · interaction required', 'Stream error: ' + (e && e.message ? e.message : e) + '. Check the Immich proxy and Mac bridge, then send again.'); markActiveProcessDisconnected(); setBridgeState('Mac bridge: unavailable', false); setStatus('error · interaction required', 'error'); }
       setRunning(false);
       if (statusEl.className !== 'error') processNextQueuedPrompt();
     });
