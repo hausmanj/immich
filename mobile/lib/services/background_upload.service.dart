@@ -261,8 +261,16 @@ class BackgroundUploadService {
     if (entity.isLivePhoto) {
       file = await _storageRepository.getMotionFileForAsset(asset);
     } else {
-      originalAssetFile = await _storageRepository.getOriginalAssetFileForUpload(asset.id);
-      file = originalAssetFile?.file;
+      try {
+        originalAssetFile = await _storageRepository.getOriginalAssetFileForUpload(asset.id);
+      } catch (error, stackTrace) {
+        _logger.warning(
+          "Failed to get original file wrapper for ${asset.id}; falling back to file export",
+          error,
+          stackTrace,
+        );
+      }
+      file = originalAssetFile?.file ?? await _storageRepository.getFileForAsset(asset.id);
     }
 
     if (file == null) {
@@ -307,6 +315,7 @@ class BackgroundUploadService {
       width: asset.width,
       height: asset.height,
       durationMs: asset.durationMs,
+      sourceAlbums: entity.isLivePhoto ? null : await _getSourceAlbumMetadata(asset.id),
     );
   }
 
@@ -317,8 +326,17 @@ class BackgroundUploadService {
       return null;
     }
 
-    final originalAssetFile = await _storageRepository.getOriginalAssetFileForUpload(asset.id);
-    final file = originalAssetFile?.file;
+    OriginalAssetFile? originalAssetFile;
+    try {
+      originalAssetFile = await _storageRepository.getOriginalAssetFileForUpload(asset.id);
+    } catch (error, stackTrace) {
+      _logger.warning(
+        "Failed to get original file wrapper for ${asset.id}; falling back to file export",
+        error,
+        stackTrace,
+      );
+    }
+    final file = originalAssetFile?.file ?? await _storageRepository.getFileForAsset(asset.id);
     if (file == null) {
       return null;
     }
@@ -350,6 +368,7 @@ class BackgroundUploadService {
       width: asset.width,
       height: asset.height,
       durationMs: asset.durationMs,
+      sourceAlbums: await _getSourceAlbumMetadata(asset.id),
     );
   }
 
@@ -387,13 +406,14 @@ class BackgroundUploadService {
     int? width,
     int? height,
     int? durationMs,
+    List<RemoteAssetMobileAppAlbumMetadata>? sourceAlbums,
   }) async {
     final serverEndpoint = Store.get(StoreKey.serverEndpoint);
     final url = Uri.parse('$serverEndpoint/assets').toString();
     final headers = ApiService.getRequestHeaders();
     final deviceId = Store.get(StoreKey.deviceId);
     final (baseDirectory, directory, filename) = await Task.split(filePath: file.path);
-    final uploadFileSizeBytes = await file.length();
+    final uploadFileSizeBytes = await file.exists() ? await file.length() : null;
     final mobileMetadata = RemoteAssetMobileAppMetadata(
       cloudId: cloudId,
       createdAt: createdAt.toIso8601String(),
@@ -409,6 +429,7 @@ class BackgroundUploadService {
       width: width,
       height: height,
       durationMs: durationMs,
+      sourceAlbums: sourceAlbums,
     );
     if (CurrentPlatform.isIOS && originalUploadSource != null) {
       _logger.info(
@@ -418,7 +439,8 @@ class BackgroundUploadService {
         "usedBaseOriginal=$usedBaseOriginal, usedFallback=$usedFallback, "
         "uploadFileSizeBytes=$uploadFileSizeBytes, cloudId=$cloudId, "
         "adjustmentTime=$adjustmentTime, latitude=$latitude, longitude=$longitude, "
-        "width=$width, height=$height, durationMs=$durationMs",
+        "width=$width, height=$height, durationMs=$durationMs, "
+        "sourceAlbums=${sourceAlbums?.map((album) => album.name).join(', ')}",
       );
     }
     final fieldsMap = {
@@ -432,12 +454,7 @@ class BackgroundUploadService {
       'duration': (durationMs ?? 0).toString(),
       ...?fields,
       if (CurrentPlatform.isIOS && (cloudId != null || originalUploadSource != null))
-        'metadata': jsonEncode([
-          RemoteAssetMetadataItem(
-            key: RemoteAssetMetadataKey.mobileApp,
-            value: mobileMetadata,
-          ),
-        ]),
+        'metadata': jsonEncode([RemoteAssetMetadataItem(key: RemoteAssetMetadataKey.mobileApp, value: mobileMetadata)]),
     };
 
     return UploadTask(
@@ -458,5 +475,19 @@ class BackgroundUploadService {
       updates: Updates.statusAndProgress,
       retries: 3,
     );
+  }
+
+  Future<List<RemoteAssetMobileAppAlbumMetadata>> _getSourceAlbumMetadata(String localAssetId) async {
+    final sourceAlbums = await _localAssetRepository.getSourceAlbums(localAssetId);
+    return [
+      for (final album in sourceAlbums)
+        RemoteAssetMobileAppAlbumMetadata(
+          id: album.id,
+          name: album.name,
+          backupSelection: album.backupSelection.name,
+          isIosSharedAlbum: album.isIosSharedAlbum,
+          linkedRemoteAlbumId: album.linkedRemoteAlbumId,
+        ),
+    ];
   }
 }

@@ -49,6 +49,11 @@ const AssistantToolInputSchema = z
   })
   .meta({ id: 'AssistantToolInputDto' });
 
+const AssistantToolRecordSchema = z
+  .object({})
+  .catchall(z.unknown())
+  .meta({ id: 'AssistantToolRecordDto' });
+
 const AssistantActionSchema = z
   .object({
     type: z.enum([
@@ -104,10 +109,10 @@ const AssistantToolResponseSchema = z
     toolType: AssistantToolTypeSchema,
     generatedAt: z.string(),
     summary: z.record(z.string(), z.unknown()),
-    results: z.array(z.record(z.string(), z.unknown())),
-    errors: z.array(z.record(z.string(), z.unknown())),
+    results: z.array(AssistantToolRecordSchema),
+    errors: z.array(AssistantToolRecordSchema),
     logFilePath: z.string().nullable().optional(),
-    logFileFormat: z.literal('json').nullable().optional(),
+    logFileFormat: z.enum(['json']).nullable().optional(),
     resultCount: z.number().optional(),
     errorCount: z.number().optional(),
     inlineResultsOmitted: z.boolean().optional(),
@@ -167,7 +172,7 @@ const AssistantIndexRunsResponseSchema = z
 const AssistantAgentCommandRequestSchema = z
   .object({
     command: z.string().trim().min(1).max(20 * 1000),
-    target: z.enum(['local', 'synology', 'immich']).default('local').optional(),
+    target: z.enum(['local', 'synology', 'immich']).optional(),
     cwd: z.string().trim().min(1).max(2 * 1000).optional(),
     timeoutSeconds: z.number().int().min(1).max(3600).optional(),
     maxOutputBytes: z.number().int().min(1024).max(10 * 1024 * 1024).optional(),
@@ -245,7 +250,7 @@ const AssistantMutationActionTypeSchema = z.enum([
 const AssistantMutationSchema = z
   .object({
     actionType: AssistantMutationActionTypeSchema,
-    mode: z.enum(['plan', 'apply']).default('plan').optional(),
+    mode: z.enum(['plan', 'apply']).optional(),
     assetIds: z.array(z.uuidv4()).optional(),
     metadata: z
       .object({

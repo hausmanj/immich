@@ -18977,7 +18977,6 @@
             "type": "integer"
           },
           "target": {
-            "default": "local",
             "enum": [
               "local",
               "synology",
@@ -19749,7 +19748,6 @@
             "type": "object"
           },
           "mode": {
-            "default": "plan",
             "enum": [
               "plan",
               "apply"
@@ -20059,6 +20057,10 @@
         ],
         "type": "object"
       },
+      "AssistantToolRecordDto": {
+        "additionalProperties": {},
+        "type": "object"
+      },
       "AssistantToolResponseDto": {
         "properties": {
           "errorCount": {
@@ -20066,8 +20068,7 @@
           },
           "errors": {
             "items": {
-              "additionalProperties": {},
-              "type": "object"
+              "$ref": "#/components/schemas/AssistantToolRecordDto"
             },
             "type": "array"
           },
@@ -20078,7 +20079,9 @@
             "type": "boolean"
           },
           "logFileFormat": {
-            "const": "json",
+            "enum": [
+              "json"
+            ],
             "nullable": true,
             "type": "string"
           },
@@ -20091,8 +20094,7 @@
           },
           "results": {
             "items": {
-              "additionalProperties": {},
-              "type": "object"
+              "$ref": "#/components/schemas/AssistantToolRecordDto"
             },
             "type": "array"
           },

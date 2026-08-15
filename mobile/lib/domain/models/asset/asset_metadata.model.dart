@@ -12,6 +12,33 @@ abstract class RemoteAssetMetadataValue {
   Map<String, dynamic> toJson();
 }
 
+class RemoteAssetMobileAppAlbumMetadata {
+  final String id;
+  final String name;
+  final String backupSelection;
+  final bool isIosSharedAlbum;
+  final String? linkedRemoteAlbumId;
+
+  const RemoteAssetMobileAppAlbumMetadata({
+    required this.id,
+    required this.name,
+    required this.backupSelection,
+    required this.isIosSharedAlbum,
+    this.linkedRemoteAlbumId,
+  });
+
+  Map<String, Object?> toJson() {
+    return {
+      'id': id,
+      'name': name,
+      'backupSelection': backupSelection,
+      'isIosSharedAlbum': isIosSharedAlbum,
+      if (linkedRemoteAlbumId != null)
+        'linkedRemoteAlbumId': linkedRemoteAlbumId,
+    };
+  }
+}
+
 class RemoteAssetMetadataItem {
   final RemoteAssetMetadataKey key;
   final RemoteAssetMetadataValue value;
@@ -38,6 +65,7 @@ class RemoteAssetMobileAppMetadata extends RemoteAssetMetadataValue {
   final int? width;
   final int? height;
   final int? durationMs;
+  final List<RemoteAssetMobileAppAlbumMetadata>? sourceAlbums;
 
   const RemoteAssetMobileAppMetadata({
     this.cloudId,
@@ -54,6 +82,7 @@ class RemoteAssetMobileAppMetadata extends RemoteAssetMetadataValue {
     this.width,
     this.height,
     this.durationMs,
+    this.sourceAlbums,
   });
 
   @override
@@ -100,6 +129,9 @@ class RemoteAssetMobileAppMetadata extends RemoteAssetMetadataValue {
     }
     if (durationMs != null) {
       map["durationMs"] = durationMs;
+    }
+    if (sourceAlbums != null && sourceAlbums!.isNotEmpty) {
+      map["sourceAlbums"] = sourceAlbums;
     }
 
     return map;

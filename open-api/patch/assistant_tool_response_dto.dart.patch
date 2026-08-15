@@ -1,0 +1,16 @@
+@@ -133,13 +133,13 @@ class AssistantToolResponseDto {
+ 
+       return AssistantToolResponseDto(
+         errorCount: json.containsKey(r'errorCount') ? Optional.present(json[r'errorCount'] == null ? null : num.parse('${json[r'errorCount']}')) : const Optional.absent(),
+-        errors: Map.listFromJson(json[r'errors']),
++        errors: ((json[r'errors'] as List?) ?? const []).map((item) => Map<String, Object>.from(item as Map)).toList(),
+         generatedAt: mapValueOfType<String>(json, r'generatedAt')!,
+         inlineResultsOmitted: json.containsKey(r'inlineResultsOmitted') ? Optional.present(mapValueOfType<bool>(json, r'inlineResultsOmitted')) : const Optional.absent(),
+         logFileFormat: json.containsKey(r'logFileFormat') ? Optional.present(AssistantToolResponseDtoLogFileFormatEnum.fromJson(json[r'logFileFormat'])) : const Optional.absent(),
+         logFilePath: json.containsKey(r'logFilePath') ? Optional.present(mapValueOfType<String>(json, r'logFilePath')) : const Optional.absent(),
+         resultCount: json.containsKey(r'resultCount') ? Optional.present(json[r'resultCount'] == null ? null : num.parse('${json[r'resultCount']}')) : const Optional.absent(),
+-        results: Map.listFromJson(json[r'results']),
++        results: ((json[r'results'] as List?) ?? const []).map((item) => Map<String, Object>.from(item as Map)).toList(),
+         summary: mapCastOfType<String, Object>(json, r'summary')!,
+         toolType: AssistantToolResponseDtoToolTypeEnum.fromJson(json[r'toolType'])!,
+       );

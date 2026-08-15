@@ -6,6 +6,7 @@ import 'package:drift/native.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:immich_mobile/domain/models/album/local_album.model.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/domain/models/store.model.dart';
 import 'package:immich_mobile/domain/services/store.service.dart';
@@ -61,6 +62,7 @@ void main() {
 
     mockUploadRepository.onUploadStatus = (_) {};
     mockUploadRepository.onTaskProgress = (_) {};
+    when(() => mockLocalAssetRepository.getSourceAlbums(any())).thenAnswer((_) async => []);
   });
 
   tearDown(() {
@@ -272,6 +274,55 @@ void main() {
       expect(metadata[0]['value']['adjustmentTime'], isNotNull);
       expect(metadata[0]['value']['latitude'], isNotNull);
       expect(metadata[0]['value']['longitude'], isNotNull);
+    });
+
+    test('should include source albums in iOS upload metadata', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+      final assetWithCloudId = LocalAsset(
+        id: 'trip-asset-id',
+        name: 'trip.heic',
+        type: AssetType.image,
+        createdAt: DateTime(2026, 6, 1),
+        updatedAt: DateTime(2026, 6, 2),
+        cloudId: 'cloud-trip-asset',
+        playbackStyle: AssetPlaybackStyle.image,
+        isEdited: false,
+      );
+
+      final mockEntity = MockAssetEntity();
+      final mockFile = File('/path/to/trip.heic');
+
+      when(() => mockEntity.isLivePhoto).thenReturn(false);
+      when(() => mockStorageRepository.getAssetEntityForAsset(assetWithCloudId)).thenAnswer((_) async => mockEntity);
+      when(() => mockStorageRepository.getFileForAsset(assetWithCloudId.id)).thenAnswer((_) async => mockFile);
+      when(
+        () => mockAssetMediaRepository.getOriginalFilename(assetWithCloudId.id),
+      ).thenAnswer((_) async => 'trip.heic');
+      when(() => mockLocalAssetRepository.getSourceAlbums(assetWithCloudId.id)).thenAnswer(
+        (_) async => [
+          LocalAlbum(
+            id: 'phone-album-1',
+            name: 'Summer Trip',
+            updatedAt: DateTime(2026, 6, 1),
+            backupSelection: BackupSelection.selected,
+            isIosSharedAlbum: true,
+            linkedRemoteAlbumId: 'remote-album-1',
+          ),
+        ],
+      );
+
+      final task = await sut.getUploadTask(assetWithCloudId);
+
+      expect(task, isNotNull);
+      final metadata = jsonDecode(task!.fields['metadata']!) as List<dynamic>;
+      final sourceAlbums = metadata.single['value']['sourceAlbums'] as List<dynamic>;
+      expect(sourceAlbums.single['id'], equals('phone-album-1'));
+      expect(sourceAlbums.single['name'], equals('Summer Trip'));
+      expect(sourceAlbums.single['backupSelection'], equals('selected'));
+      expect(sourceAlbums.single['isIosSharedAlbum'], isTrue);
+      expect(sourceAlbums.single['linkedRemoteAlbumId'], equals('remote-album-1'));
     });
 
     test('should NOT include metadata on Android regardless of server version', () async {

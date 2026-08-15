@@ -1,9 +1,12 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:drift/drift.dart' hide isNotNull, isNull;
 import 'package:drift/native.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:immich_mobile/domain/models/album/local_album.model.dart';
 import 'package:immich_mobile/domain/models/store.model.dart';
 import 'package:immich_mobile/domain/services/store.service.dart';
 import 'package:immich_mobile/entities/store.entity.dart';
@@ -24,6 +27,7 @@ void main() {
   late ForegroundUploadService sut;
   late MockUploadRepository mockUploadRepository;
   late MockStorageRepository mockStorageRepository;
+  late MockDriftLocalAssetRepository mockLocalAssetRepository;
   late MockDriftBackupRepository mockBackupRepository;
   late MockConnectivityApi mockConnectivityApi;
   late MockAssetMediaRepository mockAssetMediaRepository;
@@ -49,6 +53,7 @@ void main() {
   setUp(() {
     mockUploadRepository = MockUploadRepository();
     mockStorageRepository = MockStorageRepository();
+    mockLocalAssetRepository = MockDriftLocalAssetRepository();
     mockBackupRepository = MockDriftBackupRepository();
     mockConnectivityApi = MockConnectivityApi();
     mockAssetMediaRepository = MockAssetMediaRepository();
@@ -59,7 +64,10 @@ void main() {
       mockBackupRepository,
       mockConnectivityApi,
       mockAssetMediaRepository,
+      mockLocalAssetRepository,
     );
+
+    when(() => mockLocalAssetRepository.getSourceAlbums(any())).thenAnswer((_) async => []);
   });
 
   List<Map<String, String>> captureFields() {
@@ -141,6 +149,41 @@ void main() {
 
       expect(captured, hasLength(1));
       expect(captured[0].containsKey('visibility'), isFalse);
+    });
+
+    test('should include iOS source albums in upload metadata', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+      final asset = LocalAssetStub.image1;
+      final mockEntity = MockAssetEntity();
+      final stillFile = File('/path/to/photo.heic');
+
+      when(() => mockEntity.isLivePhoto).thenReturn(false);
+      when(() => mockStorageRepository.getAssetEntityForAsset(asset)).thenAnswer((_) async => mockEntity);
+      when(() => mockStorageRepository.isAssetAvailableLocally(asset.id)).thenAnswer((_) async => true);
+      when(() => mockStorageRepository.getFileForAsset(asset.id)).thenAnswer((_) async => stillFile);
+      when(() => mockAssetMediaRepository.getOriginalFilename(asset.id)).thenAnswer((_) async => 'photo.heic');
+      when(() => mockLocalAssetRepository.getSourceAlbums(asset.id)).thenAnswer(
+        (_) async => [
+          LocalAlbum(
+            id: 'trip-2026',
+            name: 'Utah Trip',
+            updatedAt: DateTime(2026, 6, 1),
+            backupSelection: BackupSelection.selected,
+          ),
+        ],
+      );
+
+      final captured = captureFields();
+
+      await sut.uploadSingleAsset(asset, null, callbacks: const UploadCallbacks());
+
+      final metadata = jsonDecode(captured.single['metadata']!) as List<dynamic>;
+      final sourceAlbums = metadata.single['value']['sourceAlbums'] as List<dynamic>;
+      expect(sourceAlbums.single['id'], equals('trip-2026'));
+      expect(sourceAlbums.single['name'], equals('Utah Trip'));
+      expect(sourceAlbums.single['backupSelection'], equals('selected'));
     });
 
     test('corrects the extension when iOS returns a rendered file for a .dng asset', () async {

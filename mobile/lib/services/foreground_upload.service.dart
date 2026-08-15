@@ -12,8 +12,10 @@ import 'package:immich_mobile/extensions/network_capability_extensions.dart';
 import 'package:immich_mobile/extensions/platform_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/infrastructure/repositories/backup.repository.dart';
+import 'package:immich_mobile/infrastructure/repositories/local_asset.repository.dart';
 import 'package:immich_mobile/infrastructure/repositories/settings.repository.dart';
 import 'package:immich_mobile/infrastructure/repositories/storage.repository.dart';
+import 'package:immich_mobile/providers/infrastructure/asset.provider.dart';
 import 'package:immich_mobile/platform/connectivity_api.g.dart';
 import 'package:immich_mobile/providers/infrastructure/platform.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/storage.provider.dart';
@@ -42,6 +44,7 @@ final foregroundUploadServiceProvider = Provider((ref) {
     ref.watch(backupRepositoryProvider),
     ref.watch(connectivityApiProvider),
     ref.watch(assetMediaRepositoryProvider),
+    ref.watch(localAssetRepository),
   );
 });
 
@@ -57,6 +60,7 @@ class ForegroundUploadService {
     this._backupRepository,
     this._connectivityApi,
     this._assetMediaRepository,
+    this._localAssetRepository,
   );
 
   final UploadRepository _uploadRepository;
@@ -64,6 +68,7 @@ class ForegroundUploadService {
   final DriftBackupRepository _backupRepository;
   final ConnectivityApi _connectivityApi;
   final AssetMediaRepository _assetMediaRepository;
+  final DriftLocalAssetRepository _localAssetRepository;
   final Logger _logger = Logger('ForegroundUploadService');
 
   bool shouldAbortUpload = false;
@@ -287,8 +292,16 @@ class ForegroundUploadService {
         }
       } else {
         // Get files locally
-        originalAssetFile = await _storageRepository.getOriginalAssetFileForUpload(asset.id);
-        file = originalAssetFile?.file;
+        try {
+          originalAssetFile = await _storageRepository.getOriginalAssetFileForUpload(asset.id);
+        } catch (error, stackTrace) {
+          _logger.warning(
+            "Failed to get original file wrapper for ${asset.id}; falling back to file export",
+            error,
+            stackTrace,
+          );
+        }
+        file = originalAssetFile?.file ?? await _storageRepository.getFileForAsset(asset.id);
         if (file == null) {
           _logger.warning("Failed to get file ${asset.id} - ${asset.name}");
           callbacks.onError?.call(asset.localId!, assetNotFoundOnDevice);
@@ -316,7 +329,7 @@ class ForegroundUploadService {
       final extension = p.extension(file.path).isNotEmpty ? p.extension(file.path) : p.extension(asset.name);
       final originalFileName = p.setExtension(fileName, extension);
       final deviceId = Store.get(StoreKey.deviceId);
-      final uploadFileSizeBytes = await file.length();
+      final uploadFileSizeBytes = await file.exists() ? await file.length() : null;
 
       final fields = {
         // deviceAssetId/deviceId required by server v2.7.5 and below (drop in v4.0 per #27818).
@@ -358,6 +371,7 @@ class ForegroundUploadService {
       // Add iOS Photos metadata only to the still image, not the motion video, because when the sync id happens,
       // the motion video can get associated with the wrong still image.
       if (CurrentPlatform.isIOS) {
+        final sourceAlbums = await _getSourceAlbumMetadata(asset.id);
         final mobileMetadata = RemoteAssetMobileAppMetadata(
           cloudId: asset.cloudId,
           createdAt: asset.createdAt.toIso8601String(),
@@ -373,6 +387,7 @@ class ForegroundUploadService {
           width: asset.width,
           height: asset.height,
           durationMs: asset.durationMs,
+          sourceAlbums: sourceAlbums,
         );
         _logger.info(
           "iOS original upload metadata: "
@@ -384,13 +399,11 @@ class ForegroundUploadService {
           "uploadFileSizeBytes=$uploadFileSizeBytes, cloudId=${asset.cloudId}, "
           "adjustmentTime=${asset.adjustmentTime?.toIso8601String()}, "
           "latitude=${asset.latitude}, longitude=${asset.longitude}, "
-          "width=${asset.width}, height=${asset.height}, durationMs=${asset.durationMs}",
+          "width=${asset.width}, height=${asset.height}, durationMs=${asset.durationMs}, "
+          "sourceAlbums=${sourceAlbums.map((album) => album.name).join(', ')}",
         );
         fields['metadata'] = jsonEncode([
-          RemoteAssetMetadataItem(
-            key: RemoteAssetMetadataKey.mobileApp,
-            value: mobileMetadata,
-          ),
+          RemoteAssetMetadataItem(key: RemoteAssetMetadataKey.mobileApp, value: mobileMetadata),
         ]);
       }
 
@@ -482,5 +495,19 @@ class ForegroundUploadService {
       return false;
     }
     return true;
+  }
+
+  Future<List<RemoteAssetMobileAppAlbumMetadata>> _getSourceAlbumMetadata(String localAssetId) async {
+    final sourceAlbums = await _localAssetRepository.getSourceAlbums(localAssetId);
+    return [
+      for (final album in sourceAlbums)
+        RemoteAssetMobileAppAlbumMetadata(
+          id: album.id,
+          name: album.name,
+          backupSelection: album.backupSelection.name,
+          isIosSharedAlbum: album.isIosSharedAlbum,
+          linkedRemoteAlbumId: album.linkedRemoteAlbumId,
+        ),
+    ];
   }
 }

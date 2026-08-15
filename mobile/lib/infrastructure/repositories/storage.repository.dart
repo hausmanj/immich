@@ -143,7 +143,7 @@ class StorageRepository {
     } catch (_) {
       // Best-effort context only; file export should continue.
     }
-    return entity.title;
+    return entity.title ?? entity.id;
   }
 
   // TODO(agg23): Unify these methods
