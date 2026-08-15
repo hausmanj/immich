@@ -1,0 +1,72 @@
+#
+# Local-only Immich target for testing mobile uploads from a real iPhone.
+#
+# This stack intentionally does not use docker/.env, NAS paths, external-library
+# mounts, or the default Immich container names. Uploaded files and the test
+# database live under ~/.immich-safe-mobile-test on this Mac.
+#
+# Start:
+#   docker compose -f docker/docker-compose.mobile-test.yml up -d --build
+#
+# iPhone server URL:
+#   http://<mac-lan-ip>:2285
+#
+
+name: immich-mobile-test
+
+services:
+  immich-server:
+    container_name: immich-mobile-test-server
+    image: immich-mobile-test-server:local
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+      args:
+        BUILD_ID: mobile-test
+        BUILD_IMAGE: mobile-test
+        BUILD_SOURCE_REF: local
+        BUILD_SOURCE_COMMIT: local
+    environment:
+      DB_HOSTNAME: database
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres
+      DB_DATABASE_NAME: immich
+      IMMICH_MACHINE_LEARNING_ENABLED: "false"
+      IMMICH_TELEMETRY_INCLUDE: all
+      IMMICH_ENV: testing
+      IMMICH_IGNORE_MOUNT_CHECK_ERRORS: "true"
+    volumes:
+      - ${HOME}/.immich-safe-mobile-test/photos:/data
+      - /etc/localtime:/etc/localtime:ro
+    ports:
+      - "2285:2283"
+    depends_on:
+      redis:
+        condition: service_started
+      database:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      disable: false
+
+  redis:
+    container_name: immich-mobile-test-redis
+    image: docker.io/valkey/valkey:9@sha256:3acc0687f2a2e1091fae6450d7842dd658c941338cf0a873ddd9e14b9e4ea4dd
+    healthcheck:
+      test: redis-cli ping || exit 1
+    restart: unless-stopped
+
+  database:
+    container_name: immich-mobile-test-postgres
+    image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_DB: immich
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    volumes:
+      - ${HOME}/.immich-safe-mobile-test/postgres:/var/lib/postgresql/data
+    shm_size: 128mb
+    healthcheck:
+      disable: false
+    restart: unless-stopped
