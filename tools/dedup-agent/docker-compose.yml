@@ -1,0 +1,23 @@
+services:
+  photo-dedup-agent:
+    container_name: photo-dedup-agent
+    build: .
+    image: photo-dedup-agent:local
+    restart: unless-stopped
+    ports:
+      - "8095:8095"
+    # Reach the Mac Claude/Codex bridge via the NAS host's reverse tunnel (ssh -R 0.0.0.0:43737).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - PORT=8095
+      - DEDUP_BRIDGE_URL=http://host.docker.internal:43737/agent-stream
+      - DEDUP_BRIDGE_HEALTH=http://host.docker.internal:43737/health
+      - DEDUP_BRIDGE_KEEPALIVE_INTERVAL_MS=20000
+    volumes:
+      # Live code (edit on the NAS, restart — no image rebuild)
+      - ./app:/app
+      # Full-server file access for the 1-2M dedup effort. rw because this agent MOVES files; the organizer
+      # only ever moves-to-quarantine + journals with undo, and never deletes.
+      - /volume1:/volume1
+      - /volume2:/volume2

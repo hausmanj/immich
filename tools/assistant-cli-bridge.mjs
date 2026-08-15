@@ -1142,6 +1142,10 @@ const server = http.createServer(async (request, response) => {
 });
 
 await loadSessionState();
+server.timeout = 0;
+server.requestTimeout = 0;
+server.headersTimeout = 0;
+server.keepAliveTimeout = 0;
 server.listen(port, host, () => {
   console.log(`Assistant CLI bridge listening on http://${host}:${port}`);
   console.log(
