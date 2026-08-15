@@ -108,6 +108,12 @@ along the way. See top-level memory `project_immich_ios_originals.md` for detail
 Immich's own project, distinct from the organization effort even though both eventually feed the same
 master library.
 
+Codex/codexlocal simulator access: use `tools/ios-simulator-control.mjs` from this repo for repeatable
+terminal control of CoreSimulator. It supports `list`, `boot`, `screenshot`, `install`, `launch`,
+`open-url`, and `logs`; default simulator is `IOS_SIM_DEVICE` or `iPhone 16 Pro`. Mobile builds should
+run from `mobile/` because `mobile/mise.toml` owns Flutter (`aqua:flutter/flutter` 3.44.9); the root
+`mise.toml` does not provide Flutter.
+
 ## 5. Project history (dated log, most recent first)
 
 ### 2026-08-06 — Scope split from the organization project
