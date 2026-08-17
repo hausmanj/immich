@@ -19,7 +19,7 @@ import { MapMarkerResponseDto } from 'src/dtos/map.dto';
 import { ApiTag, Permission } from 'src/enum';
 import { Auth, Authenticated } from 'src/middleware/auth.guard';
 import { AlbumService } from 'src/services/album.service';
-import { UUIDParamDto } from 'src/validation';
+import { SourceAlbumIdParamDto, UUIDParamDto } from 'src/validation';
 
 @ApiTags(ApiTag.Albums)
 @Controller('albums')
@@ -57,6 +57,21 @@ export class AlbumController {
   })
   getAlbumStatistics(@Auth() auth: AuthDto): Promise<AlbumStatisticsResponseDto> {
     return this.service.getStatistics(auth);
+  }
+
+  @Get('by-source/:sourceAlbumId')
+  @Authenticated({ permission: Permission.AlbumRead })
+  @Endpoint({
+    summary: 'Retrieve an album by its mobile source identifier',
+    description:
+      'Look up the authenticated user\'s own album that was materialized from a mobile source album (e.g. an iPhone Photos album) using its stable source identifier. Returns null when no such album exists.',
+    history: new HistoryBuilder().added('v3'),
+  })
+  getAlbumBySourceId(
+    @Auth() auth: AuthDto,
+    @Param() { sourceAlbumId }: SourceAlbumIdParamDto,
+  ): Promise<AlbumResponseDto | null> {
+    return this.service.getBySourceAlbumId(auth, sourceAlbumId);
   }
 
   @Authenticated({ permission: Permission.AlbumRead, sharedLink: true })

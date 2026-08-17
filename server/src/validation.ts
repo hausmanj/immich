@@ -98,6 +98,13 @@ const UUIDParamSchema = z.object({
 
 export class UUIDParamDto extends createZodDto(UUIDParamSchema) {}
 
+// Mobile source album identifiers (e.g. iOS PHAssetCollection local ids) are opaque strings, not UUIDs.
+const SourceAlbumIdParamSchema = z.object({
+  sourceAlbumId: z.string().min(1).describe('Mobile source album identifier'),
+});
+
+export class SourceAlbumIdParamDto extends createZodDto(SourceAlbumIdParamSchema) {}
+
 const UUIDv7ParamSchema = z.object({
   id: z.uuidv7(),
 });

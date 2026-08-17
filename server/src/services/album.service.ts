@@ -88,6 +88,28 @@ export class AlbumService extends BaseService {
     };
   }
 
+  /**
+   * Look up the owner's album that was materialized from a mobile source album
+   * (e.g. an iPhone Photos album) by its stable source identifier. Returns null
+   * when no such album exists yet so callers can decide whether to create one.
+   */
+  async getBySourceAlbumId(auth: AuthDto, sourceAlbumId: string): Promise<AlbumResponseDto | null> {
+    const album = await this.albumRepository.getBySourceAlbumId(auth.user.id, sourceAlbumId);
+    if (!album) {
+      return null;
+    }
+
+    const [albumMetadata] = await this.albumRepository.getMetadataForIds([album.id]);
+
+    return {
+      ...mapAlbum(album),
+      startDate: asDateTimeString(albumMetadata?.startDate ?? undefined),
+      endDate: asDateTimeString(albumMetadata?.endDate ?? undefined),
+      assetCount: albumMetadata?.assetCount ?? 0,
+      lastModifiedAssetTimestamp: asDateTimeString(albumMetadata?.lastModifiedAssetTimestamp ?? undefined),
+    };
+  }
+
   async getMapMarkers(auth: AuthDto, id: string): Promise<MapMarkerResponseDto[]> {
     await this.requireAccess({ auth, permission: Permission.AlbumRead, ids: [id] });
 

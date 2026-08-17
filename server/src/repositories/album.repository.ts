@@ -122,6 +122,7 @@ export class AlbumRepository {
       .execute();
   }
 
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID] })
   getBySourceAlbumId(ownerId: string, sourceAlbumId: string) {
     return this.db
       .selectFrom('album')
@@ -129,6 +130,7 @@ export class AlbumRepository {
       .where('album.sourceAlbumId', '=', sourceAlbumId)
       .where('album.deletedAt', 'is', null)
       .where(isAlbumOwned(ownerId))
+      .select(withAlbumUsers(ownerId))
       .executeTakeFirst();
   }
 
