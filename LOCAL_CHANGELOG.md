@@ -2,6 +2,30 @@
 
 This file tracks local-only changes in this checkout that have not necessarily been pulled from upstream Immich.
 
+## 2026-08-16 - Source-album materialization regression tests
+
+- Added a `source album materialization` describe block to `server/test/medium/specs/services/asset-media.service.spec.ts` covering the new server-side behavior end-to-end against real Postgres (testcontainers):
+  - first upload with `backupSelection: selected` creates one owned album keyed by iOS `sourceAlbumId` plus an idempotent `album_asset` membership;
+  - repeated uploads of the same source album do not duplicate the album row or memberships;
+  - a renamed iPhone album updates the existing server album name in place (no second row);
+  - `backupSelection: none` and `isIosSharedAlbum: true` entries are skipped entirely;
+  - three concurrent first uploads of the same source album converge on exactly one album (advisory-lock path).
+- All three uncommitted migrations (`AddSourceAlbumIdToAlbums`, `MaterializeMobileSourceAlbums`, `ReconcileMobileSourceAlbumDuplicates`) apply cleanly in a fresh test database.
+- Verification: `tsc --noEmit` clean, eslint clean on changed files, medium suite for the spec passes 17/17.
+
+## 2026-08-15 - iPhone source-album reconciliation
+
+- Added `album.sourceAlbumId` to retain the stable iPhone album identity without changing original media or EXIF.
+- Selected iPhone albums in `mobile-app` upload metadata are now materialized as owner albums and linked to uploaded assets.
+- Added an idempotent migration for existing uploads. The safe local dataset was reconciled from 190 assets and 117 metadata rows into six source albums and their existing memberships.
+- Shared iOS albums and albums whose backup selection is not `selected` are excluded.
+- A manually-created album with the same owner and name is reused where possible instead of creating a duplicate.
+- Verified locally: the migration recovered previously missing album names and linked the existing assets correctly.
+- Planned follow-up: expose source-album reconciliation status and user opt-in controls in the mobile and web interfaces, then validate a fresh simulator upload.
+- Mobile foreground and background uploads now omit source-album metadata unless the existing `Sync albums` setting is enabled.
+- Removed the project-level `iphoneos`-only destination restriction so Simulator builds are possible. The current Xcode 26.5 simulator build reaches native package compilation but is blocked by eight existing `sqlite-data`/`swift-structured-queries` macro errors; the app target itself has not been produced.
+- Removed stale SDK-specific bundle/profile overrides and restored variable-based bundle IDs with automatic signing. A physical-device build now completes successfully; Flutter's final wireless launch step is blocked by macOS Xcode automation permission.
+
 ## 2026-07-25 - NAS agent Mac bridge idle hardening
 
 - Standalone `photo-dedup-agent` now keeps the NAS -> Mac bridge path warm while idle by polling bridge health every 20 seconds (`DEDUP_BRIDGE_KEEPALIVE_INTERVAL_MS=20000`), and `/health` reports the keepalive state.
@@ -572,8 +596,7 @@ This file tracks local-only changes in this checkout that have not necessarily b
 
 - `git diff --check` passed.
 - Flutter/Dart tests were not run in the shell because `flutter`, `dart`, and `mise` were not available on `PATH`.
-- iPhone/simulator testing is available and should be used for the next validation pass.
-# 2026-07-23
+- iPhone/simulator testing is available and should be used for the next validation pass.# 2026-07-23
 
 - Agent console consistency: `tools/immich-agent/agent-console.html` and `tools/dedup-agent/app/console.html` are now synchronized. Both use the split conversation/tool layout, explicit bridge failure states, compact tool rows, and NAS-local SSH/Tailscale guidance. Future console UI changes must update both targets.
 ### Active NAS process pane detached-job fix (2026-07-23)
@@ -614,3 +637,47 @@ This file tracks local-only changes in this checkout that have not necessarily b
 - Deployed the tested organizer file to `/volume1/docker/photo-dedup-agent/app/tools/photo-file-organizer.mjs` on Synology, with the previous deployment retained as `photo-file-organizer.mjs.pre-cache-alias-20260725`.
 - The next V7 launch must use the canonical V6a originals root and seed cache, or explicitly pair `--seed-resume-file` with `--seed-originals-root`; do not launch another unseeded scan.
 - V6a's `resume.jsonl` is only a five-record overlay because it reused V6's cache. The actual full seed is V6's `20260725T023336Z-volume1-v6-heic-complete-6981-19707/resume.jsonl`; the corrected V7 launch uses that file and verified `29,826` protected-reference cache reuses.
+
+# 2026-08-15: Safe iPhone upload validation
+
+- Validated the isolated Docker stack in `docker/docker-compose.mobile-test.yml` using a real iPhone and the local server at `http://192.168.0.253:2285`. Production Immich/NAS data was not touched.
+- The server database contains `190` active timeline assets for `john_hausman@yahoo.com`; the browser timeline exposes `11` time buckets.
+- The server contains three user-created albums: `Immich test`, `2026-07 Julia’s Birthday in Breckenridge`, and `2026 First Day of School times Two`. They currently have zero `album_asset` memberships.
+- iOS source album preservation is working: `117` `mobile-app` metadata records were inspected, including `sourceAlbums` entries such as `Immich test` with `backupSelection: selected`.
+- The uploaded originals use the expected `photo-manager-origin-file` source metadata. Source album metadata is preserved, but the server does not yet automatically create/populate Immich albums from it; that is the next implementation task.
+- The standalone iOS signing path required separate profiles for the main app, Widget, and Share Extension. The validated main profile was `/Users/johnhausman/Desktop/Immich_Dev.mobileprovision`, with team `9MD6GK68S2`, App ID `com.hausmanj.immich`, the iPhone UDID, Access Wi-Fi Information, Associated Domains, and App Groups.
+- The physical debug app now builds and launches through `mise exec -- flutter run -d 00008140-001178323601801C --no-pub`; this is the supported test path because Flutter prepares its generated framework before Xcode compiles the plugin targets. Building the workspace directly with Xcode's raw Build action fails with cascading `Unable to resolve module dependency: 'Flutter'` errors.
+
+## 2026-08-15: Physical iPhone album-sync result
+
+- The physical `Immich-Debug` app successfully uploaded the selected photos and videos to the isolated local server. The upload-details screen correctly showed active uploads once both Photos and Videos backup were enabled; the cloud checkmark alone is only a connection/status indicator.
+- The Albums page showed the previously materialized albums and the newly synced albums. The left sidebar is a shortened navigation list; the main Albums grid is the authoritative view.
+- The test exposed duplicate album records for the same iPhone source album: three `2025-05 Kauai` records and two `2025-03-15 Disney Treasure Cruise` records. The duplicates are visible in the local server and must be merged before production use.
+- Root cause to address: the mobile linked-album flow and server source-album materializer can both create records, and concurrent uploads can race. Matching must be keyed by the owning user plus the stable iPhone `sourceAlbumId`; album names are not identifiers.
+- The safe local database reached `987` active assets during this run. No NAS or live Immich data was modified.
+
+### Next source-album repair
+
+1. Add user-scoped uniqueness/concurrency protection for source-album materialization.
+2. Reconcile and merge the duplicate local albums while preserving every `album_asset` membership.
+3. Make retries, client-created linked albums, and server materialization converge on one album.
+4. Add regression tests for concurrent first upload, retry, rename, and existing linked albums.
+5. Re-run a small isolated iPhone test and confirm exactly one album per source album.
+
+### Source-album duplicate repair result
+
+- Added transaction-scoped PostgreSQL advisory locking around source-album lookup/create/update and membership insertion.
+- Added a reconciliation migration that merges duplicate source-backed albums and matching same-name client-created albums while preserving `album_asset`, `album_user`, activity, and shared-link references.
+- Applied the migration successfully to the isolated database. The duplicate Cruise records are now one 352-item album, and the duplicate Kauai records are now one 424-item album. All other source albums remain present.
+- `GET /api/server/ping` passes after the migration. Server TypeScript checks and `git diff --check` pass.
+- Remaining validation: add focused repository/migration concurrency tests, then run one small new-album iPhone upload against the repaired local stack.
+
+## Planned automatic source-album materialization
+
+1. Add a server-side opt-in setting for automatic source-album materialization, defaulting off so existing uploads do not unexpectedly create albums.
+2. Extend mobile upload processing to parse `mobile-app.sourceAlbums` after the asset is committed. Use the iOS album ID plus owner ID as the stable matching key; use the current album name only for creation and rename updates.
+3. Upsert user-owned Immich albums for selected source albums and insert idempotent `album_asset` memberships in the same durable job. Repeated uploads and retries must not duplicate albums or memberships.
+4. Preserve `backupSelection: none` as metadata only unless the user explicitly enables materialization. Keep iOS shared albums separate from ordinary device albums and require an explicit policy before creating shared-album equivalents.
+5. Add a backfill/reconciliation job for existing `mobile-app` metadata, with dry-run counts, conflict reporting, resumability, and audit records before applying memberships.
+6. Add focused server tests for first upload, retry, album rename, deleted/empty albums, duplicate source IDs, shared albums, and opt-in/off behavior. Add mobile integration coverage confirming source album IDs and names remain present in upload metadata.
+7. Add a server/admin and mobile setting showing materialization status and counts, plus a manual “reconcile source albums” action. Never alter original files or EXIF as part of album materialization.

@@ -498,6 +498,10 @@ class ForegroundUploadService {
   }
 
   Future<List<RemoteAssetMobileAppAlbumMetadata>> _getSourceAlbumMetadata(String localAssetId) async {
+    if (!SettingsRepository.instance.appConfig.backup.syncAlbums) {
+      return [];
+    }
+
     final sourceAlbums = await _localAssetRepository.getSourceAlbums(localAssetId);
     return [
       for (final album in sourceAlbums)
