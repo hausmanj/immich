@@ -122,6 +122,59 @@ export class AlbumRepository {
       .execute();
   }
 
+  getBySourceAlbumId(ownerId: string, sourceAlbumId: string) {
+    return this.db
+      .selectFrom('album')
+      .selectAll('album')
+      .where('album.sourceAlbumId', '=', sourceAlbumId)
+      .where('album.deletedAt', 'is', null)
+      .where(isAlbumOwned(ownerId))
+      .executeTakeFirst();
+  }
+
+  async upsertSourceAlbum(ownerId: string, sourceAlbumId: string, albumName: string, assetId: string) {
+    return this.db.transaction().execute(async (tx) => {
+      // Serialize source-album creation across concurrent upload requests.
+      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${ownerId}:${sourceAlbumId}`}, 0))`.execute(tx);
+
+      let album = await tx
+        .selectFrom('album')
+        .selectAll('album')
+        .where('album.sourceAlbumId', '=', sourceAlbumId)
+        .where('album.deletedAt', 'is', null)
+        .where(isAlbumOwned(ownerId))
+        .executeTakeFirst();
+
+      if (!album) {
+        album = await tx
+          .insertInto('album')
+          .values({ albumName, sourceAlbumId, albumThumbnailAssetId: assetId })
+          .returningAll()
+          .executeTakeFirstOrThrow();
+
+        await tx
+          .insertInto('album_user')
+          .values({ albumId: album.id, userId: ownerId, role: AlbumUserRole.Owner })
+          .execute();
+      } else if (album.albumName !== albumName) {
+        album = await tx
+          .updateTable('album')
+          .set({ albumName })
+          .where('album.id', '=', album.id)
+          .returningAll()
+          .executeTakeFirstOrThrow();
+      }
+
+      await tx
+        .insertInto('album_asset')
+        .values({ albumId: album.id, assetId })
+        .onConflict((oc) => oc.doNothing())
+        .execute();
+
+      return album;
+    });
+  }
+
   @GenerateSql({ params: [DummyValue.UUID, [DummyValue.UUID]] })
   @ChunkedSet({ paramIndex: 1 })
   async getByAssetIds(ownerId: string, assetIds: string[]): Promise<Map<string, string[]>> {

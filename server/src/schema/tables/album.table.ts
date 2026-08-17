@@ -22,6 +22,9 @@ export class AlbumTable {
   @Column({ default: 'Untitled Album' })
   albumName!: Generated<string>;
 
+  @Column({ type: 'text', nullable: true })
+  sourceAlbumId!: string | null;
+
   @CreateDateColumn()
   createdAt!: Generated<Timestamp>;
 

@@ -2,7 +2,7 @@ import { Kysely } from 'kysely';
 import { randomBytes } from 'node:crypto';
 import { AssetMediaStatus } from 'src/dtos/asset-media-response.dto';
 import { AssetMediaSize } from 'src/dtos/asset-media.dto';
-import { AssetFileType, SharedLinkType } from 'src/enum';
+import { AssetFileType, AssetMetadataKey, SharedLinkType } from 'src/enum';
 import { AccessRepository } from 'src/repositories/access.repository';
 import { AlbumRepository } from 'src/repositories/album.repository';
 import { AssetRepository } from 'src/repositories/asset.repository';
@@ -19,6 +19,25 @@ import { ImmichFileResponse } from 'src/utils/file';
 import { mediumFactory, newMediumService } from 'test/medium.factory';
 import { factory } from 'test/small.factory';
 import { getKyselyDB } from 'test/utils';
+
+const uploadWithSourceAlbums = async ({ sut, ctx, auth, user, albums }: any) => {
+  const { asset } = await ctx.newAsset({ ownerId: user.id });
+  await ctx.newExif({ assetId: asset.id, fileSizeInByte: 12_345 });
+  return sut.uploadAsset(
+    auth,
+    {
+      fileModifiedAt: new Date(),
+      fileCreatedAt: new Date(),
+      assetData: Buffer.from('some data'),
+      metadata: mobileAppMetadata(albums),
+    },
+    mediumFactory.uploadFile({ size: 12_345 }),
+  );
+};
+
+const mobileAppMetadata = (sourceAlbums: unknown[]) => [
+  { key: AssetMetadataKey.MobileApp, value: { sourceAlbums } },
+];
 
 let defaultDatabase: Kysely<DB>;
 
@@ -417,6 +436,132 @@ describe(AssetService.name, () => {
       const resultEdited = await sut.viewThumbnail(auth, asset.id, { size: AssetMediaSize.THUMBNAIL, edited: true });
       expect(resultEdited).toBeInstanceOf(ImmichFileResponse);
       expect((resultEdited as ImmichFileResponse).path).toBe('/edited/thumbnail.jpg');
+    });
+    describe('source album materialization', () => {
+
+      it('should create an owned album and membership for a selected source album', async () => {
+        const { sut, ctx } = setup();
+        ctx.getMock(StorageRepository).utimes.mockResolvedValue();
+        ctx.getMock(EventRepository).emit.mockResolvedValue();
+        ctx.getMock(JobRepository).queue.mockResolvedValue();
+
+        const { user } = await ctx.newUser();
+        const auth = factory.auth({ user: { id: user.id } });
+        const sourceAlbumId = 'ios-album-1';
+
+        await expect(
+          uploadWithSourceAlbums({
+            sut,
+            ctx,
+            auth,
+            user,
+            albums: [{ id: sourceAlbumId, name: 'Kauai 2025', backupSelection: 'selected' }],
+          }),
+        ).resolves.toEqual({ id: expect.any(String), status: AssetMediaStatus.CREATED });
+
+        const album = await ctx.get(AlbumRepository).getBySourceAlbumId(user.id, sourceAlbumId);
+        expect(album).toMatchObject({ albumName: 'Kauai 2025', sourceAlbumId });
+
+        const memberships = await ctx
+          .get(AlbumRepository)
+          .getAll(user.id, { id: album!.id, isOwned: true, isShared: false });
+        expect(memberships).toHaveLength(1);
+      });
+
+      it('should be idempotent when the same source album metadata is uploaded again', async () => {
+        const { sut, ctx } = setup();
+        ctx.getMock(StorageRepository).utimes.mockResolvedValue();
+        ctx.getMock(EventRepository).emit.mockResolvedValue();
+        ctx.getMock(JobRepository).queue.mockResolvedValue();
+
+        const { user } = await ctx.newUser();
+        const auth = factory.auth({ user: { id: user.id } });
+        const sourceAlbumId = 'ios-album-2';
+        const albums = [{ id: sourceAlbumId, name: 'Disney Cruise', backupSelection: 'selected' }];
+
+        await uploadWithSourceAlbums({ sut, ctx, auth, user, albums });
+        await uploadWithSourceAlbums({ sut, ctx, auth, user, albums });
+
+        const album = await ctx.get(AlbumRepository).getBySourceAlbumId(user.id, sourceAlbumId);
+        expect(album).toMatchObject({ albumName: 'Disney Cruise', sourceAlbumId });
+
+        const allAlbums = await ctx.get(AlbumRepository).getAll(user.id, { isOwned: true, isShared: false });
+        expect(allAlbums.filter((a) => a.albumName === 'Disney Cruise')).toHaveLength(1);
+      });
+
+      it('should update the album name when the source album is renamed', async () => {
+        const { sut, ctx } = setup();
+        ctx.getMock(StorageRepository).utimes.mockResolvedValue();
+        ctx.getMock(EventRepository).emit.mockResolvedValue();
+        ctx.getMock(JobRepository).queue.mockResolvedValue();
+
+        const { user } = await ctx.newUser();
+        const auth = factory.auth({ user: { id: user.id } });
+        const sourceAlbumId = 'ios-album-3';
+
+        await uploadWithSourceAlbums({
+          sut,
+          ctx,
+          auth,
+          user,
+          albums: [{ id: sourceAlbumId, name: 'Old Name', backupSelection: 'selected' }],
+        });
+        await uploadWithSourceAlbums({
+          sut,
+          ctx,
+          auth,
+          user,
+          albums: [{ id: sourceAlbumId, name: 'New Name', backupSelection: 'selected' }],
+        });
+
+        const album = await ctx.get(AlbumRepository).getBySourceAlbumId(user.id, sourceAlbumId);
+        expect(album!.albumName).toBe('New Name');
+      });
+
+      it('should skip unselected and iOS shared source albums', async () => {
+        const { sut, ctx } = setup();
+        ctx.getMock(StorageRepository).utimes.mockResolvedValue();
+        ctx.getMock(EventRepository).emit.mockResolvedValue();
+        ctx.getMock(JobRepository).queue.mockResolvedValue();
+
+        const { user } = await ctx.newUser();
+        const auth = factory.auth({ user: { id: user.id } });
+
+        await uploadWithSourceAlbums({
+          sut,
+          ctx,
+          auth,
+          user,
+          albums: [
+            { id: 'ios-album-4', name: 'Not Selected', backupSelection: 'none' },
+            { id: 'ios-album-5', name: 'Shared Album', backupSelection: 'selected', isIosSharedAlbum: true },
+          ],
+        });
+
+        expect(await ctx.get(AlbumRepository).getBySourceAlbumId(user.id, 'ios-album-4')).toBeUndefined();
+        expect(await ctx.get(AlbumRepository).getBySourceAlbumId(user.id, 'ios-album-5')).toBeUndefined();
+      });
+
+      it('should converge concurrent uploads of the same source album to one album', async () => {
+        const { sut, ctx } = setup();
+        ctx.getMock(StorageRepository).utimes.mockResolvedValue();
+        ctx.getMock(EventRepository).emit.mockResolvedValue();
+        ctx.getMock(JobRepository).queue.mockResolvedValue();
+
+        const { user } = await ctx.newUser();
+        const auth = factory.auth({ user: { id: user.id } });
+        const sourceAlbumId = 'ios-album-6';
+        const albums = [{ id: sourceAlbumId, name: 'Concurrent Album', backupSelection: 'selected' }];
+
+        await Promise.all([
+          uploadWithSourceAlbums({ sut, ctx, auth, user, albums }),
+          uploadWithSourceAlbums({ sut, ctx, auth, user, albums }),
+          uploadWithSourceAlbums({ sut, ctx, auth, user, albums }),
+        ]);
+
+        const allAlbums = await ctx.get(AlbumRepository).getAll(user.id, { isOwned: true, isShared: false });
+        expect(allAlbums.filter((a) => a.albumName === 'Concurrent Album')).toHaveLength(1);
+      });
     });
   });
 });

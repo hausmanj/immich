@@ -20,6 +20,7 @@ import { AssetDownloadOriginalDto } from 'src/dtos/asset.dto';
 import { AuthDto } from 'src/dtos/auth.dto';
 import {
   AssetFileType,
+  AssetMetadataKey,
   AssetVisibility,
   CacheControl,
   ChecksumAlgorithm,
@@ -168,6 +169,7 @@ export class AssetMediaService extends BaseService {
 
       if (dto.metadata?.length) {
         await this.assetRepository.upsertMetadata(asset.id, dto.metadata);
+        await this.materializeSourceAlbums(auth, asset.id, dto.metadata);
       }
 
       if (sidecarFile) {
@@ -223,6 +225,33 @@ export class AssetMediaService extends BaseService {
 
       this.logger.error(`Error uploading file ${error}`, error?.stack);
       throw error;
+    }
+  }
+
+  private async materializeSourceAlbums(
+    auth: AuthDto,
+    assetId: string,
+    metadata: Array<{ key: string; value: Record<string, unknown> }>,
+  ): Promise<void> {
+    const mobile = metadata.find(({ key }) => key === AssetMetadataKey.MobileApp)?.value;
+    const sourceAlbums = mobile?.sourceAlbums;
+    if (!Array.isArray(sourceAlbums)) {
+      return;
+    }
+
+    for (const sourceAlbum of sourceAlbums) {
+      if (
+        !sourceAlbum ||
+        typeof sourceAlbum !== 'object' ||
+        sourceAlbum.backupSelection !== 'selected' ||
+        typeof sourceAlbum.id !== 'string' ||
+        typeof sourceAlbum.name !== 'string' ||
+        sourceAlbum.isIosSharedAlbum === true
+      ) {
+        continue;
+      }
+
+      await this.albumRepository.upsertSourceAlbum(auth.user.id, sourceAlbum.id, sourceAlbum.name, assetId);
     }
   }
 
