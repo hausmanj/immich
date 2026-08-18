@@ -65,5 +65,5 @@ lookup, and the duplicate-album race fix) is **committed** on
 On-device re-validation passed 2026-08-18: the duplicate-album repro now
 collapses to one album. The branch is **not pushed** — push remains John's
 call. Next plan item: surface source-album reconciliation status and user
-opt-in controls in the mobile and web interfaces (see top entry of
-`LOCAL_CHANGELOG.md` and §4/§5 of `PROJECT_GUIDE.md`).
+opt-in controls in the mobile and web interfaces (the "Planned follow-up" line
+of `LOCAL_CHANGELOG.md`, 2026-08-15 entry).
