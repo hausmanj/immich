@@ -10,7 +10,8 @@ This file tracks local-only changes in this checkout that have not necessarily b
   - `SyncLinkedAlbumService._handleUnlinkedAlbum` — tries the by-source lookup (gated on the `backup.syncAlbums` setting) before creating by name; new `_linkToSourceMatchedAlbum` caches and links the server's album instead of duplicating it.
 - Added 3 regression tests to `sync_linked_album_service_test.dart` covering: links to the server match instead of duplicating; falls back to create when the server also has no match; skips the lookup when Sync Albums is off.
 - Verification: `dart analyze` clean; full `flutter test` has only 3 pre-existing failures (confirmed present before this change via `git stash`); server `vitest run` has only 1 pre-existing unrelated failure, `album.service.spec.ts` (64 tests) passes clean.
-- Committed locally (`cebee02`), not pushed. Not yet re-validated on-device.
+- Committed locally as `1df3c04` (initially recorded as `cebee02` pre-amend; trees identical except this changelog line), not pushed.
+- **On-device re-validation passed (2026-08-18, John's iPhone, isolated mobile-test stack):** re-ran the original repro — upload one new local album with Sync Albums on. The server now materializes exactly **one** album with the expected assets; the client's by-source lookup found the server-created album and linked to it instead of creating a second by name. The duplicate-album race is closed.
 
 ## 2026-08-16 - Source-album materialization regression tests
 
