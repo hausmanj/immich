@@ -109,6 +109,23 @@ class DriftAlbumApiRepository extends ApiRepository {
     return _api.deleteAlbum(albumId);
   }
 
+  /// Looks up the caller's own album that the server already materialized
+  /// from a mobile source album (e.g. an iPhone Photos album) by its stable
+  /// source identifier. Returns null when no such album exists yet.
+  Future<RemoteAlbum?> getBySourceAlbumId(String sourceAlbumId, UserDto owner) async {
+    final response = await _api.getAlbumBySourceId(sourceAlbumId);
+    if (response == null) {
+      return null;
+    }
+
+    final responseDto = AlbumResponseDto.fromJson(response);
+    if (responseDto == null) {
+      return null;
+    }
+
+    return responseDto.toRemoteAlbum(owner);
+  }
+
   Future<void> addUsers(String albumId, Iterable<String> userIds) async {
     final albumUsers = userIds.map((userId) => AlbumUserAddDto(userId: userId)).toList();
     await checkNull(_api.addUsersToAlbum(albumId, AddUsersDto(albumUsers: albumUsers)));

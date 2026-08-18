@@ -1031,6 +1031,279 @@ export type AssetOcrResponseDto = {
     /** Normalized y coordinate of box corner 4 (0-1) */
     y4: number;
 };
+export type AssistantAgentCommandRequestDto = {
+    command: string;
+    cwd?: string;
+    maxOutputBytes?: number;
+    target?: Target;
+    timeoutSeconds?: number;
+};
+export type AssistantAgentCommandResponseDto = {
+    command: string;
+    cwd: string | null;
+    durationMs: number;
+    exitCode: number | null;
+    finishedAt: string;
+    hostLogFilePath: string | null;
+    message?: string;
+    serverLogFilePath: string | null;
+    startedAt: string;
+    status: Status;
+    stderr: string;
+    stderrTruncated: boolean;
+    stdout: string;
+    stdoutTruncated: boolean;
+    target: Target2 | null;
+    targetKind: string | null;
+};
+export type AssistantAssessmentFindingDto = {
+    assetCount: number | null;
+    detail: string;
+    query: string | null;
+    title: string;
+    "type": Type;
+};
+export type AssistantAssessmentBucketDto = {
+    count: number;
+    label: string;
+};
+export type AssistantAssessmentResponseDto = {
+    cameraMakes: string[];
+    cameraModels: string[];
+    cities: string[];
+    countries: string[];
+    findings: AssistantAssessmentFindingDto[];
+    generatedAt: string;
+    summary: {
+        albums: number;
+        archivedAssets: number;
+        audioAssets: number;
+        favoriteAssets: number;
+        imageAssets: number;
+        otherAssets: number;
+        totalAssets: number;
+        unorganizedAssets: number;
+        videoAssets: number;
+    };
+    topYears: AssistantAssessmentBucketDto[];
+};
+export type AssistantChatMessageDto = {
+    /** Message content */
+    content: string;
+    /** Message author */
+    role: Role;
+};
+export type AssistantChatRequestDto = {
+    /** Conversation messages */
+    messages: AssistantChatMessageDto[];
+    /** Assistant provider */
+    provider?: Provider;
+};
+export type AssistantToolInputDto = {
+    checksumAlgorithm?: string | null;
+    city?: string | null;
+    cohortKey?: string | null;
+    cohortType?: CohortType | null;
+    country?: string | null;
+    desktopSourcePrefix?: string | null;
+    fileExtension?: string | null;
+    hasMobileMetadata?: boolean | null;
+    make?: string | null;
+    model?: string | null;
+    noGps?: boolean | null;
+    originalFileNameContains?: string | null;
+    originalPathContains?: string | null;
+    state?: string | null;
+    takenAfter?: string | null;
+    takenBefore?: string | null;
+    "type"?: Type2 | null;
+    unknownCamera?: boolean | null;
+};
+export type AssistantActionDto = {
+    albumName: string | null;
+    assetIds: string[];
+    cohortKey?: string | null;
+    cohortType?: CohortType | null;
+    command?: string | null;
+    confidence: number;
+    cwd?: string | null;
+    query: string | null;
+    rationale: string;
+    target?: Target2 | null;
+    timeoutSeconds?: number | null;
+    title: string;
+    toolInput?: (AssistantToolInputDto) | null;
+    toolType?: ToolType | null;
+    "type": Type3;
+};
+export type AssistantChatResponseDto = {
+    actions: AssistantActionDto[];
+    answer: string;
+    context: {
+        albums: number;
+        sampledAssets: number;
+        unorganizedAssets: number;
+    };
+    error?: string;
+    model?: string;
+    provider?: Provider2;
+    status: Status2;
+};
+export type AssistantIndexGroupDto = {
+    assetCount: number;
+    confidence: number;
+    evidence: {
+        [key: string]: any;
+    };
+    groupKey: string;
+    groupType: string;
+    id: string;
+    label: string;
+};
+export type AssistantIndexRunResponseDto = {
+    createdAt: string;
+    errorCount: number;
+    finishedAt: string | null;
+    groups?: AssistantIndexGroupDto[];
+    id: string;
+    indexedAssets: number;
+    libraryId: string | null;
+    logFilePath: string | null;
+    mode: string;
+    originalPathPrefix: string | null;
+    ownerId: string;
+    parameters: {
+        [key: string]: any;
+    };
+    startedAt: string | null;
+    status: Status3;
+    summary: {
+        [key: string]: any;
+    };
+    totalAssets: number;
+    updatedAt: string;
+};
+export type AssistantIndexRunsResponseDto = {
+    runs: AssistantIndexRunResponseDto[];
+};
+export type AssistantIndexRunRequestDto = {
+    includeContentHash?: boolean;
+    includeRawFiles?: boolean;
+    includeSidecars?: boolean;
+    libraryId?: string | null;
+    originalPathPrefix?: string | null;
+};
+export type AssistantMutationRequestDto = {
+    actionType: ActionType;
+    assetIds?: string[];
+    assetUpdates?: {
+        isFavorite?: boolean;
+        visibility?: AssetVisibility;
+    };
+    duplicateResolution?: {
+        groups: {
+            duplicateId: string;
+            keepAssetIds: string[];
+            trashAssetIds: string[];
+        }[];
+    };
+    folderMove?: {
+        assetIds: string[];
+        destinationPath: string;
+    };
+    metadata?: {
+        dateTimeOriginal?: string | null;
+        description?: string | null;
+        latitude?: number | null;
+        longitude?: number | null;
+        rating?: number | null;
+    };
+    mode?: Mode;
+    stack?: {
+        assetIds?: string[];
+        operation: Operation;
+        primaryAssetId?: string;
+        stackId?: string;
+    };
+};
+export type AssistantMutationResponseDto = {
+    actionType: ActionType;
+    applySupported: boolean;
+    changeLogFilePath: string;
+    message: string;
+    status: Status4;
+    targetCount: number;
+    undoAvailable: boolean;
+};
+export type AssistantMutationCapabilityDto = {
+    actionType: ActionType;
+    applySupported: boolean;
+    journalRequired: boolean;
+    label: string;
+    notes: string;
+    undoSupported: boolean;
+};
+export type AssistantMutationCapabilitiesResponseDto = {
+    capabilities: AssistantMutationCapabilityDto[];
+    changeJournalDirectory: string;
+};
+export type AssistantReviewAlbumRequestDto = {
+    albumName: string;
+    assetIds?: string[];
+    cohortKey?: string | null;
+    cohortType?: CohortType | null;
+};
+export type AssistantReviewAlbumResponseDto = {
+    albumId: string;
+    albumName: string;
+    assetCount: number;
+    changeLogFilePath: string;
+    truncated: boolean;
+    undoAction: UndoAction;
+    undoAvailable: boolean;
+};
+export type AssistantExecuteReviewPlanRequestDto = {
+    albums: AssistantReviewAlbumRequestDto[];
+};
+export type AssistantExecuteReviewPlanResponseDto = {
+    albumCount: number;
+    albums: AssistantReviewAlbumResponseDto[];
+    assetCount: number;
+    message: string;
+    status: Status5;
+};
+export type AssistantToolRequestDto = {
+    input?: AssistantToolInputDto;
+    toolType: ToolType2;
+};
+export type AssistantToolRecordDto = {
+    [key: string]: any;
+};
+export type AssistantToolResponseDto = {
+    errorCount?: number;
+    errors: AssistantToolRecordDto[];
+    generatedAt: string;
+    inlineResultsOmitted?: boolean;
+    logFileFormat?: LogFileFormat | null;
+    logFilePath?: string | null;
+    resultCount?: number;
+    results: AssistantToolRecordDto[];
+    summary: {
+        [key: string]: any;
+    };
+    toolType: ToolType2;
+};
+export type AssistantUndoRequestDto = {
+    changeLogFilePath: string;
+};
+export type AssistantUndoResponseDto = {
+    actionType: string;
+    changeLogFilePath: string;
+    message: string;
+    status: Status6;
+    undoneTargetId: string;
+    undoneTargetName: string | null;
+};
 export type SignUpDto = {
     /** User email */
     email: string;
@@ -3892,6 +4165,19 @@ export function addAssetsToAlbums({ albumsAddAssetsDto }: {
     })));
 }
 /**
+ * Retrieve an album by its mobile source identifier
+ */
+export function getAlbumBySourceId({ sourceAlbumId }: {
+    sourceAlbumId: string;
+}, opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchJson<{
+        status: 200;
+        data: object;
+    }>(`/albums/by-source/${encodeURIComponent(sourceAlbumId)}`, {
+        ...opts
+    }));
+}
+/**
  * Retrieve album statistics
  */
 export function getAlbumStatistics(opts?: Oazapfts.RequestOpts) {
@@ -4537,6 +4823,172 @@ export function getSegment({ filename, id, key, sessionId, slug, variantIndex, x
             "x-immich-hls-msn": xImmichHlsMsn
         })
     }));
+}
+/**
+ * Run an audited assistant agent command
+ */
+export function runAgentCommand({ assistantAgentCommandRequestDto }: {
+    assistantAgentCommandRequestDto: AssistantAgentCommandRequestDto;
+}, opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchJson<{
+        status: 200;
+        data: AssistantAgentCommandResponseDto;
+    }>("/assistant/agent-command", oazapfts.json({
+        ...opts,
+        method: "POST",
+        body: assistantAgentCommandRequestDto
+    })));
+}
+/**
+ * Assess library organization
+ */
+export function assessLibrary(opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchJson<{
+        status: 200;
+        data: AssistantAssessmentResponseDto;
+    }>("/assistant/assessment", {
+        ...opts
+    }));
+}
+/**
+ * Chat with the library assistant
+ */
+export function assistantChat({ assistantChatRequestDto }: {
+    assistantChatRequestDto: AssistantChatRequestDto;
+}, opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchJson<{
+        status: 200;
+        data: AssistantChatResponseDto;
+    }>("/assistant/chat", oazapfts.json({
+        ...opts,
+        method: "POST",
+        body: assistantChatRequestDto
+    })));
+}
+/**
+ * List assistant index runs
+ */
+export function getIndexRuns(opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchJson<{
+        status: 200;
+        data: AssistantIndexRunsResponseDto;
+    }>("/assistant/index-runs", {
+        ...opts
+    }));
+}
+/**
+ * Create an assistant index run
+ */
+export function createIndexRun({ assistantIndexRunRequestDto }: {
+    assistantIndexRunRequestDto: AssistantIndexRunRequestDto;
+}, opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchJson<{
+        status: 200;
+        data: AssistantIndexRunResponseDto;
+    }>("/assistant/index-runs", oazapfts.json({
+        ...opts,
+        method: "POST",
+        body: assistantIndexRunRequestDto
+    })));
+}
+/**
+ * Get an assistant index run
+ */
+export function getIndexRun({ id }: {
+    id: string;
+}, opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchJson<{
+        status: 200;
+        data: AssistantIndexRunResponseDto;
+    }>(`/assistant/index-runs/${encodeURIComponent(id)}`, {
+        ...opts
+    }));
+}
+/**
+ * Plan or apply an assistant mutation
+ */
+export function runAssistantMutation({ assistantMutationRequestDto }: {
+    assistantMutationRequestDto: AssistantMutationRequestDto;
+}, opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchJson<{
+        status: 200;
+        data: AssistantMutationResponseDto;
+    }>("/assistant/mutation", oazapfts.json({
+        ...opts,
+        method: "POST",
+        body: assistantMutationRequestDto
+    })));
+}
+/**
+ * List assistant mutation capabilities
+ */
+export function getMutationCapabilities(opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchJson<{
+        status: 200;
+        data: AssistantMutationCapabilitiesResponseDto;
+    }>("/assistant/mutation-capabilities", {
+        ...opts
+    }));
+}
+/**
+ * Create an assistant review album
+ */
+export function createReviewAlbum({ assistantReviewAlbumRequestDto }: {
+    assistantReviewAlbumRequestDto: AssistantReviewAlbumRequestDto;
+}, opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchJson<{
+        status: 200;
+        data: AssistantReviewAlbumResponseDto;
+    }>("/assistant/review-album", oazapfts.json({
+        ...opts,
+        method: "POST",
+        body: assistantReviewAlbumRequestDto
+    })));
+}
+/**
+ * Execute an assistant review-album plan
+ */
+export function executeReviewPlan({ assistantExecuteReviewPlanRequestDto }: {
+    assistantExecuteReviewPlanRequestDto: AssistantExecuteReviewPlanRequestDto;
+}, opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchJson<{
+        status: 200;
+        data: AssistantExecuteReviewPlanResponseDto;
+    }>("/assistant/review-plan", oazapfts.json({
+        ...opts,
+        method: "POST",
+        body: assistantExecuteReviewPlanRequestDto
+    })));
+}
+/**
+ * Run an assistant audit tool
+ */
+export function runTool({ assistantToolRequestDto }: {
+    assistantToolRequestDto: AssistantToolRequestDto;
+}, opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchJson<{
+        status: 200;
+        data: AssistantToolResponseDto;
+    }>("/assistant/tool", oazapfts.json({
+        ...opts,
+        method: "POST",
+        body: assistantToolRequestDto
+    })));
+}
+/**
+ * Undo an assistant change
+ */
+export function undoAssistantChange({ assistantUndoRequestDto }: {
+    assistantUndoRequestDto: AssistantUndoRequestDto;
+}, opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchJson<{
+        status: 200;
+        data: AssistantUndoResponseDto;
+    }>("/assistant/undo", oazapfts.json({
+        ...opts,
+        method: "POST",
+        body: assistantUndoRequestDto
+    })));
 }
 /**
  * Register admin
@@ -7404,6 +7856,130 @@ export enum AssetMediaSize {
     Fullsize = "fullsize",
     Preview = "preview",
     Thumbnail = "thumbnail"
+}
+export enum Target {
+    Local = "local",
+    Synology = "synology",
+    Immich = "immich"
+}
+export enum Status {
+    Disabled = "disabled",
+    Completed = "completed",
+    Failed = "failed",
+    TimedOut = "timed_out",
+    Error = "error"
+}
+export enum Target2 {
+    Local = "local",
+    Synology = "synology",
+    Immich = "immich",
+    Null
+}
+export enum Type {
+    AlbumPlan = "album_plan",
+    FolderPlan = "folder_plan",
+    MetadataAudit = "metadata_audit",
+    OriginalFileAudit = "original_file_audit",
+    Review = "review"
+}
+export enum Role {
+    User = "user",
+    Assistant = "assistant"
+}
+export enum Provider {
+    Openai = "openai",
+    Anthropic = "anthropic",
+    ClaudeCli = "claude-cli",
+    CodexCli = "codex-cli"
+}
+export enum CohortType {
+    SourcePath = "source_path",
+    Date = "date",
+    Camera = "camera",
+    Location = "location",
+    Event = "event",
+    Null
+}
+export enum Type2 {
+    Image = "IMAGE",
+    Video = "VIDEO",
+    Audio = "AUDIO",
+    Other = "OTHER",
+    Null
+}
+export enum ToolType {
+    ContentHashAudit = "content_hash_audit",
+    SidecarPairAudit = "sidecar_pair_audit",
+    MetadataSearch = "metadata_search",
+    MobileOriginalCompare = "mobile_original_compare",
+    Null
+}
+export enum Type3 {
+    Search = "search",
+    AlbumPlan = "album_plan",
+    FolderPlan = "folder_plan",
+    MetadataAudit = "metadata_audit",
+    OriginalFileAudit = "original_file_audit",
+    Review = "review",
+    AgentCommand = "agent_command"
+}
+export enum Provider2 {
+    Openai = "openai",
+    Anthropic = "anthropic",
+    ClaudeCli = "claude-cli",
+    CodexCli = "codex-cli",
+    LocalCli = "local-cli"
+}
+export enum Status2 {
+    Success = "success",
+    Disabled = "disabled",
+    Error = "error"
+}
+export enum Status3 {
+    Pending = "pending",
+    Running = "running",
+    Completed = "completed",
+    Failed = "failed"
+}
+export enum ActionType {
+    MetadataEdit = "metadata_edit",
+    ArchiveFavorite = "archive_favorite",
+    StackChange = "stack_change",
+    FolderMove = "folder_move",
+    DuplicateResolution = "duplicate_resolution"
+}
+export enum Mode {
+    Plan = "plan",
+    Apply = "apply"
+}
+export enum Operation {
+    Create = "create",
+    Delete = "delete",
+    SetPrimary = "set_primary"
+}
+export enum Status4 {
+    Planned = "planned",
+    Applied = "applied",
+    Blocked = "blocked"
+}
+export enum UndoAction {
+    DeleteCreatedReviewAlbum = "delete_created_review_album"
+}
+export enum Status5 {
+    Applied = "applied"
+}
+export enum ToolType2 {
+    ContentHashAudit = "content_hash_audit",
+    SidecarPairAudit = "sidecar_pair_audit",
+    MetadataSearch = "metadata_search",
+    MobileOriginalCompare = "mobile_original_compare"
+}
+export enum LogFileFormat {
+    Json = "json",
+    Null
+}
+export enum Status6 {
+    Undone = "undone"
 }
 export enum SourceType {
     MachineLearning = "machine-learning",

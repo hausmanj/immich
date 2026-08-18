@@ -2229,6 +2229,58 @@
         "x-immich-state": "Stable"
       }
     },
+    "/albums/by-source/{sourceAlbumId}": {
+      "get": {
+        "description": "Look up the authenticated user's own album that was materialized from a mobile source album (e.g. an iPhone Photos album) using its stable source identifier. Returns null when no such album exists.",
+        "operationId": "getAlbumBySourceId",
+        "parameters": [
+          {
+            "name": "sourceAlbumId",
+            "required": true,
+            "in": "path",
+            "description": "Mobile source album identifier",
+            "schema": {
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Retrieve an album by its mobile source identifier",
+        "tags": [
+          "Albums"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3",
+            "state": "Added"
+          }
+        ],
+        "x-immich-permission": "album.read"
+      }
+    },
     "/albums/statistics": {
       "get": {
         "description": "Returns statistics about the albums available to the authenticated user.",
@@ -17675,6 +17727,10 @@
           },
           "visibility": {
             "$ref": "#/components/schemas/AssetVisibility"
+          },
+          "writeMetadataToOriginal": {
+            "description": "Write changed metadata fields to the original media file, not only the Immich database/sidecar",
+            "type": "boolean"
           }
         },
         "required": [
@@ -20036,6 +20092,11 @@
         },
         "type": "object"
       },
+      "AssistantToolRecordDto": {
+        "additionalProperties": {},
+        "properties": {},
+        "type": "object"
+      },
       "AssistantToolRequestDto": {
         "properties": {
           "input": {
@@ -20057,10 +20118,6 @@
         ],
         "type": "object"
       },
-      "AssistantToolRecordDto": {
-        "additionalProperties": {},
-        "type": "object"
-      },
       "AssistantToolResponseDto": {
         "properties": {
           "errorCount": {
@@ -20080,7 +20137,8 @@
           },
           "logFileFormat": {
             "enum": [
-              "json"
+              "json",
+              null
             ],
             "nullable": true,
             "type": "string"
@@ -29231,6 +29289,10 @@
           },
           "visibility": {
             "$ref": "#/components/schemas/AssetVisibility"
+          },
+          "writeMetadataToOriginal": {
+            "description": "Write changed metadata fields to the original media file, not only the Immich database/sidecar",
+            "type": "boolean"
           }
         },
         "type": "object"

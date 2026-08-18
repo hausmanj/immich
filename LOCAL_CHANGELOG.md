@@ -2,6 +2,16 @@
 
 This file tracks local-only changes in this checkout that have not necessarily been pulled from upstream Immich.
 
+## 2026-08-17 - Fix duplicate source-album creation race (mobile)
+
+- On-device e2e testing found that uploading a new local album could materialize it twice: the server's upload hook (`AlbumRepository.upsertSourceAlbum`, keyed by `sourceAlbumId`) and the iOS client's own "Sync Albums" flow (`SyncLinkedAlbumService._handleUnlinkedAlbum`, by-name `POST /api/album`) can both fire within about a second of each other, and the client's by-name check only sees albums its local drift cache has already synced down — not what the server just created.
+- Rejected fixing this server-side via by-name adoption in `upsertSourceAlbum`: an unrelated third album sharing the same name could get silently mis-adopted. Instead wired the client to check `GET /albums/by-source/:sourceAlbumId` (added 2026-08-16 in `bba0f5a` but never called from Dart) before falling back to by-name creation:
+  - `DriftAlbumApiRepository.getBySourceAlbumId` — new wrapper around the generated `AlbumsApi.getAlbumBySourceId` (lives in `albums_api.dart`, not the `api.dart` aggregator).
+  - `SyncLinkedAlbumService._handleUnlinkedAlbum` — tries the by-source lookup (gated on the `backup.syncAlbums` setting) before creating by name; new `_linkToSourceMatchedAlbum` caches and links the server's album instead of duplicating it.
+- Added 3 regression tests to `sync_linked_album_service_test.dart` covering: links to the server match instead of duplicating; falls back to create when the server also has no match; skips the lookup when Sync Albums is off.
+- Verification: `dart analyze` clean; full `flutter test` has only 3 pre-existing failures (confirmed present before this change via `git stash`); server `vitest run` has only 1 pre-existing unrelated failure, `album.service.spec.ts` (64 tests) passes clean.
+- Committed locally (`cebee02`), not pushed. Not yet re-validated on-device.
+
 ## 2026-08-16 - Source-album materialization regression tests
 
 - Added a `source album materialization` describe block to `server/test/medium/specs/services/asset-media.service.spec.ts` covering the new server-side behavior end-to-end against real Postgres (testcontainers):

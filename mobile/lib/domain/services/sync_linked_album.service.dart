@@ -1,11 +1,13 @@
 import 'dart:async';
 
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:immich_mobile/domain/models/album/album.model.dart';
 import 'package:immich_mobile/domain/models/album/local_album.model.dart';
 import 'package:immich_mobile/domain/models/store.model.dart';
 import 'package:immich_mobile/domain/services/store.service.dart';
 import 'package:immich_mobile/infrastructure/repositories/local_album.repository.dart';
 import 'package:immich_mobile/infrastructure/repositories/remote_album.repository.dart';
+import 'package:immich_mobile/infrastructure/repositories/settings.repository.dart';
 import 'package:immich_mobile/providers/infrastructure/album.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/store.provider.dart';
 import 'package:immich_mobile/repositories/drift_album_api_repository.dart';
@@ -106,14 +108,38 @@ class SyncLinkedAlbumService {
 
     if (existingRemoteAlbum != null) {
       return _linkToExistingRemoteAlbum(localAlbum, existingRemoteAlbum);
-    } else {
-      return _createAndLinkNewRemoteAlbum(localAlbum);
     }
+
+    // The by-name lookup above only sees albums this device has already
+    // synced down locally. If the server just materialized this album from
+    // upload metadata (AssetMediaService.materializeSourceAlbums) moments
+    // ago, the local cache may not have caught up yet, and creating by name
+    // here would produce a second, duplicate album with the same name. Ask
+    // the server directly by the stable mobile source album id -- which
+    // can't collide with an unrelated album that happens to share the same
+    // name -- before falling back to creation.
+    if (SettingsRepository.instance.appConfig.backup.syncAlbums) {
+      final sourceMatchedAlbum = await _albumApiRepository.getBySourceAlbumId(
+        localAlbum.id,
+        _storeService.get(StoreKey.currentUser),
+      );
+      if (sourceMatchedAlbum != null) {
+        return _linkToSourceMatchedAlbum(localAlbum, sourceMatchedAlbum);
+      }
+    }
+
+    return _createAndLinkNewRemoteAlbum(localAlbum);
   }
 
   /// Links a local album to an existing remote album
   Future<void> _linkToExistingRemoteAlbum(LocalAlbum localAlbum, dynamic existingRemoteAlbum) {
     return _localAlbumRepository.linkRemoteAlbum(localAlbum.id, existingRemoteAlbum.id);
+  }
+
+  /// Caches a server-materialized remote album locally, then links to it
+  Future<void> _linkToSourceMatchedAlbum(LocalAlbum localAlbum, RemoteAlbum sourceMatchedAlbum) async {
+    await _remoteAlbumRepository.create(sourceMatchedAlbum, []);
+    return _localAlbumRepository.linkRemoteAlbum(localAlbum.id, sourceMatchedAlbum.id);
   }
 
   /// Creates a new remote album and links it to the local album
