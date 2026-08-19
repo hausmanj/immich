@@ -18,7 +18,9 @@ the lossy iCloud round-trip, such that:
 2. Content stands on its own if/when the Immich server is lost or decommissioned
    — derived data lives beside files on the NAS, not only inside Immich's DB.
 3. Assets lacking embedded EXIF (screenshots etc.) get accurate dates from the
-   Photos record at extraction time, never overwriting existing values.
+   Photos record at extraction time, carried in a same-name `.json` neighbor
+   file on the NAS. Files that already have embedded metadata get NO sidecar
+   and their bytes/EXIF are never touched.
 
 ## What already exists on this fork (verified 2026-08-19)
 
@@ -60,7 +62,9 @@ assets instead of the original. This branch already patches it:
   (matches the source-album work's rule and the whole point of byte-exactness).
 - Every derived field carries a provenance marker so it is auditable and
   idempotent on retry/re-upload.
-- Merge rule everywhere: existing value always wins; fill gaps only.
+- Sidecars are **conditional**: created ONLY for assets whose embedded
+  metadata is missing/insufficient. Normal content with valid EXIF gets no
+  JSON neighbor at all ([agreed] 2026-08-19).
 
 ## Delta 1 — Derived-metadata backfill at transfer time **[agreed on priority ladder]**
 
@@ -77,34 +81,36 @@ verification downstream) and camera/device model when unknown — mark absent
 rather than invent.
 
 Nothing today writes derived metadata anywhere; files go up byte-as-is. This
-delta adds that layer without touching file bytes.
+delta adds that layer without touching file bytes — and per the agreed rule,
+derived values are persisted *only* when embedded data is absent (see
+Delta 2), never as an overlay on files that already carry their own metadata.
 
-## Delta 2 — Sidecar JSON design **[agreed on concept; schema below is draft]**
+## Delta 2 — Conditional sidecar JSON **[agreed on concept + naming; schema below is draft]**
 
-Per-asset sidecar produced on-device at extraction/upload time and carried two
-ways so content survives Immich's death:
+**Rule:** if the landed file's embedded metadata answers what we need
+(datetime present/valid), nothing extra is written. Only edge-case assets
+without usable embedded EXIF get a neighbor JSON on the NAS:
 
-1. **Opaque blob on the asset** — uploaded alongside/attached to the Immich
-   asset record (metadata payload), versioned schema.
-2. **NAS neighbor file** — hauspix import materializes the same JSON next to
-   landed files under `/volume1/photo/master photo library/...` during import.
-   If Immich disappears entirely, every NAS file still has its provenance
-   neighbor.
+- Same filename, `.json` extension swapped/added to match convention
+  (e.g. `IMG_5142.jpg` → `IMG_5142.json`).
+- Written by hauspix import next to landed files under
+  `/volume1/photo/master photo library/...`; source of truth lives on the NAS,
+  not in Immich's DB — content stands on its own if/when the server dies.
+- Idempotent on retry/re-upload: re-materializing must produce identical
+  output or merge into existing neighbor without clobbering better data.
 
-Draft schema sketch (field list to firm up):
+Draft schema sketch (fields narrowed to what actually gets derived):
 
 ```json
 {
   "schema": "immich-derived/1",
-  "sourceAssetId": "<PHLocalIdentifier>",
-  "hashes": { "sha1": "...", "blake3": "..." },
+  "reason": "no-embedded-datetime",
   "derivedFields": {
-    "dateTimeOriginal": {"value": "...", "provenance": "phAsset.creationDate@extraction"},
-    ...
+    "dateTimeOriginal": {"value": "...", "provenance": "phAsset.creationDate@extraction"}
   },
   "neverSynthesized": ["location"],
   "extractedAt": "...",
-  "deviceModelKnown": true
+  "sourceAssetId": "<PHLocalIdentifier>"
 }
 ```
 
@@ -140,9 +146,11 @@ stacking unless requirements change.*
 1. On-device log-marker check on John's real library: confirm
    `Using unedited base file for adjusted iOS asset` fires where adjustments
    exist (markers listed in the 07-19 investigation doc).
-2. Fresh upload of a screenshot/EXIF-less asset through the isolated mobile-test
-   stack; verify sidecar JSON produced with priority-ladder provenance and no
-   embedded-byte modification (hash compare pre/post transfer).
+2. Fresh upload of BOTH an EXIF-less asset (screenshot) and a normal
+   EXIF-bearing photo through the isolated mobile-test stack; verify the
+   edge case produces its same-name `.json` neighbor with priority-ladder
+   provenance, the normal one produces NO neighbor at all, and in both cases
+   landed file bytes are unmodified (hash compare pre/post transfer).
 3. NAS-side neighbor-file materialization dry-run on the safe local dataset
    before touching `/volume1/photo/...`.
 
@@ -151,4 +159,4 @@ stacking unless requirements change.*
 - Sidecar neighbor naming/placement convention on the NAS (confirm vs hauspix guide).
 - Confirm Delta 3 recommendation (extract at upload-time) is acceptable.
 - Record the Delta 4 originals-only decision explicitly.
-- Where on the Immich server side does the opaque blob attach (metadata JSON field vs binary attachment) — decide during implementation scoping.
+- How hauspix import learns *which* landed files need a neighbor JSON and what values to write (derived fields must travel from phone through the upload path into something hauspix can read at import time) — mechanism decision deferred to implementation scoping.
