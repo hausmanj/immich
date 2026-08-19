@@ -55,15 +55,17 @@ without an API key; that is expected, not a failure.
 
 The source-album work (server auto-materialization, the by-source client
 lookup, and the duplicate-album race fix) is **committed** on
-`feat/perceptual-dedup-and-context-checkpoint` as of 2026-08-18, most recent:
+`feat/perceptual-dedup-and-context-checkpoint`, most recent:
 
+    200182c Fix next-step reference in working state (changelog 08-15, not guide §4/§5)
+    267041d Update notes: duplicate-album fix re-validated on-device, work committed
     1df3c04 Fix duplicate album creation race in Sync Albums
     bba0f5a Add owner album lookup by mobile source album id
     99d2ea1 Gate source-album metadata on syncAlbums; local iOS signing config
     465d054 Materialize iPhone source albums on upload with regression tests
 
 On-device re-validation passed 2026-08-18: the duplicate-album repro now
-collapses to one album. The branch is **not pushed** — push remains John's
-call. Next plan item: surface source-album reconciliation status and user
+collapses to one album. The branch was **pushed to origin on 2026-08-19**
+(fast-forward `1df3c04..200182cd5`). Next plan item: surface source-album reconciliation status and user
 opt-in controls in the mobile and web interfaces (the "Planned follow-up" line
 of `LOCAL_CHANGELOG.md`, 2026-08-15 entry).

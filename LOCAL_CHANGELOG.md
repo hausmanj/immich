@@ -2,6 +2,15 @@
 
 This file tracks local-only changes in this checkout that have not necessarily been pulled from upstream Immich.
 
+## 2026-08-19 - Push source-album branch to fork
+
+- With John's approval, pushed `feat/perceptual-dedup-and-context-checkpoint` to
+  origin (`hausmanj/immich`). Fetched first and confirmed the remote tip
+  `1df3c04` was an ancestor of local HEAD before pushing; the push advanced
+  origin fast-forward from `1df3c04` to `200182cd5` (only the two note commits
+  were new on top). Normal push only — no force-push. Verified afterwards with
+  `git ls-remote`.
+
 ## 2026-08-17 - Fix duplicate source-album creation race (mobile)
 
 - On-device e2e testing found that uploading a new local album could materialize it twice: the server's upload hook (`AlbumRepository.upsertSourceAlbum`, keyed by `sourceAlbumId`) and the iOS client's own "Sync Albums" flow (`SyncLinkedAlbumService._handleUnlinkedAlbum`, by-name `POST /api/album`) can both fire within about a second of each other, and the client's by-name check only sees albums its local drift cache has already synced down — not what the server just created.
