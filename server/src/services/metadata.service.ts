@@ -517,6 +517,24 @@ export class MetadataService extends BaseService {
 
     await this.metadataRepository.writeTags(sidecarPath, exif);
 
+    // Also write the same tags directly into the original file's own embedded metadata, not just
+    // the sidecar -- John wants edits (dates, GPS, description, rating) to land in the actual file
+    // on disk, matching what any other tool (exiftool, HausPix, a re-import) will see. Skipped
+    // (silently, by writeTags' own error handling) for anything mounted read-only, e.g. the
+    // protected /mnt/originals golden tree.
+    await this.metadataRepository.writeTags(asset.originalPath, exif);
+
+    // Writing the file changes its bytes, so the stored checksum (used for exact-duplicate-upload
+    // detection and the storage-template move's post-move integrity check) would otherwise go
+    // stale and silently diverge from what's actually on disk. Recomputing here is a no-op if the
+    // write above was skipped (unchanged file hashes to the same value it already had).
+    const checksum = await this.cryptoRepository.hashFile(asset.originalPath);
+    await this.assetRepository.update({ id: asset.id, checksum });
+    // fileSizeInByte and the rest of asset_exif get refreshed the same way a normal re-scan does,
+    // rather than hand-rolling a partial exif upsert here (asset_exif's upsert nulls out any column
+    // not in the values object on conflict, so a partial call would wipe the row's other fields).
+    await this.jobRepository.queue({ name: JobName.AssetExtractMetadata, data: { id } });
+
     if (asset.files.length === 0) {
       await this.assetRepository.upsertFile({ assetId: id, type: AssetFileType.Sidecar, path: sidecarPath });
     }

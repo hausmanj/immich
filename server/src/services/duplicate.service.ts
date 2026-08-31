@@ -218,16 +218,18 @@ export class DuplicateService extends BaseService {
 
     if (idsToTrash.length > 0) {
       // TODO: this is duplicated with AssetService.deleteAssets
-      const { trash } = await this.getConfig({ withCache: true });
-      const isForce = !trash.enabled;
-
+      // Duplicate resolution always hard-deletes the losing copies, ignoring the server-wide
+      // trash.enabled setting. The point of resolving a duplicate group is to reclaim the space
+      // immediately -- leaving true duplicates sitting in trash for the normal retention period
+      // defeats that, and (unlike a raw asset delete) the user has just explicitly confirmed which
+      // copy to keep, so there's no accidental-deletion risk trash exists to guard against here.
       await this.assetRepository.updateAll(idsToTrash, {
         deletedAt: new Date(),
-        status: isForce ? AssetStatus.Deleted : AssetStatus.Trashed,
+        status: AssetStatus.Deleted,
         duplicateId: null,
       });
 
-      await this.eventRepository.emit(isForce ? 'AssetDeleteAll' : 'AssetTrashAll', {
+      await this.eventRepository.emit('AssetDeleteAll', {
         assetIds: idsToTrash,
         userId: auth.user.id,
       });

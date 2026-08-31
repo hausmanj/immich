@@ -285,6 +285,11 @@ const AssistantMutationSchema = z
             trashAssetIds: z.array(z.uuidv4()),
           }),
         ),
+        // Duplicate resolution hard-deletes the trashed assets (see duplicateService.resolveGroup) --
+        // there is no undo. This must be the literal true, not just truthy, so a client can't send it
+        // by accident via a generic "confirm: true" default, and a request built without an explicit,
+        // deliberate opt-in for THIS action fails loudly instead of silently deleting files.
+        confirmPermanentDelete: z.literal(true).describe('Required acknowledgement that this permanently deletes files with no undo'),
       })
       .optional(),
   })
