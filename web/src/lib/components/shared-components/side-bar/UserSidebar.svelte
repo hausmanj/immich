@@ -14,8 +14,10 @@
     mdiAccountOutline,
     mdiArchiveArrowDown,
     mdiArchiveArrowDownOutline,
-    mdiRobotOutline,
+    mdiCards,
+    mdiCardsOutline,
     mdiFolderOutline,
+    mdiRobotOutline,
     mdiHeart,
     mdiHeartOutline,
     mdiImageAlbum,
@@ -47,6 +49,10 @@
 
   {#if featureFlagsManager.value.map}
     <NavbarItem title={$t('map')} href={Route.map()} icon={mdiMapOutline} activeIcon={mdiMap} />
+  {/if}
+
+  {#if authManager.preferences.memories.enabled && authManager.preferences.memories.sidebarWeb}
+    <NavbarItem title={$t('memories')} href={Route.memories()} icon={mdiCardsOutline} activeIcon={mdiCards} />
   {/if}
 
   {#if authManager.preferences.people.enabled && authManager.preferences.people.sidebarWeb}

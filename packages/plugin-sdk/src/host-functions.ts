@@ -4,6 +4,8 @@ import {
   type BulkIdResponseDto,
   type BulkIdsDto,
   type CreateAlbumDto,
+  type TagBulkAssetsDto,
+  type TagBulkAssetsResponseDto,
 } from '@immich/sdk';
 
 declare module 'extism:host' {
@@ -92,6 +94,7 @@ export const availableFunctions = [
   'analyzeAssetWithLlm',
   'writeWorkflowAuditLog',
   'httpRequest',
+  'bulkTagAssets',
 ] as const;
 
 export const hostFunctions = (authToken: string) => {
@@ -158,6 +161,12 @@ export const hostFunctions = (authToken: string) => {
         'httpRequest',
         authToken,
         [url, options],
+      ),
+    bulkTagAssets: (dto: TagBulkAssetsDto) =>
+      call<[TagBulkAssetsDto], TagBulkAssetsResponseDto>(
+        'bulkTagAssets',
+        authToken,
+        [dto],
       ),
   } satisfies Record<(typeof availableFunctions)[number], unknown>;
 };

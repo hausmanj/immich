@@ -38,6 +38,7 @@ import {
   anyUuid,
   asUuid,
   hasPeople,
+  inSharedAlbum,
   removeUndefinedKeys,
   truncatedDate,
   unnest,
@@ -54,7 +55,7 @@ import {
   withTagId,
   withTags,
 } from 'src/utils/database';
-import { globToSqlPattern } from 'src/utils/misc';
+import { globToPostgresRegex } from 'src/utils/misc';
 
 export type AssetStats = Record<AssetType, number>;
 
@@ -299,7 +300,7 @@ interface AssetGetByChecksumOptions {
 
 interface GetByIdsRelations {
   exifInfo?: boolean;
-  faces?: { person?: boolean; withDeleted?: boolean };
+  faces?: { person?: boolean; withDeleted?: boolean; viewingUserId?: string };
   files?: boolean;
   library?: boolean;
   owner?: boolean;
@@ -369,10 +370,10 @@ export class AssetRepository {
           .values(audio)
           .onConflict((oc) =>
             oc.column('assetId').doUpdateSet(({ ref }) => ({
-              bitrate: ref('asset_audio.bitrate'),
-              index: ref('asset_audio.index'),
-              profile: ref('asset_audio.profile'),
-              codecName: ref('asset_audio.codecName'),
+              bitrate: ref('excluded.bitrate'),
+              index: ref('excluded.index'),
+              profile: ref('excluded.profile'),
+              codecName: ref('excluded.codecName'),
             })),
           ),
       );
@@ -385,21 +386,22 @@ export class AssetRepository {
           .values(video)
           .onConflict((oc) =>
             oc.column('assetId').doUpdateSet(({ ref }) => ({
-              bitrate: ref('asset_video.bitrate'),
-              timeBase: ref('asset_video.timeBase'),
-              index: ref('asset_video.index'),
-              profile: ref('asset_video.profile'),
-              level: ref('asset_video.level'),
-              colorPrimaries: ref('asset_video.colorPrimaries'),
-              colorTransfer: ref('asset_video.colorTransfer'),
-              colorMatrix: ref('asset_video.colorMatrix'),
-              dvProfile: ref('asset_video.dvProfile'),
-              dvLevel: ref('asset_video.dvLevel'),
-              dvBlSignalCompatibilityId: ref('asset_video.dvBlSignalCompatibilityId'),
-              codecName: ref('asset_video.codecName'),
-              formatName: ref('asset_video.formatName'),
-              formatLongName: ref('asset_video.formatLongName'),
-              pixelFormat: ref('asset_video.pixelFormat'),
+              bitrate: ref('excluded.bitrate'),
+              frameCount: ref('excluded.frameCount'),
+              timeBase: ref('excluded.timeBase'),
+              index: ref('excluded.index'),
+              profile: ref('excluded.profile'),
+              level: ref('excluded.level'),
+              colorPrimaries: ref('excluded.colorPrimaries'),
+              colorTransfer: ref('excluded.colorTransfer'),
+              colorMatrix: ref('excluded.colorMatrix'),
+              dvProfile: ref('excluded.dvProfile'),
+              dvLevel: ref('excluded.dvLevel'),
+              dvBlSignalCompatibilityId: ref('excluded.dvBlSignalCompatibilityId'),
+              codecName: ref('excluded.codecName'),
+              formatName: ref('excluded.formatName'),
+              formatLongName: ref('excluded.formatLongName'),
+              pixelFormat: ref('excluded.pixelFormat'),
             })),
           ),
       );
@@ -412,12 +414,12 @@ export class AssetRepository {
           .values(keyframes)
           .onConflict((oc) =>
             oc.column('assetId').doUpdateSet(({ ref }) => ({
-              pts: ref('asset_keyframe.pts'),
-              accDuration: ref('asset_keyframe.accDuration'),
-              ownDuration: ref('asset_keyframe.ownDuration'),
-              totalDuration: ref('asset_keyframe.totalDuration'),
-              packetCount: ref('asset_keyframe.packetCount'),
-              outputFrames: ref('asset_keyframe.outputFrames'),
+              pts: ref('excluded.pts'),
+              accDuration: ref('excluded.accDuration'),
+              ownDuration: ref('excluded.ownDuration'),
+              totalDuration: ref('excluded.totalDuration'),
+              packetCount: ref('excluded.packetCount'),
+              outputFrames: ref('excluded.outputFrames'),
             })),
           ),
       );
@@ -1646,6 +1648,9 @@ export class AssetRepository {
 
   @ChunkedArray({ chunkSize: 4000 })
   async createAll(assets: Insertable<AssetTable>[]) {
+    if (assets.length === 0) {
+      return [];
+    }
     const ids = await this.db.insertInto('asset').values(assets).returning('id').execute();
     return ids.map(({ id }) => id);
   }
@@ -1708,12 +1713,12 @@ export class AssetRepository {
   }
 
   @GenerateSql({ params: [[DummyValue.UUID]] })
-  @ChunkedArray()
-  getByIdsWithAllRelationsButStacks(ids: string[]) {
+  @ChunkedArray({ paramIndex: 0 })
+  getByIdsWithAllRelationsButStacks(ids: string[], viewingUserId?: string) {
     return this.db
       .selectFrom('asset')
       .selectAll('asset')
-      .select(withFacesAndPeople)
+      .select(withFacesAndPeople({ viewingUserId }))
       .select(withTags)
       .$call(withExif)
       .where('asset.id', '=', anyUuid(ids))
@@ -1772,7 +1777,11 @@ export class AssetRepository {
       .selectAll('asset')
       .where('asset.id', '=', asUuid(id))
       .$if(!!exifInfo, withExif)
-      .$if(!!faces, (qb) => qb.select(faces?.person ? withFacesAndPeople : withFaces).$narrowType<{ faces: NotNull }>())
+      .$if(!!faces, (qb) =>
+        qb
+          .select(faces?.person ? withFacesAndPeople({ viewingUserId: faces.viewingUserId! }) : withFaces)
+          .$narrowType<{ faces: NotNull }>(),
+      )
       .$if(!!library, (qb) => qb.select(withLibrary))
       .$if(!!owner, (qb) => qb.select(withOwner))
       .$if(!!smartSearch, withSmartSearch)
@@ -1789,10 +1798,10 @@ export class AssetRepository {
                   eb
                     .selectFrom('asset as stacked')
                     .selectAll('stack')
-                    .select((eb) =>
-                      eb
-                        .fn<ShallowDehydrateObject<Selectable<AssetTable>>>('array_agg', [eb.table('stacked')])
-                        .as('assets'),
+                    .select(
+                      sql<
+                        ShallowDehydrateObject<Selectable<AssetTable>>[]
+                      >`array_agg(to_json(stacked) ORDER BY stacked."fileCreatedAt" ASC)`.as('assets'),
                     )
                     .whereRef('stacked.stackId', '=', 'stack.id')
                     .whereRef('stacked.id', '!=', 'stack.primaryAssetId')
@@ -1834,12 +1843,12 @@ export class AssetRepository {
         .selectFrom('asset')
         .selectAll('asset')
         .$call(withExif)
-        .$call((qb) => qb.select(withFacesAndPeople))
+        .$call((qb) => qb.select(withFaces))
         .$call((qb) => qb.select(withEdits))
         .executeTakeFirst();
     }
 
-    return this.getById(asset.id, { exifInfo: true, faces: { person: true }, edits: true });
+    return this.getById(asset.id, { exifInfo: true, faces: {}, edits: true });
   }
 
   async remove(asset: { id: string }): Promise<void> {
@@ -1938,8 +1947,8 @@ export class AssetRepository {
       .execute();
   }
 
-  @GenerateSql({ params: [{}] })
-  async getTimeBuckets(options: TimeBucketOptions): Promise<TimeBucketItem[]> {
+  @GenerateSql({ params: [{}, { user: { id: DummyValue.UUID } }] })
+  async getTimeBuckets(options: TimeBucketOptions, auth: AuthDto): Promise<TimeBucketItem[]> {
     return this.db
       .with('asset', (qb) =>
         qb
@@ -1976,7 +1985,13 @@ export class AssetRepository {
               )
               .where((eb) => eb.or([eb('asset.stackId', 'is', null), eb(eb.table('stack'), 'is not', null)])),
           )
-          .$if(!!options.userIds, (qb) => qb.where('asset.ownerId', '=', anyUuid(options.userIds!)))
+          .$if(!!options.userIds, (qb) =>
+            qb.where((eb) => {
+              // TODO this should become a shared `hasAccess` style helper once implement sharing in more places
+              const isOwner = eb('asset.ownerId', '=', anyUuid(options.userIds!));
+              return options.personId ? eb.or([isOwner, inSharedAlbum(eb, auth.user.id)]) : isOwner;
+            }),
+          )
           .$if(options.isFavorite !== undefined, (qb) => qb.where('asset.isFavorite', '=', options.isFavorite!))
           .$if(!!options.assetType, (qb) => qb.where('asset.type', '=', options.assetType!))
           .$if(options.isDuplicate !== undefined, (qb) =>
@@ -2036,7 +2051,7 @@ export class AssetRepository {
           )
           .$if(!!options.withCoordinates, (qb) => qb.select(['asset_exif.latitude', 'asset_exif.longitude']))
           .where('asset.deletedAt', options.isTrashed ? 'is not' : 'is', null)
-          .$if(options.visibility == undefined, withDefaultVisibility)
+          .$if(options.visibility === undefined, withDefaultVisibility)
           .$if(!!options.visibility, (qb) => qb.where('asset.visibility', '=', options.visibility!))
           .$if(!!options.bbox, (qb) => {
             const bbox = options.bbox!;
@@ -2062,7 +2077,12 @@ export class AssetRepository {
             ),
           )
           .$if(!!options.personId, (qb) => hasPeople(qb, [options.personId!]))
-          .$if(!!options.userIds, (qb) => qb.where('asset.ownerId', '=', anyUuid(options.userIds!)))
+          .$if(!!options.userIds, (qb) =>
+            qb.where((eb) => {
+              const isOwner = eb('asset.ownerId', '=', anyUuid(options.userIds!));
+              return options.personId ? eb.or([isOwner, inSharedAlbum(eb, auth.user.id)]) : isOwner;
+            }),
+          )
           .$if(options.isFavorite !== undefined, (qb) => qb.where('asset.isFavorite', '=', options.isFavorite!))
           .$if(!!options.withStacked, (qb) =>
             qb
@@ -2097,12 +2117,13 @@ export class AssetRepository {
           .$if(!!options.isTrashed, (qb) => qb.where('asset.status', '!=', AssetStatus.Deleted))
           .$if(!!options.tagId, (qb) => withTagId(qb, options.tagId!))
           .orderBy(
-            options.orderBy == AssetOrderBy.CreatedAt
+            options.orderBy === AssetOrderBy.CreatedAt
               ? sql`"createdAt"`
               : sql`(asset."localDateTime" AT TIME ZONE 'UTC')::date`,
             order,
           )
-          .orderBy('asset.fileCreatedAt', order),
+          .orderBy('asset.fileCreatedAt', order)
+          .orderBy('asset.originalFileName', order),
       )
       .with('agg', (qb) =>
         qb
@@ -2265,7 +2286,7 @@ export class AssetRepository {
     exclusionPatterns: string[],
   ): Promise<UpdateResult> {
     const paths = importPaths.map((importPath) => `${importPath}%`);
-    const exclusions = exclusionPatterns.map((pattern) => globToSqlPattern(pattern));
+    const exclusions = exclusionPatterns.map((pattern) => globToPostgresRegex(pattern));
 
     return this.db
       .updateTable('asset')
@@ -2279,7 +2300,7 @@ export class AssetRepository {
       .where((eb) =>
         eb.or([
           eb.not(eb.or(paths.map((path) => eb('originalPath', 'like', path)))),
-          eb.or(exclusions.map((path) => eb('originalPath', 'like', path))),
+          eb.or(exclusions.map((pattern) => eb('originalPath', '~', pattern))),
         ]),
       )
       .executeTakeFirstOrThrow();
