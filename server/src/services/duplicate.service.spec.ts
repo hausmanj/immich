@@ -4,6 +4,7 @@ import { BulkIdErrorReason } from 'src/dtos/asset-ids.response.dto.js';
 import { MapAsset } from 'src/dtos/asset-response.dto.js';
 import { AssetType, AssetVisibility, JobName, JobStatus } from 'src/enum.js';
 import { DuplicateService } from 'src/services/duplicate.service.js';
+import { DuplicateClassification } from 'src/utils/duplicate.js';
 import { AssetFactory } from 'test/factories/asset.factory.js';
 import { authStub } from 'test/fixtures/auth.stub.js';
 import { getForDuplicate } from 'test/mappers.js';
@@ -56,6 +57,11 @@ describe(DuplicateService.name, () => {
           duplicateId: 'duplicate-id',
           assets: [expect.objectContaining({ id: asset.id }), expect.objectContaining({ id: asset.id })],
           suggestedKeepAssetIds: [asset.id],
+          classification: DuplicateClassification.Exact,
+          betterQualityOutsideOriginals: false,
+          betterQualityAssetIds: [],
+          hasSuspectDate: false,
+          suspectAssetIds: [],
         },
       ]);
     });

@@ -223,6 +223,51 @@ const AdminConfigSchemaWithVisibility = z
             .max(0.1)
             .describe('Maximum distance threshold for duplicate detection')
             .meta({ format: 'double' }),
+          autoResolve: z
+            .enum(['exact', 'content', 'near'])
+            .describe(
+              'How much evidence bulk deduplication requires: exact checksum, identical decoded ' +
+                'pixels, or a near-identical perceptual match with matching geometry',
+            ),
+          fingerprint: z
+            .object({
+              enabled: configBool.describe('Compute content/perceptual fingerprints for duplicate groups'),
+              maxPixels: z
+                .int()
+                .min(1)
+                .describe('Refuse to decode an image larger than this many pixels (immich-go uses 80M)'),
+            })
+            .meta({ id: 'AdminConfigDuplicateFingerprintDto' }),
+          keepPreference: z
+            .object({
+              enabled: configBool.describe('Rank duplicate keep-suggestions by curation, not just file size'),
+              preferredPathPatterns: z
+                .array(z.string())
+                .describe('Regexes matched per path segment; a hit marks the copy as curated/organized'),
+              stagingPathPatterns: z
+                .array(z.string())
+                .describe('Regexes matched per path segment; a hit marks the copy as import/staging scratch'),
+              originalsPathPatterns: z
+                .array(z.string())
+                .default(['^originals(_clean)?$'])
+                .describe('Regexes matched per path segment; a hit marks the copy as originals library'),
+              macbookProPathPatterns: z
+                .array(z.string())
+                .default(['^uploads_macbookpro$'])
+                .describe('Regexes matched per path segment; a hit marks the copy as MacBook Pro uploads'),
+              scoreMargin: z
+                .number()
+                .min(0)
+                .describe('Keeper-score lead required to prefer one copy outright (immich-go uses 1)')
+                .meta({ format: 'double' }),
+              sizeTolerance: z
+                .number()
+                .min(0)
+                .max(1)
+                .describe('File sizes within this fraction of each other are treated as equal')
+                .meta({ format: 'double' }),
+            })
+            .meta({ id: 'AdminConfigDuplicateKeepPreferenceDto' }),
         }).meta({ id: 'AdminConfigDuplicateDetectionDto' }),
         facialRecognition: AdminConfigMachineLearningModelSchema.extend({
           minScore: z
@@ -631,6 +676,20 @@ export const defaults = Object.freeze<SystemConfig>({
     duplicateDetection: {
       enabled: true,
       maxDistance: 0.01,
+      autoResolve: 'near' as const,
+      fingerprint: {
+        enabled: true,
+        maxPixels: 80_000_000,
+      },
+      keepPreference: {
+        enabled: true,
+        preferredPathPatterns: [String.raw`^(19|20)\d{2}[-_ ]`],
+        stagingPathPatterns: ['^takeout[-_]', '^_', '^unsorted', String.raw`\bintake\b`, String.raw`\bimport\b`],
+        originalsPathPatterns: ['^originals(_clean)?$'],
+        macbookProPathPatterns: ['^uploads_macbookpro$'],
+        scoreMargin: 1,
+        sizeTolerance: 0.01,
+      },
     },
     facialRecognition: {
       enabled: true,

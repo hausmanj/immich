@@ -8,7 +8,13 @@ import { DuplicateResolveDto, DuplicateResolveGroupDto, DuplicateResponseDto } f
 import { AssetStatus, AssetVisibility, JobName, JobStatus, Permission, QueueName } from 'src/enum.js';
 import { AssetDuplicateResult } from 'src/repositories/search.repository.js';
 import { BaseService } from 'src/services/base.service.js';
-import { suggestDuplicateKeepAssetIds } from 'src/utils/duplicate.js';
+import {
+  assessDuplicateQuality,
+  classifyDuplicateGroup,
+  DuplicateClassification,
+  isAssetDateSuspect,
+  suggestDuplicateKeepAssetIds,
+} from 'src/utils/duplicate.js';
 import { batched, isDuplicateDetectionEnabled } from 'src/utils/misc.js';
 
 type ResolveRequest = {
@@ -70,12 +76,34 @@ export class DuplicateService extends BaseService {
     await this.duplicateRepository.cleanupSingletonGroups(auth.user.id);
 
     const duplicates = await this.duplicateRepository.getAll(auth.user.id);
+    if (duplicates.length === 0) {
+      return [];
+    }
+
+    const { machineLearning } = await this.getConfig({ withCache: true });
+    const keepPreference = machineLearning.duplicateDetection.keepPreference;
+
+    const albumMap =
+      (await this.albumRepository.getByAssetIds(
+        auth.user.id,
+        duplicates.flatMap(({ assets }) => assets.map(({ id }) => id)),
+      )) ?? new Map();
+    const albumCounts = new Map([...albumMap].map(([assetId, albumIds]) => [assetId, albumIds.length]));
+
     return duplicates.map(({ duplicateId, assets }) => {
       const mappedAssets = assets.map((asset) => mapAsset(asset, { auth }));
+      const quality = assessDuplicateQuality(mappedAssets, keepPreference, albumCounts);
+      const suspectAssetIds = mappedAssets.filter(isAssetDateSuspect).map((a) => a.id);
+
       return {
         duplicateId,
         assets: mappedAssets,
-        suggestedKeepAssetIds: suggestDuplicateKeepAssetIds(mappedAssets),
+        suggestedKeepAssetIds: suggestDuplicateKeepAssetIds(mappedAssets, keepPreference, albumCounts),
+        classification: classifyDuplicateGroup(mappedAssets),
+        betterQualityOutsideOriginals: quality.betterQualityOutsideOriginals,
+        betterQualityAssetIds: quality.betterQualityAssetIds,
+        hasSuspectDate: suspectAssetIds.length > 0,
+        suspectAssetIds,
       };
     });
   }

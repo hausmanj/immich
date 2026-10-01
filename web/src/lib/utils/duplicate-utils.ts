@@ -73,7 +73,7 @@ const metadataFields = [
     icon: mdiFolderOutline,
     titleKey: 'path',
     keys: ['originalPath'],
-    render: (asset, $t) => truncateMiddle(asset.originalPath) || $t('unknown'),
+    render: (asset, $t) => asset.originalPath || $t('unknown'),
     tooltip: (asset, $t) => $t('full_path', { values: { path: asset.originalPath } }),
   },
   {

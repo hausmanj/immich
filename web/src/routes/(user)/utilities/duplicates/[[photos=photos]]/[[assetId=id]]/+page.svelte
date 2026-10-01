@@ -7,13 +7,13 @@
   import DuplicatesCompareControl from './DuplicatesCompareControl.svelte';
   import { assetViewerManager } from '$lib/managers/asset-viewer-manager.svelte';
   import { featureFlagsManager } from '$lib/managers/feature-flags-manager.svelte';
-  import { languageManager } from '$lib/managers/language-manager.svelte';
   import ShortcutsModal from '$lib/modals/ShortcutsModal.svelte';
+  import DeduplicateModal from '$lib/modals/DeduplicateModal.svelte';
   import { Route } from '$lib/route';
   import { locale } from '$lib/stores/preferences.store';
   import { handleError } from '$lib/utils/handle-error';
   import type { AssetResponseDto } from '@immich/sdk';
-  import { createStack, deleteDuplicates, resolveDuplicates, updateAssets } from '@immich/sdk';
+  import { createStack, deleteDuplicates, DuplicateClassification, resolveDuplicates, updateAssets } from '@immich/sdk';
   import { Button, HStack, IconButton, modalManager, Text, toastManager } from '@immich/ui';
   import {
     mdiCheckOutline,
@@ -53,6 +53,14 @@
       { key: ['⇧', 's'], action: $t('stack_duplicates') },
     ],
   };
+
+  // Must match AUTO_RESOLVABLE_CLASSIFICATIONS on the server: proven identical bytes, or proven
+  // identical decoded pixels. Everything weaker is review evidence and the server will refuse it.
+  const AUTO_RESOLVABLE = new Set<DuplicateClassification>([
+    DuplicateClassification.Exact,
+    DuplicateClassification.ContentIdentical,
+    DuplicateClassification.HighConfidenceDuplicate,
+  ]);
 
   let duplicates = $state(data.duplicates);
   let showMore = $state(false);
@@ -106,7 +114,9 @@
 
         const response = await resolveDuplicates({
           duplicateResolveDto: {
-            groups: [{ duplicateId, keepAssetIds, trashAssetIds: trashIds }],
+            // The user is looking at this specific group right now, which is what authorises
+            // trashing from a visual-similarity match.
+            groups: [{ duplicateId, keepAssetIds, trashAssetIds: trashIds, reviewed: true }],
           },
         });
 
@@ -126,61 +136,73 @@
   };
 
   const handleStack = async (duplicateId: string, assets: AssetResponseDto[]) => {
-    const assetIds = assets.map((asset) => asset.id);
-    await createStack({ stackCreateDto: { assetIds } });
+    const [primaryAsset, ...duplicateAssets] = assets;
+    const assetIds = duplicateAssets.map((asset) => asset.id);
+
+    await createStack({ assetBulkUpdateDto: { ids: [primaryAsset.id, ...assetIds] } });
     await updateAssets({ assetBulkUpdateDto: { ids: assetIds, duplicateId: null } });
     duplicates = duplicates.filter((duplicate) => duplicate.duplicateId !== duplicateId);
     await navigateToIndex(duplicatesIndex);
   };
 
   const handleDeduplicateAll = async () => {
-    // Use server-provided suggestedKeepAssetIds from each group
-    const idsToDelete = duplicates.flatMap((group) => {
-      const keepIds = new Set(group.suggestedKeepAssetIds);
+    const selectedGroups = await modalManager.show(DeduplicateModal, { duplicates });
+    if (!selectedGroups || selectedGroups.length === 0) {
+      return;
+    }
+
+    const idsToDelete = selectedGroups.flatMap((group) => {
+      const keepIds = new Set(
+        group.suggestedKeepAssetIds?.length > 0 ? group.suggestedKeepAssetIds : [group.assets[0]?.id],
+      );
       return group.assets.map((asset) => asset.id).filter((id) => !keepIds.has(id));
     });
 
-    let prompt, confirmText;
-    if (featureFlagsManager.value.trash) {
-      prompt = $t('bulk_trash_duplicates_confirmation', { values: { count: idsToDelete.length } });
-      confirmText = $t('confirm');
-    } else {
-      prompt = $t('bulk_delete_duplicates_confirmation', { values: { count: idsToDelete.length } });
-      confirmText = $t('permanently_delete');
+    if (idsToDelete.length === 0) {
+      return;
     }
 
-    return withConfirmation(
-      async () => {
-        // Resolve all groups in a single batch request
+    toastManager.primary('Processing…');
+
+    // Resolve selected groups in batches of 100
+    const batchSize = 100;
+    let failedCount = 0;
+    for (let i = 0; i < selectedGroups.length; i += batchSize) {
+      const batch = selectedGroups.slice(i, i + batchSize);
+      try {
         const response = await resolveDuplicates({
           duplicateResolveDto: {
-            groups: duplicates.map((group) => {
-              const keepIds = new Set(group.suggestedKeepAssetIds);
+            groups: batch.map((group) => {
+              const keepAssetIds =
+                group.suggestedKeepAssetIds?.length > 0 ? group.suggestedKeepAssetIds : [group.assets[0]?.id];
+              const keepIds = new Set(keepAssetIds);
               return {
                 duplicateId: group.duplicateId,
-                keepAssetIds: group.suggestedKeepAssetIds,
+                keepAssetIds,
                 trashAssetIds: group.assets.map((asset) => asset.id).filter((id) => !keepIds.has(id)),
+                reviewed: true,
               };
             }),
           },
         });
+        failedCount += response.filter(({ success }) => !success).length;
+      } catch (error) {
+        handleError(error, $t('errors.unable_to_resolve_duplicate'));
+        return;
+      }
+    }
 
-        // Count failures and show appropriate message
-        const failedCount = response.filter(({ success }) => !success).length;
-        if (failedCount > 0) {
-          toastManager.danger($t('errors.unable_to_resolve_duplicate'));
-        }
+    if (failedCount > 0) {
+      toastManager.danger($t('errors.unable_to_resolve_duplicate'));
+    }
 
-        duplicates = [];
+    const resolvedIds = new Set(selectedGroups.map(({ duplicateId }) => duplicateId));
+    duplicates = duplicates.filter(({ duplicateId }) => !resolvedIds.has(duplicateId));
 
-        deletedNotification(idsToDelete.length);
+    deletedNotification(idsToDelete.length);
 
-        page.url.searchParams.delete('index');
-        await goto(Route.duplicatesUtility());
-      },
-      prompt,
-      confirmText,
-    );
+    page.url.searchParams.delete('index');
+    await goto(Route.duplicatesUtility());
   };
 
   const handleKeepAll = async () => {
@@ -256,14 +278,18 @@
   <div>
     {#if duplicates && duplicates.length > 0}
       <Text size="small" color="muted" class="mb-4">
-        {$t('duplicates_description')}
-        <LinkToDocs href="https://docs.immich.app/features/duplicates-utility" />
+        <p>{$t('duplicates_description')} <LinkToDocs href="https://docs.immich.app/features/duplicates-utility" /></p>
       </Text>
 
       {#key duplicates[duplicatesIndex].duplicateId}
         <DuplicatesCompareControl
           assets={duplicates[duplicatesIndex].assets}
+          classification={duplicates[duplicatesIndex].classification}
           suggestedKeepAssetIds={duplicates[duplicatesIndex].suggestedKeepAssetIds}
+          betterQualityOutsideOriginals={duplicates[duplicatesIndex].betterQualityOutsideOriginals}
+          betterQualityAssetIds={duplicates[duplicatesIndex].betterQualityAssetIds}
+          hasSuspectDate={duplicates[duplicatesIndex].hasSuspectDate}
+          suspectAssetIds={duplicates[duplicatesIndex].suspectAssetIds}
           bind:showMore
           onResolve={(duplicateAssetIds, trashIds) =>
             handleResolve(duplicates[duplicatesIndex].duplicateId, duplicateAssetIds, trashIds)}
@@ -274,7 +300,8 @@
             <div class="flex text-xs text-black">
               <Button
                 size="small"
-                leadingIcon={languageManager.rtl ? mdiPageLast : mdiPageFirst}
+                leadingIcon={mdiPageFirst}
+                color="primary"
                 class="flex place-items-center gap-2 rounded-s-full px-2 sm:px-4"
                 onclick={handleFirst}
                 disabled={duplicatesIndex === 0}
@@ -283,7 +310,8 @@
               </Button>
               <Button
                 size="small"
-                leadingIcon={languageManager.rtl ? mdiChevronRight : mdiChevronLeft}
+                leadingIcon={mdiChevronLeft}
+                color="primary"
                 class="flex place-items-center gap-2 rounded-e-full px-2 sm:px-4"
                 onclick={handlePrevious}
                 disabled={duplicatesIndex === 0}
@@ -297,7 +325,8 @@
             <div class="flex text-xs text-black">
               <Button
                 size="small"
-                trailingIcon={languageManager.rtl ? mdiChevronLeft : mdiChevronRight}
+                trailingIcon={mdiChevronRight}
+                color="primary"
                 class="flex place-items-center gap-2 rounded-s-full px-2 sm:px-4"
                 onclick={handleNext}
                 disabled={duplicatesIndex === duplicates.length - 1}
@@ -306,7 +335,8 @@
               </Button>
               <Button
                 size="small"
-                trailingIcon={languageManager.rtl ? mdiPageFirst : mdiPageLast}
+                trailingIcon={mdiPageLast}
+                color="primary"
                 class="flex place-items-center gap-2 rounded-e-full px-2 sm:px-4"
                 onclick={handleLast}
                 disabled={duplicatesIndex === duplicates.length - 1}

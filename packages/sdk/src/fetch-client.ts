@@ -1680,6 +1680,13 @@ export type DownloadResponseDto = {
     /** Total size in bytes */
     totalSize: number;
 };
+export enum DuplicateClassification {
+    Unanalyzed = "unanalyzed",
+    Exact = "exact",
+    ContentIdentical = "content_identical",
+    HighConfidenceDuplicate = "high_confidence_duplicate",
+    PossibleDuplicate = "possible_duplicate"
+}
 export type DuplicateResponseDto = {
     /** Duplicate assets */
     assets: AssetResponseDto[];
@@ -1687,6 +1694,11 @@ export type DuplicateResponseDto = {
     duplicateId: string;
     /** Suggested asset IDs to keep based on file size and EXIF data */
     suggestedKeepAssetIds: string[];
+    classification?: DuplicateClassification;
+    betterQualityOutsideOriginals?: boolean;
+    betterQualityAssetIds?: string[];
+    hasSuspectDate?: boolean;
+    suspectAssetIds?: string[];
 };
 export type DuplicateResolveGroupDto = {
     duplicateId: string;
@@ -1694,6 +1706,7 @@ export type DuplicateResolveGroupDto = {
     keepAssetIds: string[];
     /** Asset IDs to trash or delete */
     trashAssetIds: string[];
+    reviewed?: boolean;
 };
 export type DuplicateResolveDto = {
     /** List of duplicate groups to resolve */

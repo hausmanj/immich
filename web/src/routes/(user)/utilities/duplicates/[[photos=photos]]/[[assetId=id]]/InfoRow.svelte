@@ -4,24 +4,31 @@
 
   interface Props {
     icon: string;
-    children: Snippet;
-    title: string;
+    children?: Snippet;
+    borderBottom?: boolean;
+    title?: string;
     tooltip?: string;
   }
 
-  let { icon, children, title, tooltip }: Props = $props();
+  let { icon, children, borderBottom = true, title, tooltip }: Props = $props();
 </script>
 
-<div class="grid w-full grid-cols-[20px_auto_1fr] gap-1 overflow-hidden px-2 py-1.5" title={title ?? tooltip}>
-  <Icon {icon} size="16" class="self-center text-dark/25" />
+<div
+  class="grid w-full grid-cols-[20px_auto_1fr] overflow-hidden px-1 py-0.5"
+  class:border-b={borderBottom}
+  title={tooltip ?? title}
+>
+  <Icon {icon} size="16" class="self-start pt-0.5 text-dark/25" />
 
-  <Text size="tiny" class="self-center truncate pe-1 text-immich-fg/40 dark:text-immich-dark-fg/40">
-    {title}
-  </Text>
+  {#if title}
+    <Text size="tiny" class="self-start pt-0.5 truncate px-1 pr-2 text-immich-fg/40 dark:text-immich-dark-fg/40">
+      {title}
+    </Text>
+  {/if}
 
-  <div class="justify-self-end overflow-hidden rounded-sm text-end transition-colors">
-    <Text size="tiny" class="break-all">
-      {@render children()}
+  <div class="justify-self-end overflow-hidden rounded-sm px-1 text-end transition-colors max-w-full">
+    <Text size="tiny" class="break-all [overflow-wrap:anywhere]">
+      {@render children?.()}
     </Text>
   </div>
 </div>

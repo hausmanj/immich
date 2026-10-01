@@ -4,9 +4,17 @@
   import { getAllMetadataItems, type DifferingMetadataFields } from '$lib/utils/duplicate-utils';
   import { getAltText } from '$lib/utils/thumbnail-util';
   import { toTimelineAsset } from '$lib/utils/timeline-util';
+  import { getAssetResolution, getFileSize } from '$lib/utils/asset-utils';
   import { getAllAlbums, type AssetResponseDto } from '@immich/sdk';
   import { Icon } from '@immich/ui';
-  import { mdiBookmarkOutline, mdiHeart, mdiImageMultipleOutline, mdiMagnifyPlus } from '@mdi/js';
+  import {
+    mdiBookmarkOutline,
+    mdiFitToScreen,
+    mdiHeart,
+    mdiImageMultipleOutline,
+    mdiMagnifyPlus,
+    mdiWeightKilogram,
+  } from '@mdi/js';
   import { t } from 'svelte-i18n';
   import InfoRow from './InfoRow.svelte';
 
@@ -18,6 +26,11 @@
     differingMetadataFields: DifferingMetadataFields;
     showMore?: boolean;
     initialVisibleCount?: number;
+    isBetterQuality?: boolean;
+    isSuspectDate?: boolean;
+    groupHasBetterQuality?: boolean;
+    isOriginals?: boolean;
+    isUploadsMacbookPro?: boolean;
   }
 
   let {
@@ -28,6 +41,11 @@
     differingMetadataFields,
     showMore = false,
     initialVisibleCount = 5,
+    isBetterQuality = false,
+    isSuspectDate = false,
+    groupHasBetterQuality = false,
+    isOriginals = false,
+    isUploadsMacbookPro = false,
   }: Props = $props();
 
   const listFormat = $derived(new Intl.ListFormat($lang));
@@ -35,12 +53,13 @@
 
   const visibleMetadataItems = $derived(
     getAllMetadataItems(asset, $t, $locale)
+      .filter(({ keys }) => !(keys as readonly string[]).includes('fileSize') && !(keys as readonly string[]).includes('resolution'))
       .filter(({ keys }) => keys.some((k) => differingMetadataFields[k]))
       .slice(0, showMore ? undefined : initialVisibleCount),
   );
 </script>
 
-<div class="min-w-60 flex-1 overflow-hidden rounded-lg border transition-colors">
+<div class="min-w-60 flex-1 rounded-lg border transition-colors">
   <div class="relative w-full">
     <button
       type="button"
@@ -53,7 +72,7 @@
       <img
         src={getAssetMediaUrl({ id: asset.id })}
         alt={$getAltText(toTimelineAsset(asset))}
-        class="h-60 w-full object-cover"
+        class="h-60 w-full rounded-t-md object-cover"
         draggable="false"
       />
 
@@ -73,8 +92,33 @@
         {isSelected ? $t('keep') : $t('to_trash')}
       </div>
 
-      <!-- EXTERNAL LIBRARY / STACK COUNT CHIP -->
-      <div class="absolute inset-e-3 top-2">
+      <!-- STATUS & LIBRARY CHIPS -->
+      <div class="absolute inset-e-3 top-2 flex flex-col items-end gap-1">
+        {#if isBetterQuality}
+          <div class="rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-2 py-1 text-xs font-semibold text-white shadow-md">
+            🌟 Better Quality (Migrate)
+          </div>
+        {:else if isOriginals && groupHasBetterQuality}
+          <div class="rounded-xl bg-amber-600 px-2 py-1 text-xs font-semibold text-white shadow-md">
+            📁 Originals (Lower Quality)
+          </div>
+        {:else if isOriginals}
+          <div class="rounded-xl bg-emerald-600 px-2 py-1 text-xs font-semibold text-white shadow-md">
+            📁 Originals (Preferred)
+          </div>
+        {:else if isUploadsMacbookPro}
+          <div class="rounded-xl bg-indigo-600 px-2 py-1 text-xs font-semibold text-white shadow-md">
+            💻 MacBook Pro Upload
+          </div>
+        {/if}
+        {#if isSuspectDate}
+          <div
+            class="rounded-xl bg-rose-600 px-2 py-1 text-xs font-semibold text-white shadow-md"
+            title="Capture date in May-Aug 2015 or 2021 affected by Claude EXIF error"
+          >
+            ⚠️ Suspect Date
+          </div>
+        {/if}
         {#if isFromExternalLibrary}
           <div class="rounded-xl bg-immich-primary/90 px-2 py-1 text-xs text-white">
             {$t('external')}
@@ -102,10 +146,18 @@
   </div>
 
   <div
-    class="grid place-items-start divide-y text-sm transition-colors {isSelected
+    class="grid place-items-start gap-y-2 rounded-b-lg py-2 text-sm transition-colors {isSelected
       ? 'bg-success/15 dark:bg-[#001a06]'
       : 'bg-transparent'}"
   >
+    <!-- Always visible essential comparison metrics -->
+    <InfoRow icon={mdiWeightKilogram} title={$t('file_size')}>
+      <span class="font-semibold text-gray-900 dark:text-gray-100">{getFileSize(asset)}</span>
+    </InfoRow>
+    <InfoRow icon={mdiFitToScreen} title={$t('resolution')}>
+      <span class="font-semibold text-gray-900 dark:text-gray-100">{getAssetResolution(asset)}</span>
+    </InfoRow>
+
     {#each visibleMetadataItems as { icon, title, render, tooltip, keys } (keys[0])}
       <InfoRow {icon} {title} {tooltip}>
         {render}
@@ -113,7 +165,7 @@
     {/each}
 
     <!-- Albums always shown -->
-    <InfoRow icon={mdiBookmarkOutline} title={$t('albums')}>
+    <InfoRow icon={mdiBookmarkOutline} borderBottom={false} title={$t('albums')}>
       {#await getAllAlbums({ assetId: asset.id })}
         {$t('scanning_for_album')}
       {:then albums}

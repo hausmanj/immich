@@ -12,22 +12,57 @@
     type DifferingMetadataFields,
   } from '$lib/utils/duplicate-utils';
   import { navigate } from '$lib/utils/navigation';
-  import { getAssetInfo, type AssetResponseDto } from '@immich/sdk';
+  import { DuplicateClassification, getAssetInfo, type AssetResponseDto } from '@immich/sdk';
   import { Button, Icon } from '@immich/ui';
-  import { mdiCheck, mdiChevronDown, mdiChevronUp, mdiImageMultipleOutline, mdiTrashCanOutline } from '@mdi/js';
+  import {
+    mdiAlert,
+    mdiCalendarAlert,
+    mdiCheck,
+    mdiChevronDown,
+    mdiChevronUp,
+    mdiEyeCheckOutline,
+    mdiImageMultipleOutline,
+    mdiTrashCanOutline,
+  } from '@mdi/js';
   import { onDestroy, onMount } from 'svelte';
   import { t } from 'svelte-i18n';
   import { SvelteSet } from 'svelte/reactivity';
 
   interface Props {
     assets: AssetResponseDto[];
+    classification?: DuplicateClassification;
     suggestedKeepAssetIds: string[];
+    betterQualityOutsideOriginals?: boolean;
+    betterQualityAssetIds?: string[];
+    hasSuspectDate?: boolean;
+    suspectAssetIds?: string[];
     showMore: boolean;
     onResolve: (duplicateAssetIds: string[], trashIds: string[]) => void;
     onStack: (assets: AssetResponseDto[]) => void;
   }
 
-  let { assets, suggestedKeepAssetIds, onResolve, onStack, showMore = $bindable() }: Props = $props();
+  let {
+    assets,
+    classification = DuplicateClassification.PossibleDuplicate,
+    suggestedKeepAssetIds,
+    betterQualityOutsideOriginals = false,
+    betterQualityAssetIds = [],
+    hasSuspectDate = false,
+    suspectAssetIds = [],
+    onResolve,
+    onStack,
+    showMore = $bindable(),
+  }: Props = $props();
+
+  const EVIDENCE = {
+    [DuplicateClassification.Exact]: { key: 'duplicate_checksum_match', reviewOnly: false },
+    [DuplicateClassification.ContentIdentical]: { key: 'duplicate_content_identical', reviewOnly: false },
+    [DuplicateClassification.HighConfidenceDuplicate]: { key: 'duplicate_high_confidence', reviewOnly: true },
+    [DuplicateClassification.PossibleDuplicate]: { key: 'duplicate_similarity_only', reviewOnly: true },
+    [DuplicateClassification.Unanalyzed]: { key: 'duplicate_unanalyzed', reviewOnly: true },
+  } as const;
+
+  const evidence = $derived(EVIDENCE[classification] ?? EVIDENCE[DuplicateClassification.PossibleDuplicate]);
   // eslint-disable-next-line svelte/no-unnecessary-state-wrap
   let selectedAssetIds = $state(new SvelteSet<string>());
   let trashCount = $derived(assets.length - selectedAssetIds.size);
@@ -37,6 +72,28 @@
   const differingMetadataFields: DifferingMetadataFields = $derived(computeDifferingMetadataFields(assets));
   const differingCount = $derived(countDifferingMetadataItems(differingMetadataFields));
   const hasMore = $derived(differingCount > InitialVisibleCount);
+
+  const comparisonSummary = $derived((() => {
+    if (assets.length < 2) return null;
+    const a = assets[0];
+    const b = assets[1];
+    const dimA = a.width && a.height ? `${a.width}×${a.height}` : null;
+    const dimB = b.width && b.height ? `${b.width}×${b.height}` : null;
+    const mpA = a.width && a.height ? `${((a.width * a.height) / 1e6).toFixed(1)} MP` : '';
+    const mpB = b.width && b.height ? `${((b.width * b.height) / 1e6).toFixed(1)} MP` : '';
+
+    let isThumb = false;
+    let scalePercent = '';
+    if (a.width && a.height && b.width && b.height) {
+      const wRatio = Math.min(a.width, b.width) / Math.max(a.width, b.width);
+      if (wRatio < 0.6) {
+        isThumb = true;
+        scalePercent = `${(wRatio * 100).toFixed(0)}% scale`;
+      }
+    }
+
+    return { dimA, dimB, mpA, mpB, isThumb, scalePercent };
+  })());
 
   onMount(() => {
     if (suggestedKeepAssetIds.length > 0) {
@@ -118,6 +175,51 @@
 />
 
 <div class="px-0.2 mx-auto mb-4 max-w-5xl rounded-3xl border border-gray-300 py-6 dark:border-2 dark:border-gray-700">
+  <!-- WHY THIS GROUP EXISTS & COMPARISON DETAILS -->
+  <div class="mb-4 flex flex-col gap-1.5 px-6 text-xs">
+    <div class="flex items-center gap-2">
+      <Icon icon={evidence.reviewOnly ? mdiEyeCheckOutline : mdiCheck} size="18" class="shrink-0" />
+      <span class="font-medium text-gray-700 dark:text-gray-200">{$t(evidence.key)}</span>
+    </div>
+    {#if comparisonSummary}
+      <div class="flex flex-wrap items-center gap-2 pt-1 text-gray-500 dark:text-gray-400">
+        {#if comparisonSummary.isThumb}
+          <span class="rounded bg-amber-100 px-2 py-0.5 font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-200">
+            Preview / Thumbnail Match ({comparisonSummary.scalePercent})
+          </span>
+        {/if}
+        {#if comparisonSummary.dimA && comparisonSummary.dimB}
+          <span class="rounded bg-gray-100 px-2 py-0.5 font-mono dark:bg-gray-800">
+            {comparisonSummary.dimA} ({comparisonSummary.mpA}) vs {comparisonSummary.dimB} ({comparisonSummary.mpB})
+          </span>
+        {/if}
+      </div>
+    {/if}
+    {#if betterQualityOutsideOriginals}
+      <div class="mt-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200">
+        <div class="flex items-center gap-2 font-semibold">
+          <Icon icon={mdiAlert} size="18" class="text-amber-600 dark:text-amber-400" />
+          <span>Higher Quality Copy Outside Originals!</span>
+        </div>
+        <p class="mt-1 text-amber-800 dark:text-amber-300">
+          A duplicate outside the originals folder has higher resolution or quality than the copy in originals. Both copies are preserved to prevent deletion so you can migrate the higher-quality file to originals manually.
+        </p>
+      </div>
+    {/if}
+
+    {#if hasSuspectDate}
+      <div class="mt-2 rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs text-rose-900 dark:border-rose-700/60 dark:bg-rose-950/40 dark:text-rose-200">
+        <div class="flex items-center gap-2 font-semibold">
+          <Icon icon={mdiCalendarAlert} size="18" class="text-rose-600 dark:text-rose-400" />
+          <span>Suspect EXIF Date (May–August 2015 or 2021)</span>
+        </div>
+        <p class="mt-1 text-rose-800 dark:text-rose-300">
+          Photo(s) in this group have capture dates affected by a previous Claude EXIF batch date error. Verify timestamps before archiving.
+        </p>
+      </div>
+    {/if}
+  </div>
+
   <div class="mb-4 flex w-full flex-wrap place-content-end justify-between gap-y-6 px-6">
     <!-- MARK ALL BUTTONS -->
     <div class="flex text-xs text-black">
@@ -180,13 +282,18 @@
           {differingMetadataFields}
           {showMore}
           initialVisibleCount={InitialVisibleCount}
+          isBetterQuality={betterQualityAssetIds.includes(asset.id)}
+          isSuspectDate={suspectAssetIds.includes(asset.id)}
+          groupHasBetterQuality={betterQualityOutsideOriginals}
+          isOriginals={/\/(originals|originals_clean)\b/i.test(asset.originalPath)}
+          isUploadsMacbookPro={/\/uploads_macbookpro\b/i.test(asset.originalPath)}
         />
       {/each}
     </div>
   </div>
 
   {#if hasMore}
-    <div class="flex justify-center">
+    <div class="flex justify-center pb-2">
       <Button size="small" variant="ghost" color="secondary" onclick={() => (showMore = !showMore)}>
         <Icon icon={showMore ? mdiChevronUp : mdiChevronDown} size="18" class="me-1" />
         {showMore
