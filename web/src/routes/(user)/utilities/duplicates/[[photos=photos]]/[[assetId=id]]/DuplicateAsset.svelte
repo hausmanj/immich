@@ -31,6 +31,7 @@
     groupHasBetterQuality?: boolean;
     isOriginals?: boolean;
     isUploadsMacbookPro?: boolean;
+    hasLocationDescription?: boolean;
   }
 
   let {
@@ -46,6 +47,7 @@
     groupHasBetterQuality = false,
     isOriginals = false,
     isUploadsMacbookPro = false,
+    hasLocationDescription = false,
   }: Props = $props();
 
   const listFormat = $derived(new Intl.ListFormat($lang));
@@ -109,6 +111,14 @@
         {:else if isUploadsMacbookPro}
           <div class="rounded-xl bg-indigo-600 px-2 py-1 text-xs font-semibold text-white shadow-md">
             💻 MacBook Pro Upload
+          </div>
+        {/if}
+        {#if hasLocationDescription}
+          <div
+            class="rounded-xl bg-teal-600 px-2 py-1 text-xs font-semibold text-white shadow-md"
+            title="Folder path contains specific location or album organization"
+          >
+            📍 Location Subfolder
           </div>
         {/if}
         {#if isSuspectDate}

@@ -563,9 +563,61 @@ export const isAssetDateSuspect = (asset: {
 const getFileSize = (asset: AssetResponseDto): number => asset.exifInfo?.fileSizeInByte ?? 0;
 
 /**
- * The pre-existing upstream rule: largest file wins, EXIF count breaks the tie, last of the
- * remaining equals wins. Kept as the final fallback so groups with no distinguishing evidence
- * resolve exactly as they always did instead of churning to an arbitrary new answer.
+ * Matches common camera/hardware dump directories, mounts, or date-only folders
+ * that do not represent curated human-named location or event organization.
+ */
+const GENERIC_SEGMENT_REGEX =
+  /^(mnt|volume\d+(_\w+)?|photosync|docker|upload[s]?|usr|app|var|data|home|users|originals(_clean)?|uploads_macbookpro|uploads_immich|master photo library|mainphoto|laptop backup|photos|dcim|\d{3}[a-z0-9_]+|camera(_roll)?|sdcard|internal_storage|\d{4}|\d{2}|\d{4}[-_.]\d{2}([-_.]\d{2})?|\d{8}|(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|january|february|march|april|june|july|august|september|october|november|december))$/i;
+
+export interface FolderOrganizationScore {
+  descriptiveSegmentsCount: number;
+  depth: number;
+  descriptiveLength: number;
+}
+
+/**
+ * Quantifies how specifically organized an asset's folder path is.
+ * Prefers files situated in descriptive geographical/thematic subfolders
+ * (e.g. ".../aiAfrica/4mWestern Sahara/IMG_4657.JPG") over files sitting
+ * unorganized at the root of a library or year folder.
+ */
+export const getFolderOrganizationScore = (filePath?: string): FolderOrganizationScore => {
+  if (!filePath) {
+    return { descriptiveSegmentsCount: 0, depth: 0, descriptiveLength: 0 };
+  }
+
+  const normalized = filePath.replace(/\\/g, '/');
+  const lastSlash = normalized.lastIndexOf('/');
+  const dirPath = lastSlash === -1 ? '' : normalized.slice(0, lastSlash);
+  if (!dirPath) {
+    return { descriptiveSegmentsCount: 0, depth: 0, descriptiveLength: 0 };
+  }
+
+  const segments = dirPath.split('/').filter(Boolean);
+  let descriptiveCount = 0;
+  let descriptiveLength = 0;
+
+  for (const segment of segments) {
+    const trimmed = segment.trim();
+    if (!GENERIC_SEGMENT_REGEX.test(trimmed)) {
+      const letters = trimmed.match(/[a-zA-Z]/g);
+      if (letters && letters.length >= 2) {
+        descriptiveCount++;
+        descriptiveLength += trimmed.length;
+      }
+    }
+  }
+
+  return {
+    descriptiveSegmentsCount: descriptiveCount,
+    depth: segments.length,
+    descriptiveLength,
+  };
+};
+
+/**
+ * The pre-existing upstream rule with tie-breaking: largest file wins, EXIF count breaks the tie,
+ * folder organization breaks the tie, and last of the remaining equals wins.
  */
 const suggestBySize = (assets: AssetResponseDto[]): AssetResponseDto | undefined => {
   if (assets.length === 0) {
@@ -578,6 +630,22 @@ const suggestBySize = (assets: AssetResponseDto[]): AssetResponseDto | undefined
 
   if (candidates.length >= 2) {
     candidates = candidates.toSorted((a, b) => getExifCount(a) - getExifCount(b));
+    const highestExif = getExifCount(candidates.at(-1)!);
+    candidates = candidates.filter((asset) => getExifCount(asset) === highestExif);
+  }
+
+  if (candidates.length >= 2) {
+    candidates = candidates.toSorted((a, b) => {
+      const orgA = getFolderOrganizationScore(a.originalPath);
+      const orgB = getFolderOrganizationScore(b.originalPath);
+      if (orgA.descriptiveSegmentsCount !== orgB.descriptiveSegmentsCount) {
+        return orgA.descriptiveSegmentsCount - orgB.descriptiveSegmentsCount;
+      }
+      if (orgA.depth !== orgB.depth) {
+        return orgA.depth - orgB.depth;
+      }
+      return orgA.descriptiveLength - orgB.descriptiveLength;
+    });
   }
 
   return candidates.at(-1);
@@ -593,14 +661,21 @@ const pickBestRanked = (
   sizeTolerance = 0.01,
 ): AssetResponseDto => {
   const albumCountOf = (asset: AssetResponseDto) => albumCounts?.get(asset.id) ?? 0;
-  const rank = (asset: AssetResponseDto): number[] => [
-    albumCountOf(asset) > 0 ? 1 : 0,
-    getPathTier(asset, preferred, staging, originals, macbookPro),
-    asset.isFavorite ? 1 : 0,
-    // eslint-disable-next-line eqeqeq
-    asset.exifInfo?.latitude != null && asset.exifInfo?.longitude != null ? 1 : 0,
-    getExifCount(asset),
-  ];
+  const rank = (asset: AssetResponseDto): number[] => {
+    const org = getFolderOrganizationScore(asset.originalPath);
+    return [
+      albumCountOf(asset) > 0 ? 1 : 0,
+      getPathTier(asset, preferred, staging, originals, macbookPro),
+      asset.isFavorite ? 1 : 0,
+      // eslint-disable-next-line eqeqeq
+      asset.exifInfo?.latitude != null && asset.exifInfo?.longitude != null ? 1 : 0,
+      getExifCount(asset) > 0 ? 1 : 0,
+      org.descriptiveSegmentsCount,
+      org.depth,
+      getExifCount(asset),
+      org.descriptiveLength,
+    ];
+  };
 
   const ranked = candidates.map((asset) => ({ asset, rank: rank(asset) }));
   let bestRank = ranked[0].rank;

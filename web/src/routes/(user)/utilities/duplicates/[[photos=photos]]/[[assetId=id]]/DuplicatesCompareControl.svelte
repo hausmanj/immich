@@ -9,6 +9,7 @@
   import {
     computeDifferingMetadataFields,
     countDifferingMetadataItems,
+    getFolderOrganizationScore,
     type DifferingMetadataFields,
   } from '$lib/utils/duplicate-utils';
   import { navigate } from '$lib/utils/navigation';
@@ -93,6 +94,31 @@
     }
 
     return { dimA, dimB, mpA, mpB, isThumb, scalePercent };
+  })());
+
+  const locationOrganizedAssetIds = $derived((() => {
+    if (assets.length < 2) return new Set<string>();
+    const scored = assets.map((a) => ({
+      id: a.id,
+      score: getFolderOrganizationScore(a.originalPath),
+    }));
+    const maxDescriptive = Math.max(...scored.map((s) => s.score.descriptiveSegmentsCount));
+    const minDescriptive = Math.min(...scored.map((s) => s.score.descriptiveSegmentsCount));
+    const maxDepth = Math.max(...scored.map((s) => s.score.depth));
+    const minDepth = Math.min(...scored.map((s) => s.score.depth));
+
+    if (maxDescriptive > minDescriptive || (maxDescriptive > 0 && maxDepth > minDepth)) {
+      return new Set(
+        scored
+          .filter(
+            (s) =>
+              s.score.descriptiveSegmentsCount === maxDescriptive &&
+              (maxDescriptive > minDescriptive || s.score.depth === maxDepth),
+          )
+          .map((s) => s.id),
+      );
+    }
+    return new Set<string>();
   })());
 
   onMount(() => {
@@ -287,6 +313,7 @@
           groupHasBetterQuality={betterQualityOutsideOriginals}
           isOriginals={/\/(originals|originals_clean)\b/i.test(asset.originalPath)}
           isUploadsMacbookPro={/\/uploads_macbookpro\b/i.test(asset.originalPath)}
+          hasLocationDescription={locationOrganizedAssetIds.has(asset.id)}
         />
       {/each}
     </div>

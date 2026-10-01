@@ -307,3 +307,47 @@ export const computeDifferingMetadataFields = (assets: AssetResponseDto[]): Diff
 
   return diffs;
 };
+
+const GENERIC_SEGMENT_REGEX =
+  /^(mnt|volume\d+(_\w+)?|photosync|docker|upload[s]?|usr|app|var|data|home|users|originals(_clean)?|uploads_macbookpro|uploads_immich|master photo library|mainphoto|laptop backup|photos|dcim|\d{3}[a-z0-9_]+|camera(_roll)?|sdcard|internal_storage|\d{4}|\d{2}|\d{4}[-_.]\d{2}([-_.]\d{2})?|\d{8}|(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|january|february|march|april|june|july|august|september|october|november|december))$/i;
+
+export interface FolderOrganizationScore {
+  descriptiveSegmentsCount: number;
+  depth: number;
+  descriptiveLength: number;
+}
+
+export const getFolderOrganizationScore = (filePath?: string): FolderOrganizationScore => {
+  if (!filePath) {
+    return { descriptiveSegmentsCount: 0, depth: 0, descriptiveLength: 0 };
+  }
+
+  const normalized = filePath.replace(/\\/g, '/');
+  const lastSlash = normalized.lastIndexOf('/');
+  const dirPath = lastSlash === -1 ? '' : normalized.slice(0, lastSlash);
+  if (!dirPath) {
+    return { descriptiveSegmentsCount: 0, depth: 0, descriptiveLength: 0 };
+  }
+
+  const segments = dirPath.split('/').filter(Boolean);
+  let descriptiveCount = 0;
+  let descriptiveLength = 0;
+
+  for (const segment of segments) {
+    const trimmed = segment.trim();
+    if (!GENERIC_SEGMENT_REGEX.test(trimmed)) {
+      const letters = trimmed.match(/[a-zA-Z]/g);
+      if (letters && letters.length >= 2) {
+        descriptiveCount++;
+        descriptiveLength += trimmed.length;
+      }
+    }
+  }
+
+  return {
+    descriptiveSegmentsCount: descriptiveCount,
+    depth: segments.length,
+    descriptiveLength,
+  };
+};
+

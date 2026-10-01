@@ -9,6 +9,7 @@ import {
   DuplicateClassification,
   getAutoResolvable,
   getExifCount,
+  getFolderOrganizationScore,
   getKeeperScore,
   getPathTier,
   isAssetDateSuspect,
@@ -712,6 +713,43 @@ describe('duplicate utils', () => {
 
       expect(isAssetDateSuspect(suspectAsset)).toBe(true);
       expect(isAssetDateSuspect(normalAsset)).toBe(false);
+    });
+  });
+
+  describe('Folder Organization & Location Description Preference', () => {
+    it('should compute higher descriptive segments and depth for nested location subfolders', () => {
+      const nestedLocation =
+        '/mnt/originals/2003_2004 World Trip Photos for Albums/aiAfrica/4mWestern Sahara/IMG_4657.JPG';
+      const rootFolder = '/mnt/originals/2003_2004 World Trip Photos for Albums/IMG_4657.JPG';
+
+      const scoreNested = getFolderOrganizationScore(nestedLocation);
+      const scoreRoot = getFolderOrganizationScore(rootFolder);
+
+      expect(scoreNested.descriptiveSegmentsCount).toBe(3); // 2003_2004 World Trip..., aiAfrica, 4mWestern Sahara
+      expect(scoreRoot.descriptiveSegmentsCount).toBe(1); // 2003_2004 World Trip...
+      expect(scoreNested.depth).toBe(5);
+      expect(scoreRoot.depth).toBe(3);
+      expect(scoreNested.descriptiveLength).toBeGreaterThan(scoreRoot.descriptiveLength);
+    });
+
+    it('should prefer keeping the photo with extra location description over root photo with same size and resolution', () => {
+      const locationPhoto = at(
+        createAsset('location-photo', 742_317),
+        '/mnt/originals/2003_2004 World Trip Photos for Albums/aiAfrica/4mWestern Sahara/IMG_4657.JPG',
+        { width: 2272, height: 1704 },
+      );
+      const rootPhoto = at(
+        createAsset('root-photo', 742_317),
+        '/mnt/originals/2003_2004 World Trip Photos for Albums/IMG_4657.JPG',
+        { width: 2272, height: 1704 },
+      );
+
+      // Regardless of array order, locationPhoto must be chosen as the keeper!
+      expect(suggestDuplicate([rootPhoto, locationPhoto], preference)?.id).toBe('location-photo');
+      expect(suggestDuplicate([locationPhoto, rootPhoto], preference)?.id).toBe('location-photo');
+
+      const keepIds = suggestDuplicateKeepAssetIds([rootPhoto, locationPhoto], preference);
+      expect(keepIds).toEqual(['location-photo']);
     });
   });
 });
