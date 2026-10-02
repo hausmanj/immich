@@ -99,7 +99,7 @@ export class DuplicateService extends BaseService {
         duplicateId,
         assets: mappedAssets,
         suggestedKeepAssetIds: suggestDuplicateKeepAssetIds(mappedAssets, keepPreference, albumCounts),
-        classification: classifyDuplicateGroup(mappedAssets),
+        classification: classifyDuplicateGroup(mappedAssets, undefined, { fallbackToMetadata: true }),
         betterQualityOutsideOriginals: quality.betterQualityOutsideOriginals,
         betterQualityAssetIds: quality.betterQualityAssetIds,
         hasSuspectDate: suspectAssetIds.length > 0,

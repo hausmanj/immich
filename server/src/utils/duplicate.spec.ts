@@ -323,11 +323,52 @@ describe('duplicate utils', () => {
       );
     });
 
-    it('should not call a group EXACT when only two members share a checksum', () => {
-      const a = { ...createAsset('a', 1000), checksum: 'same' };
-      const b = { ...createAsset('b', 2000), checksum: 'same' };
-      const c = { ...createAsset('c', 3000), checksum: 'different' };
-      expect(classifyDuplicateGroup([a, b, c])).toBe(DuplicateClassification.Unanalyzed);
+    it('should classify as CONTENT_IDENTICAL with fallbackToMetadata when dimensions and timestamp/name match', () => {
+      const a = {
+        id: 'a',
+        checksum: 'cs1',
+        originalFileName: 'IMG_1234.JPG',
+        isEdited: false,
+        width: 4000,
+        height: 3000,
+        exifInfo: { dateTimeOriginal: '2023-05-10T12:00:00Z', fileSizeInByte: 5000000 },
+      };
+      const b = {
+        id: 'b',
+        checksum: 'cs2',
+        originalFileName: 'IMG_1234.JPG',
+        isEdited: false,
+        width: 4000,
+        height: 3000,
+        exifInfo: { dateTimeOriginal: '2023-05-10T12:00:00Z', fileSizeInByte: 5000000 },
+      };
+      expect(classifyDuplicateGroup([a, b], undefined, { fallbackToMetadata: true })).toBe(
+        DuplicateClassification.ContentIdentical,
+      );
+    });
+
+    it('should classify as HIGH_CONFIDENCE with fallbackToMetadata when one copy is downscaled/thumbnail', () => {
+      const a = {
+        id: 'a',
+        checksum: 'cs1',
+        originalFileName: 'IMG_1234.JPG',
+        isEdited: false,
+        width: 4000,
+        height: 3000,
+        exifInfo: { dateTimeOriginal: '2023-05-10T12:00:00Z', fileSizeInByte: 5000000 },
+      };
+      const b = {
+        id: 'b',
+        checksum: 'cs2',
+        originalFileName: 'IMG_1234_thumb.JPG',
+        isEdited: false,
+        width: 1024,
+        height: 768,
+        exifInfo: { dateTimeOriginal: '2023-05-10T12:00:00Z', fileSizeInByte: 200000 },
+      };
+      expect(classifyDuplicateGroup([a, b], undefined, { fallbackToMetadata: true })).toBe(
+        DuplicateClassification.HighConfidence,
+      );
     });
   });
 

@@ -32,27 +32,27 @@ export const getExifCount = (asset: AssetResponseDto): number => {
  */
 export enum DuplicateClassification {
   /** Every member shares the same SHA-1. The same bytes. */
-  Exact = 'EXACT',
+  Exact = 'exact',
   /**
    * Two members decode to identical full-resolution, orientation-normalized pixels. Different
    * containers or metadata, the same picture -- a Google Takeout re-encode of an original lands
    * here. Resolvable unattended, like Exact.
    */
-  ContentIdentical = 'CONTENT_IDENTICAL',
+  ContentIdentical = 'content_identical',
   /**
    * Perceptual hashes within {@link HIGH_CONFIDENCE_MAX_DISTANCE} of each other, with matching
    * aspect ratio, comparable dimensions, agreeing motion-photo state, and no burst/edit marker on
    * either side.
    */
-  HighConfidence = 'HIGH_CONFIDENCE_DUPLICATE',
+  HighConfidence = 'high_confidence_duplicate',
   /** Fingerprinted, but the evidence does not support calling them the same picture. */
-  Possible = 'POSSIBLE_DUPLICATE',
+  Possible = 'possible_duplicate',
   /**
    * Not yet fingerprinted. Distinct from Possible on purpose: "we have not looked" and "we looked
    * and it is not convincing" are different answers, and collapsing them tells the user 50,000
    * groups need their eyes when most are simply still queued.
    */
-  Unanalyzed = 'UNANALYZED',
+  Unanalyzed = 'unanalyzed',
 }
 
 const AUTO_RESOLVE_LEVELS: Record<DuplicateAutoResolve, DuplicateClassification[]> = {
@@ -117,40 +117,161 @@ export interface ClassifiableAsset {
   /** Video duration in milliseconds; null for stills. */
   duration?: number | null;
   localDateTime?: string | Date | null;
-  exifInfo?: { dateTimeOriginal?: string | Date | null; fps?: number | null } | null;
+  fileCreatedAt?: string | Date | null;
+  width?: number | null;
+  height?: number | null;
+  exifInfo?: {
+    dateTimeOriginal?: string | Date | null;
+    fps?: number | null;
+    fileSizeInByte?: number | null;
+    exifImageWidth?: number | null;
+    exifImageHeight?: number | null;
+  } | null;
 }
+
+const getAssetWidth = (a: ClassifiableAsset): number => a.width ?? a.exifInfo?.exifImageWidth ?? 0;
+const getAssetHeight = (a: ClassifiableAsset): number => a.height ?? a.exifInfo?.exifImageHeight ?? 0;
+const getAssetDateMs = (a: ClassifiableAsset): number => {
+  const d = a.exifInfo?.dateTimeOriginal ?? a.localDateTime ?? a.fileCreatedAt;
+  if (!d) return 0;
+  const time = typeof d === 'string' ? new Date(d).getTime() : (d as Date).getTime?.() ?? 0;
+  return isNaN(time) ? 0 : time;
+};
+const getBaseName = (fileName?: string): string => {
+  if (!fileName) return '';
+  return fileName.replace(/\.[^/.]+$/, '').toLowerCase();
+};
+
+/**
+ * Classifies duplicate assets when precomputed perceptual fingerprints are not available.
+ * Uses asset dimensions, capture timestamps, filenames, aspect ratio, duration, and file sizes.
+ */
+export const classifyDuplicateMetadata = (assets: ClassifiableAsset[]): DuplicateClassification => {
+  if (assets.length < 2) {
+    return DuplicateClassification.Exact;
+  }
+
+  let allContentIdentical = true;
+  let allHighConfidence = true;
+  let hasAnyEvidence = false;
+
+  for (let i = 0; i < assets.length; i++) {
+    for (let j = i + 1; j < assets.length; j++) {
+      const a = assets[i];
+      const b = assets[j];
+      const wa = getAssetWidth(a);
+      const ha = getAssetHeight(a);
+      const wb = getAssetWidth(b);
+      const hb = getAssetHeight(b);
+      const da = getAssetDateMs(a);
+      const db = getAssetDateMs(b);
+      const nameA = getBaseName(a.originalFileName);
+      const nameB = getBaseName(b.originalFileName);
+      const sizeA = a.exifInfo?.fileSizeInByte ?? 0;
+      const sizeB = b.exifInfo?.fileSizeInByte ?? 0;
+      const durA = a.duration ?? 0;
+      const durB = b.duration ?? 0;
+
+      let sameAspect = false;
+      if (wa > 0 && ha > 0 && wb > 0 && hb > 0) {
+        const ratioA = wa / ha;
+        const ratioB = wb / hb;
+        sameAspect = Math.abs(ratioA / ratioB - 1) <= 0.03;
+      }
+
+      const sameDims = wa > 0 && ha > 0 && wa === wb && ha === hb;
+      const sameDate = da > 0 && db > 0 && Math.abs(da - db) <= 5000;
+      const sameName = nameA.length > 0 && nameA === nameB;
+      const sameSize = sizeA > 0 && sizeB > 0 && sizeA === sizeB;
+      const sameDuration = durA > 0 && durB > 0 && Math.abs(durA - durB) <= 1000;
+
+      let isThumb = false;
+      if (wa > 0 && ha > 0 && wb > 0 && hb > 0) {
+        const wRatio = Math.min(wa, wb) / Math.max(wa, wb);
+        const hRatio = Math.min(ha, hb) / Math.max(ha, hb);
+        if (wRatio < 0.8 || hRatio < 0.8) {
+          isThumb = true;
+        }
+      }
+      if (
+        /thumb/i.test(a.originalFileName) ||
+        /thumb/i.test(b.originalFileName) ||
+        /UNADJUSTEDNONRAW/i.test(a.originalFileName) ||
+        /UNADJUSTEDNONRAW/i.test(b.originalFileName)
+      ) {
+        isThumb = true;
+      }
+
+      if (sameDims || sameDate || sameName || sameSize || isThumb || sameAspect || sameDuration) {
+        hasAnyEvidence = true;
+      }
+
+      if (sameDims && (sameDate || sameName || sameSize)) {
+        continue;
+      } else if (isThumb || (sameAspect && (sameDate || sameName)) || (sameDuration && (sameDate || sameName))) {
+        allContentIdentical = false;
+        continue;
+      } else if (sameAspect || sameDate || sameName) {
+        allContentIdentical = false;
+        continue;
+      } else {
+        allContentIdentical = false;
+        allHighConfidence = false;
+      }
+    }
+  }
+
+  if (!hasAnyEvidence) {
+    return DuplicateClassification.Unanalyzed;
+  }
+  if (allContentIdentical) {
+    return DuplicateClassification.ContentIdentical;
+  }
+  if (allHighConfidence) {
+    return DuplicateClassification.HighConfidence;
+  }
+  return DuplicateClassification.Possible;
+};
 
 /**
  * How strong the evidence is that the members of a duplicate group are the same picture.
  *
- * Escalates only as far as the evidence allows, and stops at Possible whenever fingerprints are
- * missing, errored, or flagged uninformative -- an absent fingerprint means "not yet proven", never
- * "proven different".
+ * Escalates only as far as the evidence allows. Uses precomputed perceptual fingerprints if available,
+ * or falls back to metadata-based classification (dimensions, timestamps, aspect ratio, thumbnails).
  */
 export const classifyDuplicateGroup = (
   assets: ClassifiableAsset[],
   fingerprints?: Map<string, AssetFingerprintEvidence>,
+  options?: { fallbackToMetadata?: boolean },
 ): DuplicateClassification => {
   const checksums = new Set(assets.map(({ checksum }) => checksumKey(checksum)));
   if (checksums.size === 1) {
     return DuplicateClassification.Exact;
   }
 
-  if (!fingerprints || assets.some(({ id }) => !fingerprints.get(id))) {
-    return DuplicateClassification.Unanalyzed;
-  }
+  if (fingerprints) {
+    if (assets.some(({ id }) => !fingerprints.get(id))) {
+      return DuplicateClassification.Unanalyzed;
+    }
 
-  let best = DuplicateClassification.ContentIdentical;
-  for (let i = 0; i < assets.length; i++) {
-    for (let j = i + 1; j < assets.length; j++) {
-      const pair = comparePair(assets[i], assets[j], fingerprints);
-      if (pair === DuplicateClassification.Possible) return DuplicateClassification.Possible;
-      if (pair === DuplicateClassification.HighConfidence) {
-        best = DuplicateClassification.HighConfidence;
+    let best = DuplicateClassification.ContentIdentical;
+    for (let i = 0; i < assets.length; i++) {
+      for (let j = i + 1; j < assets.length; j++) {
+        const pair = comparePair(assets[i], assets[j], fingerprints);
+        if (pair === DuplicateClassification.Possible) return DuplicateClassification.Possible;
+        if (pair === DuplicateClassification.HighConfidence) {
+          best = DuplicateClassification.HighConfidence;
+        }
       }
     }
+    return best;
   }
-  return best;
+
+  if (options?.fallbackToMetadata) {
+    return classifyDuplicateMetadata(assets);
+  }
+
+  return DuplicateClassification.Unanalyzed;
 };
 
 export interface AssetFingerprintEvidence {

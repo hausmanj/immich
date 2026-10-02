@@ -63,7 +63,18 @@
     [DuplicateClassification.Unanalyzed]: { key: 'duplicate_unanalyzed', reviewOnly: true },
   } as const;
 
-  const evidence = $derived(EVIDENCE[classification] ?? EVIDENCE[DuplicateClassification.PossibleDuplicate]);
+  const normalizeClass = (c?: string): DuplicateClassification => {
+    const s = (c ?? '').toLowerCase().replace(/_/g, '');
+    if (s === 'exact') return DuplicateClassification.Exact;
+    if (s === 'contentidentical') return DuplicateClassification.ContentIdentical;
+    if (s.includes('highconfidence')) return DuplicateClassification.HighConfidenceDuplicate;
+    if (s.includes('possible')) return DuplicateClassification.PossibleDuplicate;
+    return DuplicateClassification.Unanalyzed;
+  };
+
+  const evidence = $derived(
+    EVIDENCE[normalizeClass(classification as string)] ?? EVIDENCE[DuplicateClassification.PossibleDuplicate],
+  );
   // eslint-disable-next-line svelte/no-unnecessary-state-wrap
   let selectedAssetIds = $state(new SvelteSet<string>());
   let trashCount = $derived(assets.length - selectedAssetIds.size);

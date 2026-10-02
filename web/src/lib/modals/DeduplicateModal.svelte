@@ -15,21 +15,43 @@
 
   const isThumbnailGroup = (group: DuplicateResponseDto): boolean => {
     if (group.assets.length < 2) return false;
-    const a = group.assets[0];
-    const b = group.assets[1];
-    if (a.width && a.height && b.width && b.height) {
-      const wRatio = Math.min(a.width, b.width) / Math.max(a.width, b.width);
-      const hRatio = Math.min(a.height, b.height) / Math.max(a.height, b.height);
-      if (wRatio < 0.6 || hRatio < 0.6) return true;
+    for (let i = 0; i < group.assets.length; i++) {
+      for (let j = i + 1; j < group.assets.length; j++) {
+        const a = group.assets[i];
+        const b = group.assets[j];
+        const aWidth = a.width ?? a.exifInfo?.exifImageWidth ?? 0;
+        const aHeight = a.height ?? a.exifInfo?.exifImageHeight ?? 0;
+        const bWidth = b.width ?? b.exifInfo?.exifImageWidth ?? 0;
+        const bHeight = b.height ?? b.exifInfo?.exifImageHeight ?? 0;
+        if (aWidth > 0 && aHeight > 0 && bWidth > 0 && bHeight > 0) {
+          const wRatio = Math.min(aWidth, bWidth) / Math.max(aWidth, bWidth);
+          const hRatio = Math.min(aHeight, bHeight) / Math.max(aHeight, bHeight);
+          if (wRatio < 0.8 || hRatio < 0.8) return true;
+        }
+      }
+      const name = group.assets[i]?.originalFileName;
+      if (name && (/thumb/i.test(name) || /UNADJUSTEDNONRAW/i.test(name) || /preview/i.test(name))) {
+        return true;
+      }
     }
-    const isThumbName = (name?: string) => name && (/thumb/i.test(name) || /UNADJUSTEDNONRAW/i.test(name));
-    return group.assets.some((a) => isThumbName(a.originalFileName));
+    return false;
+  };
+
+  const normalizeClass = (c?: string): DuplicateClassification => {
+    const s = (c ?? '').toLowerCase().replace(/_/g, '');
+    if (s === 'exact') return DuplicateClassification.Exact;
+    if (s === 'contentidentical') return DuplicateClassification.ContentIdentical;
+    if (s.includes('highconfidence')) return DuplicateClassification.HighConfidenceDuplicate;
+    if (s.includes('possible')) return DuplicateClassification.PossibleDuplicate;
+    return DuplicateClassification.Unanalyzed;
   };
 
   const getTrashCount = (group: DuplicateResponseDto) => {
     const keepIds = new Set(group.suggestedKeepAssetIds);
     return group.assets.filter((a) => !keepIds.has(a.id)).length;
   };
+
+  let excludeSuspectDates = $state(true);
 
   const betterQualityOutsideGroups = $derived(
     duplicates.filter((g) => g.betterQualityOutsideOriginals),
@@ -40,38 +62,52 @@
   );
 
   // Groups with higher quality outside originals are held for manual migration
+  // If excludeSuspectDates is true, photos with suspect Claude 2015/2021 dates are also held for review
   const eligibleDuplicates = $derived(
-    duplicates.filter((g) => !g.betterQualityOutsideOriginals),
+    duplicates.filter((g) => !g.betterQualityOutsideOriginals && (!excludeSuspectDates || !g.hasSuspectDate)),
   );
 
   const exactGroups = $derived(
-    eligibleDuplicates.filter(
-      (g) =>
-        g.classification === DuplicateClassification.Exact ||
-        g.classification === DuplicateClassification.ContentIdentical,
-    ),
+    eligibleDuplicates.filter((g) => {
+      const c = normalizeClass(g.classification);
+      return c === DuplicateClassification.Exact || c === DuplicateClassification.ContentIdentical;
+    }),
   );
   const exactTrash = $derived(exactGroups.reduce((acc, g) => acc + getTrashCount(g), 0));
 
   const thumbnailGroups = $derived(
-    eligibleDuplicates.filter((g) => g.classification === DuplicateClassification.HighConfidenceDuplicate && isThumbnailGroup(g)),
+    eligibleDuplicates.filter((g) => {
+      const c = normalizeClass(g.classification);
+      return (
+        c !== DuplicateClassification.Exact &&
+        c !== DuplicateClassification.ContentIdentical &&
+        isThumbnailGroup(g)
+      );
+    }),
   );
   const thumbnailTrash = $derived(thumbnailGroups.reduce((acc, g) => acc + getTrashCount(g), 0));
 
   const highConfidenceGroups = $derived(
-    eligibleDuplicates.filter(
-      (g) => g.classification === DuplicateClassification.HighConfidenceDuplicate && !isThumbnailGroup(g),
-    ),
+    eligibleDuplicates.filter((g) => {
+      const c = normalizeClass(g.classification);
+      return c === DuplicateClassification.HighConfidenceDuplicate && !isThumbnailGroup(g);
+    }),
   );
   const highConfidenceTrash = $derived(highConfidenceGroups.reduce((acc, g) => acc + getTrashCount(g), 0));
 
   const possibleGroups = $derived(
-    eligibleDuplicates.filter((g) => g.classification === DuplicateClassification.PossibleDuplicate),
+    eligibleDuplicates.filter((g) => {
+      const c = normalizeClass(g.classification);
+      return (
+        (c === DuplicateClassification.PossibleDuplicate || c === DuplicateClassification.Unanalyzed) &&
+        !isThumbnailGroup(g)
+      );
+    }),
   );
   const possibleTrash = $derived(possibleGroups.reduce((acc, g) => acc + getTrashCount(g), 0));
 
   const unanalyzedCount = $derived(
-    eligibleDuplicates.filter((g) => g.classification === DuplicateClassification.Unanalyzed).length,
+    eligibleDuplicates.filter((g) => normalizeClass(g.classification) === DuplicateClassification.Unanalyzed).length,
   );
 
   let includeExact = $state(true);
@@ -127,9 +163,15 @@
     {/if}
 
     {#if suspectDateGroups.length > 0}
-      <div class="rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs text-rose-900 dark:border-rose-700/60 dark:bg-rose-950/40 dark:text-rose-200">
-        <span class="font-semibold">{suspectDateGroups.length.toLocaleString($locale)} groups</span>
-        contain photos with suspect EXIF dates (May–Aug 2015/2021 Claude date error).
+      <div class="rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs text-rose-900 dark:border-rose-700/60 dark:bg-rose-950/40 dark:text-rose-200 flex items-center justify-between gap-3">
+        <div>
+          <span class="font-semibold">{suspectDateGroups.length.toLocaleString($locale)} groups</span>
+          contain photos with suspect EXIF dates (May–Aug 2015/2021 Claude date error).
+        </div>
+        <label class="flex items-center gap-1.5 cursor-pointer font-medium shrink-0">
+          <Checkbox bind:checked={excludeSuspectDates} />
+          <span>Hold back from deduplicating</span>
+        </label>
       </div>
     {/if}
 
