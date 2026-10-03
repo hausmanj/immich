@@ -121,11 +121,16 @@ export class DuplicateService extends BaseService {
   async resolve(auth: AuthDto, dto: DuplicateResolveDto) {
     const duplicateIds = dto.groups.map(({ duplicateId }) => duplicateId);
 
-    await this.requireAccess({ auth, permission: Permission.DuplicateDelete, ids: duplicateIds });
+    const allowedIds = await this.checkAccess({ auth, permission: Permission.DuplicateDelete, ids: duplicateIds });
 
     const results: BulkIdResponseDto[] = [];
 
     for (const group of dto.groups) {
+      if (!allowedIds.has(group.duplicateId)) {
+        results.push({ id: group.duplicateId, success: false, error: BulkIdErrorReason.NOT_FOUND });
+        continue;
+      }
+
       try {
         results.push(await this.resolveGroup(auth, group));
       } catch (error: Error | any) {

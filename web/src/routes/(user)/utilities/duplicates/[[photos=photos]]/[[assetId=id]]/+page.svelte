@@ -162,11 +162,14 @@
       return;
     }
 
-    toastManager.primary('Processing…');
+    toastManager.primary('Processing deduplication…');
 
-    // Resolve selected groups in batches of 100
-    const batchSize = 100;
+    // Resolve selected groups in batches of 250
+    const batchSize = 250;
     let failedCount = 0;
+    let totalResolvedGroups = 0;
+    let totalTrashedAssets = 0;
+
     for (let i = 0; i < selectedGroups.length; i += batchSize) {
       const batch = selectedGroups.slice(i, i + batchSize);
       try {
@@ -185,21 +188,34 @@
             }),
           },
         });
-        failedCount += response.filter(({ success }) => !success).length;
+
+        const successfulIds = new Set(response.filter(({ success }) => success).map(({ id }) => id));
+        if (successfulIds.size > 0) {
+          totalResolvedGroups += successfulIds.size;
+          for (const g of batch) {
+            if (successfulIds.has(g.duplicateId)) {
+              const keepIds = new Set(
+                g.suggestedKeepAssetIds?.length > 0 ? g.suggestedKeepAssetIds : [g.assets[0]?.id],
+              );
+              totalTrashedAssets += g.assets.filter((a) => !keepIds.has(a.id)).length;
+            }
+          }
+          duplicates = duplicates.filter(({ duplicateId }) => !successfulIds.has(duplicateId));
+        }
+
+        const batchFailed = response.filter(({ success }) => !success).length;
+        failedCount += batchFailed;
       } catch (error) {
-        handleError(error, $t('errors.unable_to_resolve_duplicate'));
-        return;
+        console.error('Error resolving duplicate batch:', error);
+        failedCount += batch.length;
       }
     }
 
-    if (failedCount > 0) {
+    if (failedCount > 0 && totalResolvedGroups === 0) {
       toastManager.danger($t('errors.unable_to_resolve_duplicate'));
+    } else if (totalTrashedAssets > 0) {
+      deletedNotification(totalTrashedAssets);
     }
-
-    const resolvedIds = new Set(selectedGroups.map(({ duplicateId }) => duplicateId));
-    duplicates = duplicates.filter(({ duplicateId }) => !resolvedIds.has(duplicateId));
-
-    deletedNotification(idsToDelete.length);
 
     page.url.searchParams.delete('index');
     await goto(Route.duplicatesUtility());
