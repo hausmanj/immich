@@ -14,7 +14,7 @@
   import { handleError } from '$lib/utils/handle-error';
   import type { AssetResponseDto } from '@immich/sdk';
   import { createStack, deleteDuplicates, DuplicateClassification, resolveDuplicates, updateAssets } from '@immich/sdk';
-  import { Button, HStack, IconButton, modalManager, Text, toastManager } from '@immich/ui';
+  import { Button, HStack, IconButton, LoadingSpinner, modalManager, Text, toastManager } from '@immich/ui';
   import {
     mdiCheckOutline,
     mdiChevronLeft,
@@ -64,6 +64,16 @@
 
   let duplicates = $state(data.duplicates);
   let showMore = $state(false);
+
+  let isDeduplicating = $state(false);
+  let progressCurrent = $state(0);
+  let progressTotal = $state(0);
+  let progressTrashed = $state(0);
+  let currentBatch = $state(0);
+  let totalBatches = $state(0);
+  const progressPercent = $derived(
+    progressTotal > 0 ? Math.min(100, Math.round((progressCurrent / progressTotal) * 100)) : 0,
+  );
 
   const correctDuplicatesIndex = (index: number) => {
     return Math.max(0, Math.min(index, duplicates.length - 1));
@@ -166,49 +176,67 @@
 
     // Resolve selected groups in batches of 250
     const batchSize = 250;
+    isDeduplicating = true;
+    progressCurrent = 0;
+    progressTotal = selectedGroups.length;
+    progressTrashed = 0;
+    currentBatch = 0;
+    totalBatches = Math.ceil(selectedGroups.length / batchSize);
+
     let failedCount = 0;
     let totalResolvedGroups = 0;
     let totalTrashedAssets = 0;
 
-    for (let i = 0; i < selectedGroups.length; i += batchSize) {
-      const batch = selectedGroups.slice(i, i + batchSize);
-      try {
-        const response = await resolveDuplicates({
-          duplicateResolveDto: {
-            groups: batch.map((group) => {
-              const keepAssetIds =
-                group.suggestedKeepAssetIds?.length > 0 ? group.suggestedKeepAssetIds : [group.assets[0]?.id];
-              const keepIds = new Set(keepAssetIds);
-              return {
-                duplicateId: group.duplicateId,
-                keepAssetIds,
-                trashAssetIds: group.assets.map((asset) => asset.id).filter((id) => !keepIds.has(id)),
-                reviewed: true,
-              };
-            }),
-          },
-        });
+    try {
+      for (let i = 0; i < selectedGroups.length; i += batchSize) {
+        currentBatch++;
+        const batch = selectedGroups.slice(i, i + batchSize);
+        try {
+          const response = await resolveDuplicates({
+            duplicateResolveDto: {
+              groups: batch.map((group) => {
+                const keepAssetIds =
+                  group.suggestedKeepAssetIds?.length > 0 ? group.suggestedKeepAssetIds : [group.assets[0]?.id];
+                const keepIds = new Set(keepAssetIds);
+                return {
+                  duplicateId: group.duplicateId,
+                  keepAssetIds,
+                  trashAssetIds: group.assets.map((asset) => asset.id).filter((id) => !keepIds.has(id)),
+                  reviewed: true,
+                };
+              }),
+            },
+          });
 
-        const successfulIds = new Set(response.filter(({ success }) => success).map(({ id }) => id));
-        if (successfulIds.size > 0) {
-          totalResolvedGroups += successfulIds.size;
-          for (const g of batch) {
-            if (successfulIds.has(g.duplicateId)) {
-              const keepIds = new Set(
-                g.suggestedKeepAssetIds?.length > 0 ? g.suggestedKeepAssetIds : [g.assets[0]?.id],
-              );
-              totalTrashedAssets += g.assets.filter((a) => !keepIds.has(a.id)).length;
+          const successfulIds = new Set(response.filter(({ success }) => success).map(({ id }) => id));
+          if (successfulIds.size > 0) {
+            totalResolvedGroups += successfulIds.size;
+            progressCurrent += successfulIds.size;
+            for (const g of batch) {
+              if (successfulIds.has(g.duplicateId)) {
+                const keepIds = new Set(
+                  g.suggestedKeepAssetIds?.length > 0 ? g.suggestedKeepAssetIds : [g.assets[0]?.id],
+                );
+                const trashedInGroup = g.assets.filter((a) => !keepIds.has(a.id)).length;
+                totalTrashedAssets += trashedInGroup;
+                progressTrashed += trashedInGroup;
+              }
             }
+            duplicates = duplicates.filter(({ duplicateId }) => !successfulIds.has(duplicateId));
+          } else {
+            progressCurrent += batch.length;
           }
-          duplicates = duplicates.filter(({ duplicateId }) => !successfulIds.has(duplicateId));
-        }
 
-        const batchFailed = response.filter(({ success }) => !success).length;
-        failedCount += batchFailed;
-      } catch (error) {
-        console.error('Error resolving duplicate batch:', error);
-        failedCount += batch.length;
+          const batchFailed = response.filter(({ success }) => !success).length;
+          failedCount += batchFailed;
+        } catch (error) {
+          console.error('Error resolving duplicate batch:', error);
+          failedCount += batch.length;
+          progressCurrent += batch.length;
+        }
       }
+    } finally {
+      isDeduplicating = false;
     }
 
     if (failedCount > 0 && totalResolvedGroups === 0) {
@@ -258,21 +286,39 @@
 
 <UserPageLayout title={data.meta.title + ` (${duplicates.length.toLocaleString($locale)})`} scrollbar={true}>
   {#snippet buttons()}
-    <HStack gap={0}>
+    <HStack gap={2}>
+      {#if isDeduplicating}
+        <div class="flex items-center gap-2 rounded-lg bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary dark:bg-primary/20">
+          <LoadingSpinner size="small" />
+          <span>
+            {progressCurrent.toLocaleString($locale)} / {progressTotal.toLocaleString($locale)} ({progressPercent}%)
+          </span>
+          <span class="hidden xl:inline text-muted-foreground font-normal">
+            • {progressTrashed.toLocaleString($locale)} trashed
+          </span>
+        </div>
+      {/if}
       <Button
-        leadingIcon={mdiTrashCanOutline}
+        leadingIcon={isDeduplicating ? undefined : mdiTrashCanOutline}
         onclick={() => handleDeduplicateAll()}
-        disabled={!hasDuplicates}
+        disabled={!hasDuplicates || isDeduplicating}
+        loading={isDeduplicating}
         size="small"
-        variant="ghost"
-        color="secondary"
+        variant={isDeduplicating ? 'solid' : 'ghost'}
+        color={isDeduplicating ? 'primary' : 'secondary'}
       >
-        <Text class="hidden md:block">{$t('deduplicate_all')}</Text>
+        <Text class="hidden md:block">
+          {#if isDeduplicating}
+            {progressPercent}%
+          {:else}
+            {$t('deduplicate_all')}
+          {/if}
+        </Text>
       </Button>
       <Button
         leadingIcon={mdiCheckOutline}
         onclick={() => handleKeepAll()}
-        disabled={!hasDuplicates}
+        disabled={!hasDuplicates || isDeduplicating}
         size="small"
         variant="ghost"
         color="secondary"
@@ -292,6 +338,30 @@
   {/snippet}
 
   <div>
+    {#if isDeduplicating}
+      <div class="mb-4 rounded-xl border border-primary/30 bg-primary/5 p-4 shadow-sm dark:bg-primary/10">
+        <div class="flex items-center justify-between text-sm mb-2 font-medium">
+          <span class="flex items-center gap-2 text-primary font-semibold">
+            <LoadingSpinner size="small" />
+            Deduplicating in progress…
+          </span>
+          <span class="font-mono text-xs font-semibold text-primary">
+            {progressCurrent.toLocaleString($locale)} / {progressTotal.toLocaleString($locale)} groups ({progressPercent}%)
+          </span>
+        </div>
+        <div class="h-2.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
+          <div
+            class="h-full rounded-full bg-primary transition-all duration-300 ease-out"
+            style="width: {progressPercent}%"
+          ></div>
+        </div>
+        <div class="mt-2 flex items-center justify-between text-xs text-muted-foreground">
+          <span>{progressTrashed.toLocaleString($locale)} duplicate assets moved to trash</span>
+          <span>Batch {currentBatch} of {totalBatches}</span>
+        </div>
+      </div>
+    {/if}
+
     {#if duplicates && duplicates.length > 0}
       <Text size="small" color="muted" class="mb-4">
         <p>{$t('duplicates_description')} <LinkToDocs href="https://docs.immich.app/features/duplicates-utility" /></p>
