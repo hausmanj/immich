@@ -1,10 +1,18 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { Injectable } from '@nestjs/common';
 import type { JobOf } from 'src/types.js';
 import { OnJob } from 'src/decorators.js';
 import { BulkIdErrorReason, BulkIdResponseDto, BulkIdsDto } from 'src/dtos/asset-ids.response.dto.js';
 import { MapAsset, mapAsset } from 'src/dtos/asset-response.dto.js';
-import { AuthDto } from 'src/dtos/auth.dto.js';
-import { DuplicateResolveDto, DuplicateResolveGroupDto, DuplicateResponseDto } from 'src/dtos/duplicate.dto.js';
+import type { AuthDto } from 'src/dtos/auth.dto.js';
+import {
+  CopyBetterToHoldingDto,
+  CopyBetterToHoldingResultDto,
+  DuplicateResolveDto,
+  DuplicateResolveGroupDto,
+  DuplicateResponseDto,
+} from 'src/dtos/duplicate.dto.js';
 import { AssetStatus, AssetVisibility, JobName, JobStatus, Permission, QueueName } from 'src/enum.js';
 import { AssetDuplicateResult } from 'src/repositories/search.repository.js';
 import { BaseService } from 'src/services/base.service.js';
@@ -12,7 +20,10 @@ import {
   assessDuplicateQuality,
   classifyDuplicateGroup,
   DuplicateClassification,
+  getKeeperScore,
+  getPathTier,
   isAssetDateSuspect,
+  PathTier,
   suggestDuplicateKeepAssetIds,
 } from 'src/utils/duplicate.js';
 import { batched, isDuplicateDetectionEnabled } from 'src/utils/misc.js';
@@ -267,6 +278,233 @@ export class DuplicateService extends BaseService {
     }
 
     return { id: duplicateId, success: true };
+  }
+
+  async copyBetterToHolding(auth: AuthDto, dto?: CopyBetterToHoldingDto): Promise<CopyBetterToHoldingResultDto> {
+    const holdingRoot =
+      process.env.HOLDING_ROOT ||
+      (fs.existsSync('/mnt/holding')
+        ? '/mnt/holding'
+        : fs.existsSync('/volume1/photosync/better_copies_holding')
+          ? '/volume1/photosync/better_copies_holding'
+          : '/mnt/holding');
+
+    if (!fs.existsSync(holdingRoot)) {
+      try {
+        fs.mkdirSync(holdingRoot, { recursive: true });
+        try {
+          fs.chmodSync(holdingRoot, 0o777);
+        } catch {}
+      } catch (err: any) {
+        this.logger.error(`Failed to create holding root at ${holdingRoot}: ${err.message}`);
+        return {
+          totalFound: 0,
+          copied: 0,
+          alreadyExisted: 0,
+          failed: 1,
+          errors: [`Holding root folder inaccessible: ${err.message}`],
+        };
+      }
+    }
+
+    const duplicates = await this.duplicateRepository.getAll(auth.user.id);
+    if (duplicates.length === 0) {
+      return { totalFound: 0, copied: 0, alreadyExisted: 0, failed: 0, errors: [] };
+    }
+
+    const { machineLearning } = await this.getConfig({ withCache: true });
+    const keepPreference = machineLearning.duplicateDetection.keepPreference;
+
+    const targetDuplicateIds = dto?.duplicateIds && dto.duplicateIds.length > 0 ? new Set(dto.duplicateIds) : null;
+    const targetDuplicates = targetDuplicateIds
+      ? duplicates.filter((d) => targetDuplicateIds.has(d.duplicateId))
+      : duplicates;
+
+    const albumMap =
+      (await this.albumRepository.getByAssetIds(
+        auth.user.id,
+        targetDuplicates.flatMap(({ assets }) => assets.map(({ id }) => id)),
+      )) ?? new Map();
+    const albumCounts = new Map([...albumMap].map(([assetId, albumIds]) => [assetId, albumIds.length]));
+
+    let totalFound = 0;
+    let copied = 0;
+    let alreadyExisted = 0;
+    let failed = 0;
+    const errors: string[] = [];
+
+    const manifestPath = path.join(holdingRoot, 'manifest.json');
+    let manifestEntries: any[] = [];
+    if (fs.existsSync(manifestPath)) {
+      try {
+        manifestEntries = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+      } catch (err: any) {
+        this.logger.warn(`Could not parse existing manifest.json: ${err.message}`);
+        manifestEntries = [];
+      }
+    }
+    const manifestMap = new Map<string, any>(manifestEntries.map((e) => [e.destination, e]));
+    const seenDests = new Map<string, number>();
+
+    for (const { assets } of targetDuplicates) {
+      const mappedAssets = assets.map((asset) => mapAsset(asset, { auth }));
+      const quality = assessDuplicateQuality(mappedAssets, keepPreference, albumCounts);
+
+      if (!quality.betterQualityOutsideOriginals || quality.betterQualityAssetIds.length === 0) {
+        continue;
+      }
+
+      const originals = mappedAssets.filter((a) => quality.originalsAssetIds.includes(a.id));
+      if (originals.length === 0) {
+        continue;
+      }
+      const primaryOriginal = originals[0];
+
+      // Extract relative directory from originals path
+      let relDir = '';
+      const origPath = primaryOriginal.originalPath;
+      if (origPath.startsWith('/mnt/originals/')) {
+        relDir = path.relative('/mnt/originals', path.dirname(origPath));
+      } else if (origPath.startsWith('/volume1/photosync/originals_clean/')) {
+        relDir = path.relative('/volume1/photosync/originals_clean', path.dirname(origPath));
+      } else {
+        const cleanIdx = origPath.indexOf('originals_clean/');
+        if (cleanIdx !== -1) {
+          relDir = path.dirname(origPath.slice(cleanIdx + 'originals_clean/'.length));
+        } else {
+          relDir = path.dirname(origPath).replace(/^\/+/, '');
+        }
+      }
+
+      for (const betterId of quality.betterQualityAssetIds) {
+        const betterAsset = mappedAssets.find((a) => a.id === betterId);
+        if (!betterAsset) continue;
+
+        totalFound++;
+        const srcPath = betterAsset.originalPath;
+
+        if (!fs.existsSync(srcPath)) {
+          failed++;
+          const msg = `Source file not found: ${srcPath}`;
+          this.logger.warn(msg);
+          errors.push(msg);
+          continue;
+        }
+
+        try {
+          const srcStat = fs.statSync(srcPath);
+          const srcName = path.basename(srcPath);
+          const ext = path.extname(srcName);
+          const stem = path.basename(srcName, ext);
+
+          // Intelligent name cleaning: remove trailing duplicate markers like " (1)"
+          const cleanedStem = stem.replace(/\s*\(\d+\)$/, '');
+          let targetName = `${cleanedStem}${ext}`;
+
+          const destDir = path.join(holdingRoot, relDir);
+          fs.mkdirSync(destDir, { recursive: true });
+          try {
+            fs.chmodSync(destDir, 0o777);
+          } catch {}
+
+          let destFile = path.join(destDir, targetName);
+
+          if (seenDests.has(destFile)) {
+            const count = seenDests.get(destFile)! + 1;
+            seenDests.set(destFile, count);
+            targetName = `${cleanedStem}_dup${count}${ext}`;
+            destFile = path.join(destDir, targetName);
+          } else {
+            seenDests.set(destFile, 1);
+          }
+
+          if (fs.existsSync(destFile)) {
+            const destStat = fs.statSync(destFile);
+            if (destStat.size === srcStat.size) {
+              alreadyExisted++;
+              manifestMap.set(destFile, {
+                source: srcPath,
+                destination: destFile,
+                worseInOriginals: primaryOriginal.originalPath,
+                sidecars: [],
+                fileSize: srcStat.size,
+                sourceResolution: `${betterAsset.width ?? betterAsset.exifInfo?.exifImageWidth ?? 0}x${betterAsset.height ?? betterAsset.exifInfo?.exifImageHeight ?? 0}`,
+                worseResolution: `${primaryOriginal.width ?? primaryOriginal.exifInfo?.exifImageWidth ?? 0}x${primaryOriginal.height ?? primaryOriginal.exifInfo?.exifImageHeight ?? 0}`,
+                alreadyExisted: true,
+                updatedAt: new Date().toISOString(),
+              });
+              continue;
+            }
+          }
+
+          fs.copyFileSync(srcPath, destFile);
+          try {
+            fs.utimesSync(destFile, srcStat.atime, srcStat.mtime);
+            fs.chmodSync(destFile, 0o666);
+          } catch {}
+
+          // Copy companion sidecars
+          const sidecarsCopied: string[] = [];
+          const srcStemPath = path.join(path.dirname(srcPath), stem);
+          const potentialSidecars = [
+            `${srcPath}.xmp`,
+            `${srcStemPath}.xmp`,
+            `${srcStemPath}.aae`,
+          ];
+          for (const sc of potentialSidecars) {
+            if (fs.existsSync(sc) && sc !== srcPath) {
+              const scName = path.basename(sc);
+              const scDest = path.join(destDir, scName);
+              fs.copyFileSync(sc, scDest);
+              try {
+                const scStat = fs.statSync(sc);
+                fs.utimesSync(scDest, scStat.atime, scStat.mtime);
+                fs.chmodSync(scDest, 0o666);
+              } catch {}
+              sidecarsCopied.push(scDest);
+            }
+          }
+
+          copied++;
+          manifestMap.set(destFile, {
+            source: srcPath,
+            destination: destFile,
+            worseInOriginals: primaryOriginal.originalPath,
+            sidecars: sidecarsCopied,
+            fileSize: srcStat.size,
+            sourceResolution: `${betterAsset.width ?? betterAsset.exifInfo?.exifImageWidth ?? 0}x${betterAsset.height ?? betterAsset.exifInfo?.exifImageHeight ?? 0}`,
+            worseResolution: `${primaryOriginal.width ?? primaryOriginal.exifInfo?.exifImageWidth ?? 0}x${primaryOriginal.height ?? primaryOriginal.exifInfo?.exifImageHeight ?? 0}`,
+            copiedAt: new Date().toISOString(),
+          });
+        } catch (err: any) {
+          failed++;
+          const msg = `Error copying ${srcPath}: ${err.message}`;
+          this.logger.error(msg);
+          errors.push(msg);
+        }
+      }
+    }
+
+    try {
+      fs.writeFileSync(manifestPath, JSON.stringify([...manifestMap.values()], null, 2), 'utf8');
+      try {
+        fs.chmodSync(manifestPath, 0o666);
+      } catch {}
+    } catch (err: any) {
+      this.logger.error(`Failed to update manifest.json: ${err.message}`);
+    }
+
+    this.logger.log(
+      `copyBetterToHolding completed: ${copied} copied, ${alreadyExisted} already existed, ${failed} failed (total found: ${totalFound})`,
+    );
+
+    return {
+      totalFound,
+      copied,
+      alreadyExisted,
+      failed,
+      errors: errors.slice(0, 50),
+    };
   }
 
   private getSyncMergeResult(assets: MapAsset[], assetAlbumMap: Map<string, string[]> = new Map()): ResolveRequest {

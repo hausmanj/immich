@@ -351,3 +351,28 @@ export const getFolderOrganizationScore = (filePath?: string): FolderOrganizatio
   };
 };
 
+export interface CopyBetterToHoldingResult {
+  totalFound: number;
+  copied: number;
+  alreadyExisted: number;
+  failed: number;
+  errors: string[];
+}
+
+export const copyBetterToHolding = async (duplicateIds?: string[]): Promise<CopyBetterToHoldingResult> => {
+  const res = await fetch('/api/duplicates/copy-better-to-holding', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ duplicateIds: duplicateIds ?? [] }),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(errorText || `Failed to copy better copies to holding (${res.status})`);
+  }
+
+  return res.json();
+};
+

@@ -19,12 +19,14 @@
     mdiCheckOutline,
     mdiChevronLeft,
     mdiChevronRight,
+    mdiFolderDownloadOutline,
     mdiKeyboard,
     mdiPageFirst,
     mdiPageLast,
     mdiTrashCanOutline,
   } from '@mdi/js';
   import { t } from 'svelte-i18n';
+  import { copyBetterToHolding } from '$lib/utils/duplicate-utils';
   import type { PageData } from './$types';
 
   interface Props {
@@ -266,6 +268,29 @@
     );
   };
 
+  let isCopyingHolding = $state(false);
+  const betterQualityCount = $derived(duplicates.filter((d) => d.betterQualityOutsideOriginals).length);
+  const betterQualityAssetsCount = $derived(
+    duplicates.reduce((acc, d) => acc + (d.betterQualityAssetIds?.length || (d.betterQualityOutsideOriginals ? 1 : 0)), 0),
+  );
+
+  const handleCopyBetterToHolding = async () => {
+    isCopyingHolding = true;
+    try {
+      const res = await copyBetterToHolding();
+      if (res.failed > 0 && res.copied === 0 && res.alreadyExisted === 0) {
+        toastManager.error(res.errors[0] || 'Failed to copy better copies to holding');
+      } else {
+        const msg = `Copied ${res.copied} better quality files to holding folder (${res.alreadyExisted} already in holding)`;
+        toastManager.primary(msg);
+      }
+    } catch (err: any) {
+      toastManager.error(err.message || 'Error copying better copies to holding');
+    } finally {
+      isCopyingHolding = false;
+    }
+  };
+
   const handleFirst = () => navigateToIndex(0);
   const handlePrevious = () => navigateToIndex(Math.max(duplicatesIndex - 1, 0));
   const handleNext = async () => navigateToIndex(Math.min(duplicatesIndex + 1, duplicates.length - 1));
@@ -298,6 +323,26 @@
           </span>
         </div>
       {/if}
+      <Button
+        leadingIcon={mdiFolderDownloadOutline}
+        onclick={() => handleCopyBetterToHolding()}
+        disabled={isCopyingHolding || isDeduplicating}
+        loading={isCopyingHolding}
+        size="small"
+        variant={betterQualityCount > 0 ? 'solid' : 'ghost'}
+        color={betterQualityCount > 0 ? 'warning' : 'secondary'}
+        title="Copy higher-quality duplicates outside originals to holding folder mirroring originals folder structure"
+      >
+        <Text class="hidden md:block">
+          {#if isCopyingHolding}
+            Copying…
+          {:else if betterQualityAssetsCount > 0}
+            Copy Better to Holding ({betterQualityAssetsCount})
+          {:else}
+            Copy Better to Holding
+          {/if}
+        </Text>
+      </Button>
       <Button
         leadingIcon={isDeduplicating ? undefined : mdiTrashCanOutline}
         onclick={() => handleDeduplicateAll()}
@@ -369,6 +414,7 @@
 
       {#key duplicates[duplicatesIndex].duplicateId}
         <DuplicatesCompareControl
+          duplicateId={duplicates[duplicatesIndex].duplicateId}
           assets={duplicates[duplicatesIndex].assets}
           classification={duplicates[duplicatesIndex].classification}
           suggestedKeepAssetIds={duplicates[duplicatesIndex].suggestedKeepAssetIds}

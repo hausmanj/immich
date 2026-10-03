@@ -3,7 +3,12 @@ import { ApiTags } from '@nestjs/swagger';
 import type { AuthDto } from 'src/dtos/auth.dto.js';
 import { Endpoint, HistoryBuilder } from 'src/decorators.js';
 import { BulkIdResponseDto, BulkIdsDto } from 'src/dtos/asset-ids.response.dto.js';
-import { DuplicateResolveDto, DuplicateResponseDto } from 'src/dtos/duplicate.dto.js';
+import {
+  CopyBetterToHoldingDto,
+  CopyBetterToHoldingResultDto,
+  DuplicateResolveDto,
+  DuplicateResponseDto,
+} from 'src/dtos/duplicate.dto.js';
 import { ApiTag, Permission } from 'src/enum.js';
 import { Auth, Authenticated } from 'src/middleware/auth.guard.js';
 import { DuplicateService } from 'src/services/duplicate.service.js';
@@ -59,5 +64,20 @@ export class DuplicateController {
   })
   resolveDuplicates(@Auth() auth: AuthDto, @Body() dto: DuplicateResolveDto): Promise<BulkIdResponseDto[]> {
     return this.service.resolve(auth, dto);
+  }
+
+  @Post('copy-better-to-holding')
+  @HttpCode(HttpStatus.OK)
+  @Authenticated({ permission: Permission.DuplicateRead })
+  @Endpoint({
+    summary: 'Copy higher-quality duplicates outside originals to staging holding folder',
+    description: 'Copies better quality duplicate files to /mnt/holding mirroring the relative folder structure of originals_clean.',
+    history: new HistoryBuilder().added('v3.3.0'),
+  })
+  copyBetterToHolding(
+    @Auth() auth: AuthDto,
+    @Body() dto: CopyBetterToHoldingDto = {},
+  ): Promise<CopyBetterToHoldingResultDto> {
+    return this.service.copyBetterToHolding(auth, dto);
   }
 }

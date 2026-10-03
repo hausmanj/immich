@@ -58,3 +58,27 @@ const DuplicateResolveSchema = z
 export class DuplicateResponseDto extends createZodDto(DuplicateResponseSchema) {}
 export class DuplicateResolveGroupDto extends createZodDto(DuplicateResolveGroupSchema) {}
 export class DuplicateResolveDto extends createZodDto(DuplicateResolveSchema) {}
+
+const CopyBetterToHoldingSchema = z
+  .object({
+    duplicateIds: z
+      .array(z.uuidv4())
+      .optional()
+      .describe('Optional list of duplicate group IDs to copy. If omitted, copies all groups with better quality outside originals.'),
+  })
+  .optional()
+  .default({})
+  .meta({ id: 'CopyBetterToHoldingDto' });
+
+const CopyBetterToHoldingResultSchema = z
+  .object({
+    totalFound: z.number().describe('Total better quality files found across target groups'),
+    copied: z.number().describe('Number of files newly copied to holding'),
+    alreadyExisted: z.number().describe('Number of files that already existed in holding with matching size'),
+    failed: z.number().describe('Number of files that failed to copy'),
+    errors: z.array(z.string()).describe('List of error messages if any failed'),
+  })
+  .meta({ id: 'CopyBetterToHoldingResultDto' });
+
+export class CopyBetterToHoldingDto extends createZodDto(CopyBetterToHoldingSchema) {}
+export class CopyBetterToHoldingResultDto extends createZodDto(CopyBetterToHoldingResultSchema) {}

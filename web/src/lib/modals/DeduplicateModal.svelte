@@ -2,9 +2,10 @@
   import { featureFlagsManager } from '$lib/managers/feature-flags-manager.svelte';
   import { locale } from '$lib/stores/preferences.store';
   import { DuplicateClassification, type DuplicateResponseDto } from '@immich/sdk';
-  import { Button, Checkbox, HStack, Modal, ModalBody, ModalFooter, Text } from '@immich/ui';
+  import { Button, Checkbox, HStack, Modal, ModalBody, ModalFooter, Text, toastManager } from '@immich/ui';
   import { mdiTrashCanOutline } from '@mdi/js';
   import { t } from 'svelte-i18n';
+  import { copyBetterToHolding } from '$lib/utils/duplicate-utils';
 
   type Props = {
     duplicates: DuplicateResponseDto[];
@@ -137,6 +138,27 @@
       : $t('confirm'),
   );
 
+  let isCopyingHolding = $state(false);
+
+  const handleCopyBetter = async () => {
+    isCopyingHolding = true;
+    try {
+      const ids = betterQualityOutsideGroups.map((g) => g.duplicateId);
+      const res = await copyBetterToHolding(ids);
+      if (res.failed > 0 && res.copied === 0 && res.alreadyExisted === 0) {
+        toastManager.error(res.errors[0] || 'Failed to copy better copies');
+      } else {
+        toastManager.primary(
+          `Copied ${res.copied} better quality files to holding folder (${res.alreadyExisted} already in holding)`,
+        );
+      }
+    } catch (err: any) {
+      toastManager.error(err.message || 'Error copying better copies');
+    } finally {
+      isCopyingHolding = false;
+    }
+  };
+
   const handleSubmit = () => {
     if (selectedGroups.length === 0) return;
     onClose(selectedGroups);
@@ -156,9 +178,21 @@
     </Text>
 
     {#if betterQualityOutsideGroups.length > 0}
-      <div class="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200">
-        <span class="font-semibold">{betterQualityOutsideGroups.length.toLocaleString($locale)} groups</span>
-        have a higher-quality copy outside originals and are held back from auto-deduplication for manual migration to originals.
+      <div class="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200 flex flex-wrap items-center justify-between gap-2">
+        <div class="flex-1 min-w-[200px]">
+          <span class="font-semibold">{betterQualityOutsideGroups.length.toLocaleString($locale)} groups</span>
+          have a higher-quality copy outside originals and are held back from auto-deduplication.
+        </div>
+        <Button
+          size="small"
+          variant="solid"
+          color="warning"
+          loading={isCopyingHolding}
+          disabled={isCopyingHolding}
+          onclick={handleCopyBetter}
+        >
+          Copy to Holding Folder
+        </Button>
       </div>
     {/if}
 

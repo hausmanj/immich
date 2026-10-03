@@ -11,10 +11,11 @@
     countDifferingMetadataItems,
     getFolderOrganizationScore,
     type DifferingMetadataFields,
+    copyBetterToHolding,
   } from '$lib/utils/duplicate-utils';
   import { navigate } from '$lib/utils/navigation';
   import { DuplicateClassification, getAssetInfo, type AssetResponseDto } from '@immich/sdk';
-  import { Button, Icon } from '@immich/ui';
+  import { Button, Icon, toastManager } from '@immich/ui';
   import {
     mdiAlert,
     mdiCalendarAlert,
@@ -30,6 +31,7 @@
   import { SvelteSet } from 'svelte/reactivity';
 
   interface Props {
+    duplicateId?: string;
     assets: AssetResponseDto[];
     classification?: DuplicateClassification;
     suggestedKeepAssetIds: string[];
@@ -43,6 +45,7 @@
   }
 
   let {
+    duplicateId,
     assets,
     classification = DuplicateClassification.PossibleDuplicate,
     suggestedKeepAssetIds,
@@ -191,6 +194,29 @@
     onStack(assets);
   };
 
+  let isCopyingHolding = $state(false);
+
+  const handleCopyThisGroup = async () => {
+    isCopyingHolding = true;
+    try {
+      const ids = duplicateId ? [duplicateId] : [];
+      const res = await copyBetterToHolding(ids);
+      if (res.failed > 0 && res.copied === 0 && res.alreadyExisted === 0) {
+        toastManager.error(res.errors[0] || 'Failed to copy better copy');
+      } else {
+        toastManager.primary(
+          res.copied > 0
+            ? `Copied ${res.copied} better quality file to holding folder`
+            : `File already in holding folder (${res.alreadyExisted})`,
+        );
+      }
+    } catch (err: any) {
+      toastManager.error(err.message || 'Error copying better copy');
+    } finally {
+      isCopyingHolding = false;
+    }
+  };
+
   const assetCursor = $derived({
     current: assetViewerManager.asset!,
     nextAsset: getNextAsset(assets, assetViewerManager.asset),
@@ -233,14 +259,26 @@
       </div>
     {/if}
     {#if betterQualityOutsideOriginals}
-      <div class="mt-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200">
-        <div class="flex items-center gap-2 font-semibold">
-          <Icon icon={mdiAlert} size="18" class="text-amber-600 dark:text-amber-400" />
-          <span>Higher Quality Copy Outside Originals!</span>
+      <div class="mt-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200 flex flex-wrap items-center justify-between gap-2">
+        <div class="flex-1 min-w-[200px]">
+          <div class="flex items-center gap-2 font-semibold">
+            <Icon icon={mdiAlert} size="18" class="text-amber-600 dark:text-amber-400" />
+            <span>Higher Quality Copy Outside Originals!</span>
+          </div>
+          <p class="mt-1 text-amber-800 dark:text-amber-300">
+            A duplicate outside the originals folder has higher resolution or quality than the copy in originals. Both copies are preserved to prevent deletion.
+          </p>
         </div>
-        <p class="mt-1 text-amber-800 dark:text-amber-300">
-          A duplicate outside the originals folder has higher resolution or quality than the copy in originals. Both copies are preserved to prevent deletion so you can migrate the higher-quality file to originals manually.
-        </p>
+        <Button
+          size="small"
+          variant="solid"
+          color="warning"
+          loading={isCopyingHolding}
+          disabled={isCopyingHolding}
+          onclick={handleCopyThisGroup}
+        >
+          Copy to Holding
+        </Button>
       </div>
     {/if}
 
