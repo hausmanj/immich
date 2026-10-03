@@ -642,8 +642,9 @@ export const assessDuplicateQuality = (
 };
 
 /**
- * Checks if a date falls into May-August 2015 or May-August 2021.
- * These dates are suspect due to a previous Claude automated EXIF batch mistake.
+ * Checks if a date falls into August 2021.
+ * Only August 2021 dates are suspect and require review.
+ * Everything before 2018 is safe to resolve automatically because originals are prioritized.
  */
 export const isSuspectExifDate = (dateValue?: string | Date | null): boolean => {
   if (!dateValue) {
@@ -656,13 +657,13 @@ export const isSuspectExifDate = (dateValue?: string | Date | null): boolean => 
 
   const yrUtc = d.getUTCFullYear();
   const moUtc = d.getUTCMonth() + 1; // 1-12
-  if ((yrUtc === 2015 || yrUtc === 2021) && moUtc >= 5 && moUtc <= 8) {
+  if (yrUtc === 2021 && moUtc === 8) {
     return true;
   }
 
   const yrLoc = d.getFullYear();
   const moLoc = d.getMonth() + 1;
-  if ((yrLoc === 2015 || yrLoc === 2021) && moLoc >= 5 && moLoc <= 8) {
+  if (yrLoc === 2021 && moLoc === 8) {
     return true;
   }
 

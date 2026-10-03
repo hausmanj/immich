@@ -166,7 +166,7 @@
       <div class="rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs text-rose-900 dark:border-rose-700/60 dark:bg-rose-950/40 dark:text-rose-200 flex items-center justify-between gap-3">
         <div>
           <span class="font-semibold">{suspectDateGroups.length.toLocaleString($locale)} groups</span>
-          contain photos with suspect EXIF dates (May–Aug 2015/2021 Claude date error).
+          contain photos with suspect EXIF dates (August 2021 Claude date error).
         </div>
         <label class="flex items-center gap-1.5 cursor-pointer font-medium shrink-0">
           <Checkbox bind:checked={excludeSuspectDates} />

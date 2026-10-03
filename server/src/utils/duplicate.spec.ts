@@ -718,25 +718,26 @@ describe('duplicate utils', () => {
     });
   });
 
-  describe('Suspect Date Detection (Claude EXIF May-Aug 2015/2021)', () => {
-    it('should flag dates in May through August 2015', () => {
-      expect(isSuspectExifDate('2015-05-01T00:00:00Z')).toBe(true);
-      expect(isSuspectExifDate('2015-06-15T12:00:00Z')).toBe(true);
-      expect(isSuspectExifDate('2015-07-20T18:30:00Z')).toBe(true);
-      expect(isSuspectExifDate('2015-08-31T23:59:59Z')).toBe(true);
-    });
-
-    it('should flag dates in May through August 2021', () => {
-      expect(isSuspectExifDate('2021-05-05T08:00:00Z')).toBe(true);
-      expect(isSuspectExifDate('2021-06-30T10:15:00Z')).toBe(true);
-      expect(isSuspectExifDate('2021-07-04T12:00:00Z')).toBe(true);
+  describe('Suspect Date Detection (Claude EXIF August 2021)', () => {
+    it('should flag dates in August 2021', () => {
+      expect(isSuspectExifDate('2021-08-01T00:00:00Z')).toBe(true);
+      expect(isSuspectExifDate('2021-08-15T12:00:00Z')).toBe(true);
       expect(isSuspectExifDate('2021-08-25T14:45:00Z')).toBe(true);
+      expect(isSuspectExifDate('2021-08-31T23:59:59Z')).toBe(true);
     });
 
-    it('should not flag dates outside May-August in 2015 or 2021', () => {
-      expect(isSuspectExifDate('2015-04-30T23:59:59Z')).toBe(false);
-      expect(isSuspectExifDate('2015-09-01T00:00:00Z')).toBe(false);
+    it('should not flag dates in 2015 (safe because originals are prioritized)', () => {
+      expect(isSuspectExifDate('2015-05-01T00:00:00Z')).toBe(false);
+      expect(isSuspectExifDate('2015-06-15T12:00:00Z')).toBe(false);
+      expect(isSuspectExifDate('2015-07-20T18:30:00Z')).toBe(false);
+      expect(isSuspectExifDate('2015-08-31T23:59:59Z')).toBe(false);
+    });
+
+    it('should not flag dates in other months of 2021', () => {
       expect(isSuspectExifDate('2021-01-15T12:00:00Z')).toBe(false);
+      expect(isSuspectExifDate('2021-05-05T08:00:00Z')).toBe(false);
+      expect(isSuspectExifDate('2021-06-30T10:15:00Z')).toBe(false);
+      expect(isSuspectExifDate('2021-07-04T12:00:00Z')).toBe(false);
       expect(isSuspectExifDate('2021-09-10T12:00:00Z')).toBe(false);
     });
 
@@ -748,7 +749,7 @@ describe('duplicate utils', () => {
     });
 
     it('should identify asset with suspect EXIF date or local date', () => {
-      const suspectAsset = createAsset('suspect-1', 1000, { dateTimeOriginal: '2015-06-20T10:00:00Z' as any });
+      const suspectAsset = createAsset('suspect-1', 1000, { dateTimeOriginal: '2021-08-20T10:00:00Z' as any });
       const normalAsset = createAsset('normal-1', 1000, { dateTimeOriginal: '2019-10-15T10:00:00Z' as any });
       normalAsset.localDateTime = '2019-10-15T10:00:00Z';
 

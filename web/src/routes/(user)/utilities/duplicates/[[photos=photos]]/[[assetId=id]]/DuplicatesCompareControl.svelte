@@ -248,10 +248,10 @@
       <div class="mt-2 rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs text-rose-900 dark:border-rose-700/60 dark:bg-rose-950/40 dark:text-rose-200">
         <div class="flex items-center gap-2 font-semibold">
           <Icon icon={mdiCalendarAlert} size="18" class="text-rose-600 dark:text-rose-400" />
-          <span>Suspect EXIF Date (May–August 2015 or 2021)</span>
+          <span>Suspect EXIF Date (August 2021)</span>
         </div>
         <p class="mt-1 text-rose-800 dark:text-rose-300">
-          Photo(s) in this group have capture dates affected by a previous Claude EXIF batch date error. Verify timestamps before archiving.
+          Photo(s) in this group have capture dates affected by the August 2021 Claude EXIF batch date error. Verify timestamps before archiving.
         </p>
       </div>
     {/if}

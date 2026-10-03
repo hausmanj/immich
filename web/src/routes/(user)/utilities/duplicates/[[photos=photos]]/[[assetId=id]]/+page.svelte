@@ -139,7 +139,7 @@
     const [primaryAsset, ...duplicateAssets] = assets;
     const assetIds = duplicateAssets.map((asset) => asset.id);
 
-    await createStack({ assetBulkUpdateDto: { ids: [primaryAsset.id, ...assetIds] } });
+    await createStack({ stackCreateDto: { assetIds: [primaryAsset.id, ...assetIds] } });
     await updateAssets({ assetBulkUpdateDto: { ids: assetIds, duplicateId: null } });
     duplicates = duplicates.filter((duplicate) => duplicate.duplicateId !== duplicateId);
     await navigateToIndex(duplicatesIndex);
