@@ -33,7 +33,7 @@ export class DuplicateRepository {
   constructor(@InjectKysely() private db: Kysely<DB>) {}
 
   @GenerateSql({ params: [DummyValue.UUID] })
-  getAll(userId: string) {
+  getAll(userId: string, type?: AssetType) {
     return (
       this.db
         .with('duplicates', (qb) =>
@@ -78,6 +78,7 @@ export class DuplicateRepository {
             .$narrowType<{ duplicateId: NotNull }>()
             .where('asset.deletedAt', 'is', null)
             .where('asset.stackId', 'is', null)
+            .$if(!!type, (eb) => eb.where('asset.type', '=', type!))
             .groupBy('asset.duplicateId'),
         )
         .selectFrom('duplicates')

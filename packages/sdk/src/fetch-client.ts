@@ -5463,11 +5463,15 @@ export function deleteDuplicates({ bulkIdsDto }: {
 /**
  * Retrieve duplicates
  */
-export function getAssetDuplicates(opts?: Oazapfts.RequestOpts) {
+export function getAssetDuplicates(query?: {
+    type?: AssetTypeEnum;
+}, opts?: Oazapfts.RequestOpts) {
     return oazapfts.ok(oazapfts.fetchJson<{
         status: 200;
         data: DuplicateResponseDto[];
-    }>("/duplicates", {
+    }>(`/duplicates${QS.query(QS.explode({
+        "type": query?.type
+    }))}`, {
         ...opts
     }));
 }

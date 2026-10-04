@@ -67,6 +67,10 @@
   let duplicates = $state(data.duplicates);
   let showMore = $state(false);
 
+  $effect(() => {
+    duplicates = data.duplicates;
+  });
+
   let isDeduplicating = $state(false);
   let progressCurrent = $state(0);
   let progressTotal = $state(0);
@@ -325,6 +329,16 @@
         media: mediaFilter !== 'all' ? mediaFilter : undefined,
       }),
     );
+
+  const switchMediaFilter = async (newFilter: 'all' | 'photo' | 'video') => {
+    mediaFilter = newFilter;
+    await goto(
+      Route.duplicatesUtility({
+        index: 0,
+        media: newFilter !== 'all' ? newFilter : undefined,
+      }),
+    );
+  };
 </script>
 
 <svelte:document
@@ -418,27 +432,27 @@
           class="rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors {mediaFilter === 'all'
             ? 'bg-white shadow text-primary dark:bg-gray-700 dark:text-white'
             : 'text-gray-600 dark:text-gray-300 hover:text-black dark:hover:text-white'}"
-          onclick={() => { mediaFilter = 'all'; }}
+          onclick={() => switchMediaFilter('all')}
         >
-          All Duplicates ({duplicates.length.toLocaleString($locale)})
+          All Duplicates {mediaFilter === 'all' ? `(${duplicates.length.toLocaleString($locale)})` : ''}
         </button>
         <button
           type="button"
           class="rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors {mediaFilter === 'photo'
             ? 'bg-white shadow text-primary dark:bg-gray-700 dark:text-white'
             : 'text-gray-600 dark:text-gray-300 hover:text-black dark:hover:text-white'}"
-          onclick={() => { mediaFilter = 'photo'; }}
+          onclick={() => switchMediaFilter('photo')}
         >
-          📷 Photos ({photoDuplicates.length.toLocaleString($locale)})
+          📷 Photos {mediaFilter === 'photo' ? `(${duplicates.length.toLocaleString($locale)})` : (mediaFilter === 'all' ? `(${photoDuplicates.length.toLocaleString($locale)})` : '')}
         </button>
         <button
           type="button"
           class="rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors {mediaFilter === 'video'
             ? 'bg-white shadow text-primary dark:bg-gray-700 dark:text-white'
             : 'text-gray-600 dark:text-gray-300 hover:text-black dark:hover:text-white'}"
-          onclick={() => { mediaFilter = 'video'; }}
+          onclick={() => switchMediaFilter('video')}
         >
-          🎬 Videos ({videoDuplicates.length.toLocaleString($locale)})
+          🎬 Videos {mediaFilter === 'video' ? `(${duplicates.length.toLocaleString($locale)})` : (mediaFilter === 'all' ? `(${videoDuplicates.length.toLocaleString($locale)})` : '')}
         </button>
       </div>
     </div>

@@ -83,37 +83,41 @@ const getUniqueCoordinate = (assets: MapAsset[], key: 'latitude' | 'longitude'):
 @Injectable()
 export class DuplicateService extends BaseService {
   async getDuplicates(auth: AuthDto, type?: AssetType): Promise<DuplicateResponseDto[]> {
-    // Clean up singleton groups (assets that are the only member of their duplicate group)
-    await this.duplicateRepository.cleanupSingletonGroups(auth.user.id);
-
-    let duplicates = await this.duplicateRepository.getAll(auth.user.id);
+    const duplicates = await this.duplicateRepository.getAll(auth.user.id, type);
     if (duplicates.length === 0) {
       return [];
-    }
-
-    if (type) {
-      duplicates = duplicates.filter(({ assets }) => assets.some((a) => a.type === type));
-      if (duplicates.length === 0) {
-        return [];
-      }
     }
 
     const { machineLearning } = await this.getConfig({ withCache: true });
     const keepPreference = machineLearning.duplicateDetection.keepPreference;
 
-    const albumMap =
-      (await this.albumRepository.getByAssetIds(
-        auth.user.id,
-        duplicates.flatMap(({ assets }) => assets.map(({ id }) => id)),
-      )) ?? new Map();
-    const albumCounts = new Map([...albumMap].map(([assetId, albumIds]) => [assetId, albumIds.length]));
+    const allAssetIds = duplicates.flatMap(({ assets }) => assets.map(({ id }) => id));
+    const albumCounts = new Map<string, number>();
 
-    return duplicates.map(({ duplicateId, assets }) => {
+    // Chunk album lookups to avoid exceeding postgres query parameter limits
+    const BATCH_SIZE = 1000;
+    for (let i = 0; i < allAssetIds.length; i += BATCH_SIZE) {
+      const batchIds = allAssetIds.slice(i, i + BATCH_SIZE);
+      const albumMap = await this.albumRepository.getByAssetIds(auth.user.id, batchIds);
+      if (albumMap) {
+        for (const [assetId, albumIds] of albumMap) {
+          albumCounts.set(assetId, albumIds.length);
+        }
+      }
+    }
+
+    const results: DuplicateResponseDto[] = [];
+    for (let i = 0; i < duplicates.length; i++) {
+      if (i > 0 && i % 250 === 0) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+
+      const { duplicateId, assets } = duplicates[i];
       const mappedAssets = assets.map((asset) => mapAsset(asset, { auth }));
       const quality = assessDuplicateQuality(mappedAssets, keepPreference, albumCounts);
       const suspectAssetIds = mappedAssets.filter(isAssetDateSuspect).map((a) => a.id);
 
-      return {
+      results.push({
         duplicateId,
         assets: mappedAssets,
         suggestedKeepAssetIds: suggestDuplicateKeepAssetIds(mappedAssets, keepPreference, albumCounts),
@@ -122,8 +126,10 @@ export class DuplicateService extends BaseService {
         betterQualityAssetIds: quality.betterQualityAssetIds,
         hasSuspectDate: suspectAssetIds.length > 0,
         suspectAssetIds,
-      };
-    });
+      });
+    }
+
+    return results;
   }
 
   async delete(auth: AuthDto, id: string): Promise<void> {

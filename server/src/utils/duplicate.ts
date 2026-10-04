@@ -579,7 +579,13 @@ export const getKeeperScore = (asset: AssetResponseDto, albumCount = 0): number 
   return score;
 };
 
-const compilePatterns = (patterns: string[]): RegExp[] => {
+const patternCache = new Map<string, RegExp[]>();
+const compilePatterns = (patterns: string[] = []): RegExp[] => {
+  const key = patterns.join('\0');
+  const cached = patternCache.get(key);
+  if (cached) {
+    return cached;
+  }
   const compiled: RegExp[] = [];
   for (const pattern of patterns) {
     try {
@@ -588,6 +594,7 @@ const compilePatterns = (patterns: string[]): RegExp[] => {
       // An unparseable user-supplied pattern must not take the duplicates page down; skip it.
     }
   }
+  patternCache.set(key, compiled);
   return compiled;
 };
 
@@ -711,6 +718,9 @@ export const assessDuplicateQuality = (
  */
 export const isSuspectExifDate = (dateValue?: string | Date | null): boolean => {
   if (!dateValue) {
+    return false;
+  }
+  if (typeof dateValue === 'string' && !dateValue.includes('2021')) {
     return false;
   }
   const d = typeof dateValue === 'string' ? new Date(dateValue) : dateValue;
