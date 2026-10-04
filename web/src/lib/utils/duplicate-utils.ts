@@ -376,3 +376,52 @@ export const copyBetterToHolding = async (duplicateIds?: string[]): Promise<Copy
   return res.json();
 };
 
+export const parseDateFromFilename = (fileName?: string | null): Date | null => {
+  if (!fileName) {
+    return null;
+  }
+
+  // 1. Dash/underscore/dot separated YYYY-MM-DD with optional time
+  const matchDelimited = fileName.match(
+    /(?:^|[^0-9a-zA-Z])(19[7-9]\d|20[0-3]\d)[-_.](0[1-9]|1[0-2])[-_.](0[1-9]|[12]\d|3[01])(?:(?:[ _T-]+|\s+at\s+)(0\d|1\d|2[0-3]|[0-9])[-_.:](0\d|[0-5]\d)(?:[-_.:](0\d|[0-5]\d))?(?:\s*(AM|PM))?)?(?:[^0-9a-zA-Z]|$)/i,
+  );
+  if (matchDelimited) {
+    const [, yr, mo, dy, hrStr, minStr, secStr, ampm] = matchDelimited;
+    let hr = hrStr ? +hrStr : 0;
+    const min = minStr ? +minStr : 0;
+    const sec = secStr ? +secStr : 0;
+    if (ampm) {
+      if (ampm.toUpperCase() === 'PM' && hr < 12) {
+        hr += 12;
+      }
+      if (ampm.toUpperCase() === 'AM' && hr === 12) {
+        hr = 0;
+      }
+    }
+    const d = new Date(Date.UTC(+yr, +mo - 1, +dy, hr, min, sec));
+    if (!isNaN(d.getTime())) {
+      return d;
+    }
+  }
+
+  // 2. Compact YYYYMMDD with optional HHMMSS
+  const matchCompact = fileName.match(
+    /(?:^|[^0-9])(19[7-9]\d|20[0-3]\d)(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])(?:[-_ ]?(0\d|1\d|2[0-3])([0-5]\d)([0-5]\d)?)?(?:[^0-9]|$)/,
+  );
+  if (matchCompact) {
+    const [, yr, mo, dy, hr, min, sec] = matchCompact;
+    const d = new Date(Date.UTC(+yr, +mo - 1, +dy, +(hr ?? 0), +(min ?? 0), +(sec ?? 0)));
+    if (!isNaN(d.getTime())) {
+      return d;
+    }
+  }
+
+  return null;
+};
+
+export const getFilenameDateString = (fileName?: string | null): string | null => {
+  const d = parseDateFromFilename(fileName);
+  if (!d) return null;
+  return d.toISOString().slice(0, 10);
+};
+

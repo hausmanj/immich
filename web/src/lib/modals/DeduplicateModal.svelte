@@ -146,14 +146,14 @@
       const ids = betterQualityOutsideGroups.map((g) => g.duplicateId);
       const res = await copyBetterToHolding(ids);
       if (res.failed > 0 && res.copied === 0 && res.alreadyExisted === 0) {
-        toastManager.error(res.errors[0] || 'Failed to copy better copies');
+        toastManager.danger(res.errors[0] || 'Failed to copy better copies');
       } else {
         toastManager.primary(
           `Copied ${res.copied} better quality files to holding folder (${res.alreadyExisted} already in holding)`,
         );
       }
     } catch (err: any) {
-      toastManager.error(err.message || 'Error copying better copies');
+      toastManager.danger(err.message || 'Error copying better copies');
     } finally {
       isCopyingHolding = false;
     }
@@ -185,7 +185,7 @@
         </div>
         <Button
           size="small"
-          variant="solid"
+          variant="filled"
           color="warning"
           loading={isCopyingHolding}
           disabled={isCopyingHolding}

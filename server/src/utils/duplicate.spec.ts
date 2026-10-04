@@ -14,6 +14,8 @@ import {
   getPathTier,
   isAssetDateSuspect,
   isSuspectExifDate,
+  parseDateFromFilename,
+  getAssetDateMs,
   PathTier,
   suggestDuplicate,
   suggestDuplicateKeepAssetIds,
@@ -755,6 +757,57 @@ describe('duplicate utils', () => {
 
       expect(isAssetDateSuspect(suspectAsset)).toBe(true);
       expect(isAssetDateSuspect(normalAsset)).toBe(false);
+    });
+
+    it('should flag an asset as suspect when its recorded date contradicts the filename date', () => {
+      // Filename clearly states 2016-11-16, but recorded date was overwritten with 2018-07-24 (e.g. from copy/mtime)
+      const mismatchAsset = {
+        originalFileName: 'Screen Shot 2016-11-16 at 10.44.12 AM.png',
+        localDateTime: '2018-07-24T21:19:29.083Z',
+        exifInfo: { dateTimeOriginal: '2018-07-24T21:19:29.083Z' },
+      };
+      expect(isAssetDateSuspect(mismatchAsset)).toBe(true);
+
+      // Filename matches recorded date
+      const matchingAsset = {
+        originalFileName: 'Screen Shot 2016-11-16 at 10.44.12 AM.png',
+        localDateTime: '2016-11-16T10:44:12.000Z',
+        exifInfo: { dateTimeOriginal: '2016-11-16T10:44:12.000Z' },
+      };
+      expect(isAssetDateSuspect(matchingAsset)).toBe(false);
+    });
+  });
+
+  describe('parseDateFromFilename and getAssetDateMs', () => {
+    it('should parse various filename date formats correctly', () => {
+      expect(parseDateFromFilename('Screen Shot 2016-11-16 at 10.44.12 AM.png')?.toISOString()).toBe(
+        '2016-11-16T10:44:12.000Z',
+      );
+      expect(parseDateFromFilename('20131117_121744-MOTION.gif')?.toISOString()).toBe('2013-11-17T12:17:44.000Z');
+      expect(
+        parseDateFromFilename('2AA428CC-7BDC-473D-9AB1-C98F7F7C77AF.20190811_162818_edited.jpg')?.toISOString(),
+      ).toBe('2019-08-11T16:28:18.000Z');
+      expect(parseDateFromFilename('20191122_155455.jpg')?.toISOString()).toBe('2019-11-22T15:54:55.000Z');
+      expect(parseDateFromFilename('Screenshot_2020-05-01-14-30-00.png')?.toISOString()).toBe(
+        '2020-05-01T14:30:00.000Z',
+      );
+      expect(parseDateFromFilename('IMG_20220315.jpg')?.toISOString()).toBe('2022-03-15T00:00:00.000Z');
+      expect(parseDateFromFilename('DSC000123.jpg')).toBeNull();
+    });
+
+    it('should use filename date in getAssetDateMs when recorded EXIF date is suspect or missing', () => {
+      const assetWithMtime = {
+        id: 'test-1',
+        checksum: 'abc',
+        originalFileName: '20191122_155455.jpg',
+        isEdited: false,
+        localDateTime: '2026-04-20T13:26:20.000Z', // Corrupt fallback mtime
+        exifInfo: { dateTimeOriginal: '2026-04-20T13:26:20.000Z' },
+      };
+
+      const dateMs = getAssetDateMs(assetWithMtime);
+      const expectedMs = Date.UTC(2019, 10, 22, 15, 54, 55);
+      expect(dateMs).toBe(expectedMs);
     });
   });
 

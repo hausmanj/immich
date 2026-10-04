@@ -202,7 +202,7 @@
       const ids = duplicateId ? [duplicateId] : [];
       const res = await copyBetterToHolding(ids);
       if (res.failed > 0 && res.copied === 0 && res.alreadyExisted === 0) {
-        toastManager.error(res.errors[0] || 'Failed to copy better copy');
+        toastManager.danger(res.errors[0] || 'Failed to copy better copy');
       } else {
         toastManager.primary(
           res.copied > 0
@@ -211,7 +211,7 @@
         );
       }
     } catch (err: any) {
-      toastManager.error(err.message || 'Error copying better copy');
+      toastManager.danger(err.message || 'Error copying better copy');
     } finally {
       isCopyingHolding = false;
     }
@@ -271,7 +271,7 @@
         </div>
         <Button
           size="small"
-          variant="solid"
+          variant="filled"
           color="warning"
           loading={isCopyingHolding}
           disabled={isCopyingHolding}

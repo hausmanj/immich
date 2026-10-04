@@ -1,7 +1,7 @@
 <script lang="ts">
   import { lang, locale } from '$lib/stores/preferences.store';
-  import { getAssetMediaUrl } from '$lib/utils';
-  import { getAllMetadataItems, type DifferingMetadataFields } from '$lib/utils/duplicate-utils';
+  import { getAssetMediaUrl, getAssetPlaybackUrl } from '$lib/utils';
+  import { getAllMetadataItems, getFilenameDateString, type DifferingMetadataFields } from '$lib/utils/duplicate-utils';
   import { getAltText } from '$lib/utils/thumbnail-util';
   import { toTimelineAsset } from '$lib/utils/timeline-util';
   import { getAssetResolution, getFileSize } from '$lib/utils/asset-utils';
@@ -13,6 +13,7 @@
     mdiHeart,
     mdiImageMultipleOutline,
     mdiMagnifyPlus,
+    mdiPlay,
     mdiWeightKilogram,
   } from '@mdi/js';
   import { t } from 'svelte-i18n';
@@ -52,6 +53,17 @@
 
   const listFormat = $derived(new Intl.ListFormat($lang));
   const isFromExternalLibrary = $derived(!!asset.libraryId);
+  const isVideo = $derived(asset.type === 'VIDEO');
+
+  let isPlayingVideo = $state(false);
+
+  const formatDuration = (ms?: number | null): string => {
+    if (!ms) return '';
+    const totalSeconds = Math.round(ms / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  };
 
   const visibleMetadataItems = $derived(
     getAllMetadataItems(asset, $t, $locale)
@@ -63,27 +75,54 @@
 
 <div class="min-w-60 flex-1 rounded-lg border transition-colors">
   <div class="relative w-full">
-    <button
-      type="button"
-      onclick={() => onSelectAsset(asset)}
-      class="relative block w-full"
-      aria-pressed={isSelected}
-      aria-label={$t('keep')}
-    >
-      <!-- THUMBNAIL-->
-      <img
-        src={getAssetMediaUrl({ id: asset.id })}
-        alt={$getAltText(toTimelineAsset(asset))}
-        class="h-60 w-full rounded-t-md object-cover"
-        draggable="false"
-      />
+    {#if isPlayingVideo}
+      <div class="relative h-60 w-full bg-black rounded-t-md overflow-hidden">
+        <video
+          src={getAssetPlaybackUrl({ id: asset.id })}
+          controls
+          autoplay
+          playsinline
+          class="h-full w-full object-contain"
+        >
+          <track kind="captions" />
+        </video>
+        <button
+          type="button"
+          onclick={() => { isPlayingVideo = false; }}
+          class="absolute top-2 left-2 rounded-full bg-black/70 px-2 py-0.5 text-xs text-white hover:bg-black"
+        >
+          ✕ Close Video
+        </button>
+      </div>
+    {:else}
+      <button
+        type="button"
+        onclick={() => onSelectAsset(asset)}
+        class="relative block w-full"
+        aria-pressed={isSelected}
+        aria-label={$t('keep')}
+      >
+        <!-- THUMBNAIL-->
+        <img
+          src={getAssetMediaUrl({ id: asset.id })}
+          alt={$getAltText(toTimelineAsset(asset))}
+          class="h-60 w-full rounded-t-md object-cover"
+          draggable="false"
+        />
 
-      <!-- FAVORITE ICON -->
-      {#if asset.isFavorite}
-        <div class="absolute inset-s-2 bottom-2">
-          <Icon icon={mdiHeart} size="24" class="text-white" />
-        </div>
-      {/if}
+        <!-- VIDEO DURATION BADGE -->
+        {#if isVideo && asset.duration}
+          <div class="absolute inset-s-2 bottom-2 rounded bg-black/75 px-1.5 py-0.5 text-xs font-mono font-medium text-white backdrop-blur-xs shadow">
+            ▶ {formatDuration(asset.duration)}
+          </div>
+        {/if}
+
+        <!-- FAVORITE ICON -->
+        {#if asset.isFavorite}
+          <div class="absolute {isVideo ? 'inset-s-2 bottom-8' : 'inset-s-2 bottom-2'}">
+            <Icon icon={mdiHeart} size="24" class="text-white" />
+          </div>
+        {/if}
 
       <!-- OVERLAY CHIP -->
       <div
@@ -122,11 +161,12 @@
           </div>
         {/if}
         {#if isSuspectDate}
+          {@const fnDate = getFilenameDateString(asset.originalFileName)}
           <div
             class="rounded-xl bg-rose-600 px-2 py-1 text-xs font-semibold text-white shadow-md"
-            title="Capture date in May-Aug 2015 or 2021 affected by Claude EXIF error"
+            title={fnDate ? `Filename indicates date ${fnDate}, which differs from recorded date` : "Capture date in May-Aug 2015 or 2021 affected by Claude EXIF error"}
           >
-            ⚠️ Suspect Date
+            ⚠️ Suspect Date{#if fnDate} ({fnDate}){/if}
           </div>
         {/if}
         {#if isFromExternalLibrary}
@@ -144,6 +184,24 @@
         {/if}
       </div>
     </button>
+    {/if}
+
+    <!-- VIDEO PLAY OVERLAY BUTTON -->
+    {#if isVideo && !isPlayingVideo}
+      <div class="pointer-events-none absolute inset-x-0 top-0 h-60 flex items-center justify-center">
+        <button
+          type="button"
+          onclick={(e) => {
+            e.stopPropagation();
+            isPlayingVideo = true;
+          }}
+          class="pointer-events-auto flex items-center justify-center rounded-full bg-black/60 p-3 text-white backdrop-blur-sm transition-transform hover:scale-110 active:scale-95 shadow-lg"
+          title="Play Video"
+        >
+          <Icon icon={mdiPlay} size="28" />
+        </button>
+      </div>
+    {/if}
 
     <button
       type="button"

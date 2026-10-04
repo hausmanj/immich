@@ -77,8 +77,30 @@
     progressTotal > 0 ? Math.min(100, Math.round((progressCurrent / progressTotal) * 100)) : 0,
   );
 
+  let mediaFilter = $state<'all' | 'photo' | 'video'>('all');
+
+  $effect(() => {
+    const mediaParam = page.url.searchParams.get('media');
+    if (mediaParam === 'video' || mediaParam === 'videos') {
+      mediaFilter = 'video';
+    } else if (mediaParam === 'photo' || mediaParam === 'photos') {
+      mediaFilter = 'photo';
+    }
+  });
+
+  const photoDuplicates = $derived(duplicates.filter((g) => g.assets.some((a) => a.type === 'IMAGE')));
+  const videoDuplicates = $derived(duplicates.filter((g) => g.assets.some((a) => a.type === 'VIDEO')));
+
+  const activeDuplicates = $derived(
+    mediaFilter === 'video'
+      ? videoDuplicates
+      : mediaFilter === 'photo'
+        ? photoDuplicates
+        : duplicates,
+  );
+
   const correctDuplicatesIndex = (index: number) => {
-    return Math.max(0, Math.min(index, duplicates.length - 1));
+    return Math.max(0, Math.min(index, activeDuplicates.length - 1));
   };
 
   let duplicatesIndex = $derived(
@@ -89,7 +111,7 @@
     })(),
   );
 
-  let hasDuplicates = $derived(duplicates.length > 0);
+  let hasDuplicates = $derived(activeDuplicates.length > 0);
   const withConfirmation = async (callback: () => Promise<void>, prompt?: string, confirmText?: string) => {
     if (prompt && confirmText) {
       const isConfirmed = await modalManager.showDialog({ prompt, confirmText });
@@ -279,13 +301,13 @@
     try {
       const res = await copyBetterToHolding();
       if (res.failed > 0 && res.copied === 0 && res.alreadyExisted === 0) {
-        toastManager.error(res.errors[0] || 'Failed to copy better copies to holding');
+        toastManager.danger(res.errors[0] || 'Failed to copy better copies to holding');
       } else {
         const msg = `Copied ${res.copied} better quality files to holding folder (${res.alreadyExisted} already in holding)`;
         toastManager.primary(msg);
       }
     } catch (err: any) {
-      toastManager.error(err.message || 'Error copying better copies to holding');
+      toastManager.danger(err.message || 'Error copying better copies to holding');
     } finally {
       isCopyingHolding = false;
     }
@@ -293,11 +315,16 @@
 
   const handleFirst = () => navigateToIndex(0);
   const handlePrevious = () => navigateToIndex(Math.max(duplicatesIndex - 1, 0));
-  const handleNext = async () => navigateToIndex(Math.min(duplicatesIndex + 1, duplicates.length - 1));
-  const handleLast = () => navigateToIndex(duplicates.length - 1);
+  const handleNext = async () => navigateToIndex(Math.min(duplicatesIndex + 1, activeDuplicates.length - 1));
+  const handleLast = () => navigateToIndex(activeDuplicates.length - 1);
 
   const navigateToIndex = async (index: number) =>
-    goto(Route.duplicatesUtility({ index: correctDuplicatesIndex(index) }));
+    goto(
+      Route.duplicatesUtility({
+        index: correctDuplicatesIndex(index),
+        media: mediaFilter !== 'all' ? mediaFilter : undefined,
+      }),
+    );
 </script>
 
 <svelte:document
@@ -309,7 +336,7 @@
       ]}
 />
 
-<UserPageLayout title={data.meta.title + ` (${duplicates.length.toLocaleString($locale)})`} scrollbar={true}>
+<UserPageLayout title={data.meta.title + ` (${activeDuplicates.length.toLocaleString($locale)})`} scrollbar={true}>
   {#snippet buttons()}
     <HStack gap={2}>
       {#if isDeduplicating}
@@ -329,7 +356,7 @@
         disabled={isCopyingHolding || isDeduplicating}
         loading={isCopyingHolding}
         size="small"
-        variant={betterQualityCount > 0 ? 'solid' : 'ghost'}
+        variant={betterQualityCount > 0 ? 'filled' : 'ghost'}
         color={betterQualityCount > 0 ? 'warning' : 'secondary'}
         title="Copy higher-quality duplicates outside originals to holding folder mirroring originals folder structure"
       >
@@ -349,7 +376,7 @@
         disabled={!hasDuplicates || isDeduplicating}
         loading={isDeduplicating}
         size="small"
-        variant={isDeduplicating ? 'solid' : 'ghost'}
+        variant={isDeduplicating ? 'filled' : 'ghost'}
         color={isDeduplicating ? 'primary' : 'secondary'}
       >
         <Text class="hidden md:block">
@@ -383,6 +410,39 @@
   {/snippet}
 
   <div>
+    <!-- MEDIA FILTER TOGGLE TABS -->
+    <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+      <div class="inline-flex rounded-xl bg-gray-100 p-1 dark:bg-gray-800 shadow-inner">
+        <button
+          type="button"
+          class="rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors {mediaFilter === 'all'
+            ? 'bg-white shadow text-primary dark:bg-gray-700 dark:text-white'
+            : 'text-gray-600 dark:text-gray-300 hover:text-black dark:hover:text-white'}"
+          onclick={() => { mediaFilter = 'all'; }}
+        >
+          All Duplicates ({duplicates.length.toLocaleString($locale)})
+        </button>
+        <button
+          type="button"
+          class="rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors {mediaFilter === 'photo'
+            ? 'bg-white shadow text-primary dark:bg-gray-700 dark:text-white'
+            : 'text-gray-600 dark:text-gray-300 hover:text-black dark:hover:text-white'}"
+          onclick={() => { mediaFilter = 'photo'; }}
+        >
+          📷 Photos ({photoDuplicates.length.toLocaleString($locale)})
+        </button>
+        <button
+          type="button"
+          class="rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors {mediaFilter === 'video'
+            ? 'bg-white shadow text-primary dark:bg-gray-700 dark:text-white'
+            : 'text-gray-600 dark:text-gray-300 hover:text-black dark:hover:text-white'}"
+          onclick={() => { mediaFilter = 'video'; }}
+        >
+          🎬 Videos ({videoDuplicates.length.toLocaleString($locale)})
+        </button>
+      </div>
+    </div>
+
     {#if isDeduplicating}
       <div class="mb-4 rounded-xl border border-primary/30 bg-primary/5 p-4 shadow-sm dark:bg-primary/10">
         <div class="flex items-center justify-between text-sm mb-2 font-medium">
@@ -407,25 +467,25 @@
       </div>
     {/if}
 
-    {#if duplicates && duplicates.length > 0}
+    {#if activeDuplicates && activeDuplicates.length > 0}
       <Text size="small" color="muted" class="mb-4">
         <p>{$t('duplicates_description')} <LinkToDocs href="https://docs.immich.app/features/duplicates-utility" /></p>
       </Text>
 
-      {#key duplicates[duplicatesIndex].duplicateId}
+      {#key activeDuplicates[duplicatesIndex].duplicateId}
         <DuplicatesCompareControl
-          duplicateId={duplicates[duplicatesIndex].duplicateId}
-          assets={duplicates[duplicatesIndex].assets}
-          classification={duplicates[duplicatesIndex].classification}
-          suggestedKeepAssetIds={duplicates[duplicatesIndex].suggestedKeepAssetIds}
-          betterQualityOutsideOriginals={duplicates[duplicatesIndex].betterQualityOutsideOriginals}
-          betterQualityAssetIds={duplicates[duplicatesIndex].betterQualityAssetIds}
-          hasSuspectDate={duplicates[duplicatesIndex].hasSuspectDate}
-          suspectAssetIds={duplicates[duplicatesIndex].suspectAssetIds}
+          duplicateId={activeDuplicates[duplicatesIndex].duplicateId}
+          assets={activeDuplicates[duplicatesIndex].assets}
+          classification={activeDuplicates[duplicatesIndex].classification}
+          suggestedKeepAssetIds={activeDuplicates[duplicatesIndex].suggestedKeepAssetIds}
+          betterQualityOutsideOriginals={activeDuplicates[duplicatesIndex].betterQualityOutsideOriginals}
+          betterQualityAssetIds={activeDuplicates[duplicatesIndex].betterQualityAssetIds}
+          hasSuspectDate={activeDuplicates[duplicatesIndex].hasSuspectDate}
+          suspectAssetIds={activeDuplicates[duplicatesIndex].suspectAssetIds}
           bind:showMore
           onResolve={(duplicateAssetIds, trashIds) =>
-            handleResolve(duplicates[duplicatesIndex].duplicateId, duplicateAssetIds, trashIds)}
-          onStack={(assets) => handleStack(duplicates[duplicatesIndex].duplicateId, assets)}
+            handleResolve(activeDuplicates[duplicatesIndex].duplicateId, duplicateAssetIds, trashIds)}
+          onStack={(assets) => handleStack(activeDuplicates[duplicatesIndex].duplicateId, assets)}
         />
         <div class="mx-auto mb-16 max-w-5xl">
           <div class="mb-4 flex w-full place-content-center place-items-center items-center justify-between sm:px-6">
@@ -452,7 +512,7 @@
               </Button>
             </div>
             <p class="rounded-lg border px-3 py-1 text-xs md:px-6 md:text-sm dark:bg-subtle">
-              {duplicatesIndex + 1} / {duplicates.length.toLocaleString($locale)}
+              {duplicatesIndex + 1} / {activeDuplicates.length.toLocaleString($locale)}
             </p>
             <div class="flex text-xs text-black">
               <Button
@@ -461,7 +521,7 @@
                 color="primary"
                 class="flex place-items-center gap-2 rounded-s-full px-2 sm:px-4"
                 onclick={handleNext}
-                disabled={duplicatesIndex === duplicates.length - 1}
+                disabled={duplicatesIndex === activeDuplicates.length - 1}
               >
                 {$t('next')}
               </Button>
@@ -471,7 +531,7 @@
                 color="primary"
                 class="flex place-items-center gap-2 rounded-e-full px-2 sm:px-4"
                 onclick={handleLast}
-                disabled={duplicatesIndex === duplicates.length - 1}
+                disabled={duplicatesIndex === activeDuplicates.length - 1}
               >
                 {$t('last')}
               </Button>
@@ -480,8 +540,14 @@
         </div>
       {/key}
     {:else}
-      <p class="flex place-content-center place-items-center text-center text-lg dark:text-white">
-        {$t('no_duplicates_found')}
+      <p class="flex place-content-center place-items-center text-center text-lg dark:text-white py-12">
+        {#if mediaFilter === 'video'}
+          No video duplicates found.
+        {:else if mediaFilter === 'photo'}
+          No photo duplicates found.
+        {:else}
+          {$t('no_duplicates_found')}
+        {/if}
       </p>
     {/if}
   </div>

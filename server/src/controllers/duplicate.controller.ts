@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Post, Query } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import type { AuthDto } from 'src/dtos/auth.dto.js';
 import { Endpoint, HistoryBuilder } from 'src/decorators.js';
@@ -6,6 +6,7 @@ import { BulkIdResponseDto, BulkIdsDto } from 'src/dtos/asset-ids.response.dto.j
 import {
   CopyBetterToHoldingDto,
   CopyBetterToHoldingResultDto,
+  DuplicateQueryDto,
   DuplicateResolveDto,
   DuplicateResponseDto,
 } from 'src/dtos/duplicate.dto.js';
@@ -26,8 +27,8 @@ export class DuplicateController {
     description: 'Retrieve a list of duplicate assets available to the authenticated user.',
     history: new HistoryBuilder().added('v1').beta('v1').stable('v2'),
   })
-  getAssetDuplicates(@Auth() auth: AuthDto): Promise<DuplicateResponseDto[]> {
-    return this.service.getDuplicates(auth);
+  getAssetDuplicates(@Auth() auth: AuthDto, @Query() query?: DuplicateQueryDto): Promise<DuplicateResponseDto[]> {
+    return this.service.getDuplicates(auth, query?.type);
   }
 
   @Delete()

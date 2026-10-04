@@ -129,13 +129,76 @@ export interface ClassifiableAsset {
   } | null;
 }
 
+/**
+ * Extracts a capture date from a filename if present.
+ * Handles patterns such as:
+ * - 2016-11-16, 2016_11_16, 2016.11.16
+ * - 20191122_155455, 20131117_121744
+ * - Screen Shot 2016-11-16 at 10.44.12 AM
+ * - Screenshot_20210815-123456
+ * - IMG_20180425_123456, VID_20200101_..., PXL_20220910_...
+ * - UUID-prefixed: 2AA428CC...20190811_162818...
+ */
+export const parseDateFromFilename = (fileName?: string | null): Date | null => {
+  if (!fileName) {
+    return null;
+  }
+
+  // 1. Dash/underscore/dot separated YYYY-MM-DD with optional time
+  // e.g. "Screen Shot 2016-11-16 at 10.44.12 AM", "2016-11-16_10-44-12", "Screenshot_2020-05-01-14-30-00"
+  const matchDelimited = fileName.match(
+    /(?:^|[^0-9a-zA-Z])(19[7-9]\d|20[0-3]\d)[-_.](0[1-9]|1[0-2])[-_.](0[1-9]|[12]\d|3[01])(?:(?:[ _T-]+|\s+at\s+)(0\d|1\d|2[0-3]|[0-9])[-_.:](0\d|[0-5]\d)(?:[-_.:](0\d|[0-5]\d))?(?:\s*(AM|PM))?)?(?:[^0-9a-zA-Z]|$)/i,
+  );
+  if (matchDelimited) {
+    const [, yr, mo, dy, hrStr, minStr, secStr, ampm] = matchDelimited;
+    let hr = hrStr ? +hrStr : 0;
+    const min = minStr ? +minStr : 0;
+    const sec = secStr ? +secStr : 0;
+    if (ampm) {
+      if (ampm.toUpperCase() === 'PM' && hr < 12) {
+        hr += 12;
+      }
+      if (ampm.toUpperCase() === 'AM' && hr === 12) {
+        hr = 0;
+      }
+    }
+    const d = new Date(Date.UTC(+yr, +mo - 1, +dy, hr, min, sec));
+    if (!isNaN(d.getTime())) {
+      return d;
+    }
+  }
+
+  // 2. Compact YYYYMMDD with optional HHMMSS
+  const matchCompact = fileName.match(
+    /(?:^|[^0-9])(19[7-9]\d|20[0-3]\d)(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])(?:[-_ ]?(0\d|1\d|2[0-3])([0-5]\d)([0-5]\d)?)?(?:[^0-9]|$)/,
+  );
+  if (matchCompact) {
+    const [, yr, mo, dy, hr, min, sec] = matchCompact;
+    const d = new Date(Date.UTC(+yr, +mo - 1, +dy, +(hr ?? 0), +(min ?? 0), +(sec ?? 0)));
+    if (!isNaN(d.getTime())) {
+      return d;
+    }
+  }
+
+  return null;
+};
+
 const getAssetWidth = (a: ClassifiableAsset): number => a.width ?? a.exifInfo?.exifImageWidth ?? 0;
 const getAssetHeight = (a: ClassifiableAsset): number => a.height ?? a.exifInfo?.exifImageHeight ?? 0;
-const getAssetDateMs = (a: ClassifiableAsset): number => {
+export const getAssetDateMs = (a: ClassifiableAsset): number => {
+  const fnDate = parseDateFromFilename(a.originalFileName);
   const d = a.exifInfo?.dateTimeOriginal ?? a.localDateTime ?? a.fileCreatedAt;
-  if (!d) return 0;
+  if (!d) {
+    return fnDate ? fnDate.getTime() : 0;
+  }
   const time = typeof d === 'string' ? new Date(d).getTime() : (d as Date).getTime?.() ?? 0;
-  return isNaN(time) ? 0 : time;
+  if (isNaN(time) || time === 0) {
+    return fnDate ? fnDate.getTime() : 0;
+  }
+  if (fnDate && (isSuspectExifDate(d) || Math.abs(time - fnDate.getTime()) > 86400000)) {
+    return fnDate.getTime();
+  }
+  return time;
 };
 const getBaseName = (fileName?: string): string => {
   if (!fileName) return '';
@@ -674,12 +737,31 @@ export const isAssetDateSuspect = (asset: {
   localDateTime?: string | Date | null;
   exifInfo?: { dateTimeOriginal?: string | Date | null } | null;
   fileCreatedAt?: string | Date | null;
+  originalFileName?: string | null;
 }): boolean => {
-  return (
+  if (
     isSuspectExifDate(asset.exifInfo?.dateTimeOriginal) ||
     isSuspectExifDate(asset.localDateTime) ||
     isSuspectExifDate(asset.fileCreatedAt)
-  );
+  ) {
+    return true;
+  }
+
+  if (asset.originalFileName) {
+    const fnDate = parseDateFromFilename(asset.originalFileName);
+    if (fnDate) {
+      const d = asset.exifInfo?.dateTimeOriginal ?? asset.localDateTime ?? asset.fileCreatedAt;
+      if (d) {
+        const time = typeof d === 'string' ? new Date(d).getTime() : (d as Date).getTime?.() ?? 0;
+        // Flag if recorded date differs by > 24 hours from filename date
+        if (!isNaN(time) && time > 0 && Math.abs(time - fnDate.getTime()) > 86400000) {
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
 };
 
 const getFileSize = (asset: AssetResponseDto): number => asset.exifInfo?.fileSizeInByte ?? 0;

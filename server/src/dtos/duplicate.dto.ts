@@ -1,6 +1,7 @@
 import { createZodDto } from 'nestjs-zod';
 import z from 'zod';
 import { AssetResponseSchema } from 'src/dtos/asset-response.dto.js';
+import { AssetType } from 'src/enum.js';
 import { DuplicateClassification } from 'src/utils/duplicate.js';
 
 const DuplicateResponseSchema = z
@@ -58,6 +59,14 @@ const DuplicateResolveSchema = z
 export class DuplicateResponseDto extends createZodDto(DuplicateResponseSchema) {}
 export class DuplicateResolveGroupDto extends createZodDto(DuplicateResolveGroupSchema) {}
 export class DuplicateResolveDto extends createZodDto(DuplicateResolveSchema) {}
+
+const DuplicateQuerySchema = z
+  .object({
+    type: z.nativeEnum(AssetType).optional().describe('Filter duplicates by asset type (IMAGE or VIDEO)'),
+  })
+  .meta({ id: 'DuplicateQueryDto' });
+
+export class DuplicateQueryDto extends createZodDto(DuplicateQuerySchema) {}
 
 const CopyBetterToHoldingSchema = z
   .object({

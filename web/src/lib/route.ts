@@ -138,7 +138,8 @@ export const Route = {
 
   // utilities
   utilities: () => '/utilities',
-  duplicatesUtility: (params?: { index?: number }) => '/utilities/duplicates' + asQueryString(params),
+  duplicatesUtility: (params?: { index?: number; media?: 'all' | 'photo' | 'video' | string }) =>
+    '/utilities/duplicates' + asQueryString(params),
   largeFileUtility: () => '/utilities/large-files',
   geolocationUtility: () => '/utilities/geolocation',
 

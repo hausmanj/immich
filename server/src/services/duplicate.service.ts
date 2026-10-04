@@ -13,7 +13,7 @@ import {
   DuplicateResolveGroupDto,
   DuplicateResponseDto,
 } from 'src/dtos/duplicate.dto.js';
-import { AssetStatus, AssetVisibility, JobName, JobStatus, Permission, QueueName } from 'src/enum.js';
+import { AssetStatus, AssetType, AssetVisibility, JobName, JobStatus, Permission, QueueName } from 'src/enum.js';
 import { AssetDuplicateResult } from 'src/repositories/search.repository.js';
 import { BaseService } from 'src/services/base.service.js';
 import {
@@ -82,13 +82,20 @@ const getUniqueCoordinate = (assets: MapAsset[], key: 'latitude' | 'longitude'):
 
 @Injectable()
 export class DuplicateService extends BaseService {
-  async getDuplicates(auth: AuthDto): Promise<DuplicateResponseDto[]> {
+  async getDuplicates(auth: AuthDto, type?: AssetType): Promise<DuplicateResponseDto[]> {
     // Clean up singleton groups (assets that are the only member of their duplicate group)
     await this.duplicateRepository.cleanupSingletonGroups(auth.user.id);
 
-    const duplicates = await this.duplicateRepository.getAll(auth.user.id);
+    let duplicates = await this.duplicateRepository.getAll(auth.user.id);
     if (duplicates.length === 0) {
       return [];
+    }
+
+    if (type) {
+      duplicates = duplicates.filter(({ assets }) => assets.some((a) => a.type === type));
+      if (duplicates.length === 0) {
+        return [];
+      }
     }
 
     const { machineLearning } = await this.getConfig({ withCache: true });
