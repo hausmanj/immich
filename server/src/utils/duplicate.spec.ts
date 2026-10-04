@@ -13,7 +13,9 @@ import {
   getKeeperScore,
   getPathTier,
   isAssetDateSuspect,
+  isCorruptedBatchDate,
   isSuspectExifDate,
+  KNOWN_CORRUPTED_EXPORT_DATES,
   parseDateFromFilename,
   getAssetDateMs,
   PathTier,
@@ -728,8 +730,15 @@ describe('duplicate utils', () => {
       expect(isSuspectExifDate('2021-08-31T23:59:59Z')).toBe(true);
     });
 
-    it('should not flag dates in 2015 (safe because originals are prioritized)', () => {
-      expect(isSuspectExifDate('2015-05-01T00:00:00Z')).toBe(false);
+    it('should flag known corrupted batch export dates', () => {
+      expect(isSuspectExifDate('2015-06-30T00:00:00Z')).toBe(true);
+      expect(isSuspectExifDate('2015-07-05T12:00:00Z')).toBe(true);
+      expect(isSuspectExifDate('2015-05-01T00:00:00Z')).toBe(true);
+      expect(isSuspectExifDate('2018-07-10T02:41:53Z')).toBe(true);
+      expect(isCorruptedBatchDate('2015-06-30')).toBe(true);
+    });
+
+    it('should not flag clean dates in 2015', () => {
       expect(isSuspectExifDate('2015-06-15T12:00:00Z')).toBe(false);
       expect(isSuspectExifDate('2015-07-20T18:30:00Z')).toBe(false);
       expect(isSuspectExifDate('2015-08-31T23:59:59Z')).toBe(false);
@@ -738,12 +747,12 @@ describe('duplicate utils', () => {
     it('should not flag dates in other months of 2021', () => {
       expect(isSuspectExifDate('2021-01-15T12:00:00Z')).toBe(false);
       expect(isSuspectExifDate('2021-05-05T08:00:00Z')).toBe(false);
-      expect(isSuspectExifDate('2021-06-30T10:15:00Z')).toBe(false);
+      expect(isSuspectExifDate('2021-06-25T10:15:00Z')).toBe(false);
       expect(isSuspectExifDate('2021-07-04T12:00:00Z')).toBe(false);
       expect(isSuspectExifDate('2021-09-10T12:00:00Z')).toBe(false);
     });
 
-    it('should not flag dates in other years', () => {
+    it('should not flag clean dates in other years', () => {
       expect(isSuspectExifDate('2014-06-15T12:00:00Z')).toBe(false);
       expect(isSuspectExifDate('2016-06-15T12:00:00Z')).toBe(false);
       expect(isSuspectExifDate('2020-07-04T12:00:00Z')).toBe(false);
@@ -792,6 +801,10 @@ describe('duplicate utils', () => {
         '2020-05-01T14:30:00.000Z',
       );
       expect(parseDateFromFilename('IMG_20220315.jpg')?.toISOString()).toBe('2022-03-15T00:00:00.000Z');
+      expect(parseDateFromFilename('Dec-15-2012_photo.jpg')?.toISOString()).toBe('2012-12-15T12:00:00.000Z');
+      expect(parseDateFromFilename('15-Dec-2012.jpg')?.toISOString()).toBe('2012-12-15T12:00:00.000Z');
+      expect(parseDateFromFilename('IMG-20180415-WA0002.jpg')?.toISOString()).toBe('2018-04-15T00:00:00.000Z');
+      expect(parseDateFromFilename('PXL_20230615_143022456.jpg')?.toISOString()).toBe('2023-06-15T14:30:22.000Z');
       expect(parseDateFromFilename('DSC000123.jpg')).toBeNull();
     });
 
@@ -845,6 +858,68 @@ describe('duplicate utils', () => {
 
       const keepIds = suggestDuplicateKeepAssetIds([rootPhoto, locationPhoto], preference);
       expect(keepIds).toEqual(['location-photo']);
+    });
+  });
+
+  describe('Corrupted/Suspect Date Filtering in Duplicate Selection', () => {
+    it('should never choose a candidate with a suspect/corrupted date as keeper when a clean date candidate exists', () => {
+      // Suspect candidate: 480x360, larger file size, but August 2021 date in apple_derivatives
+      const suspectAsset = at(
+        createAsset('suspect-thumbnail', 59_604, {
+          dateTimeOriginal: '2021-08-29T19:25:24.000Z' as any,
+          exifImageWidth: 480,
+          exifImageHeight: 360,
+        }),
+        '/mnt/mainphoto/_2026-08-30 volume1/photosync/photo exif unknown/_app_assets/apple_derivatives/AF03B5EE.jpeg',
+        { width: 480, height: 360 },
+      );
+
+      // Clean candidate: 360x270, smaller file size, but valid 2012 date
+      const cleanAsset = at(
+        createAsset('clean-photo', 31_000, {
+          dateTimeOriginal: '2012-02-28T06:21:48.000Z' as any,
+          exifImageWidth: 360,
+          exifImageHeight: 270,
+        }),
+        '/mnt/mainphoto/2012/February/IMG_1234.jpg',
+        { width: 360, height: 270 },
+      );
+
+      // Even though suspectAsset is larger (480x360 vs 360x270), cleanAsset MUST win
+      expect(suggestDuplicate([suspectAsset, cleanAsset])?.id).toBe('clean-photo');
+      expect(suggestDuplicate([cleanAsset, suspectAsset])?.id).toBe('clean-photo');
+      expect(suggestDuplicate([suspectAsset, cleanAsset], preference)?.id).toBe('clean-photo');
+      expect(suggestDuplicate([cleanAsset, suspectAsset], preference)?.id).toBe('clean-photo');
+    });
+
+    it('should prefer full-res clean original over corrupted date thumbnails and mini thumbnails', () => {
+      const corruptedThumb1 = at(
+        createAsset('corrupted-thumb-1', 55_112, {
+          dateTimeOriginal: '2015-07-05T15:38:57.000Z' as any,
+        }),
+        '/mnt/mainphoto/_no date/UNADJUSTEDNONRAW_mini_20c6.jpg',
+        { width: 360, height: 270 },
+      );
+      const corruptedThumb2 = at(
+        createAsset('corrupted-thumb-2', 59_604, {
+          dateTimeOriginal: '2021-08-29T19:25:24.000Z' as any,
+        }),
+        '/mnt/mainphoto/apple_derivatives/AF03B5EE.jpeg',
+        { width: 480, height: 360 },
+      );
+      const realOriginal = at(
+        createAsset('real-original', 4_821_409, {
+          dateTimeOriginal: '2012-02-28T06:21:48.000Z' as any,
+          exifImageWidth: 3968,
+          exifImageHeight: 2976,
+        }),
+        '/mnt/uploads_macbookpro/February 27, 2012/P2280510.JPG',
+        { width: 3968, height: 2976 },
+      );
+
+      const candidates = [corruptedThumb1, corruptedThumb2, realOriginal];
+      expect(suggestDuplicate(candidates, preference)?.id).toBe('real-original');
+      expect(suggestDuplicateKeepAssetIds(candidates, preference)).toEqual(['real-original']);
     });
   });
 });

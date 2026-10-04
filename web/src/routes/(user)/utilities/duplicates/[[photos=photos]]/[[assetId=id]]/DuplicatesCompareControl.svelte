@@ -286,10 +286,10 @@
       <div class="mt-2 rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs text-rose-900 dark:border-rose-700/60 dark:bg-rose-950/40 dark:text-rose-200">
         <div class="flex items-center gap-2 font-semibold">
           <Icon icon={mdiCalendarAlert} size="18" class="text-rose-600 dark:text-rose-400" />
-          <span>Suspect EXIF Date (August 2021)</span>
+          <span>Suspect EXIF / Fallback Export Date Detected</span>
         </div>
         <p class="mt-1 text-rose-800 dark:text-rose-300">
-          Photo(s) in this group have capture dates affected by the August 2021 Claude EXIF batch date error. Verify timestamps before archiving.
+          Photo(s) in this group carry suspect timestamps from export fallbacks (e.g. June 2015 / July 2018 cache dumps) or August 2021 batch errors. Clean, verified camera dates are strictly prioritized for keepers.
         </p>
       </div>
     {/if}

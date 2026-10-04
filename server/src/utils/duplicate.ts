@@ -139,14 +139,32 @@ export interface ClassifiableAsset {
  * - IMG_20180425_123456, VID_20200101_..., PXL_20220910_...
  * - UUID-prefixed: 2AA428CC...20190811_162818...
  */
+const MONTH_NAMES_MAP: Record<string, number> = {
+  jan: 1, january: 1,
+  feb: 2, february: 2,
+  mar: 3, march: 3,
+  apr: 4, april: 4,
+  may: 5,
+  jun: 6, june: 6,
+  jul: 7, july: 7,
+  aug: 8, august: 8,
+  sep: 9, sept: 9, september: 9,
+  oct: 10, october: 10,
+  nov: 11, november: 11,
+  dec: 12, december: 12,
+};
+
 export const parseDateFromFilename = (fileName?: string | null): Date | null => {
   if (!fileName) {
     return null;
   }
 
+  const baseName = fileName.replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? fileName;
+  const stem = baseName.replace(/\.[^.]+$/, '');
+
   // 1. Dash/underscore/dot separated YYYY-MM-DD with optional time
-  // e.g. "Screen Shot 2016-11-16 at 10.44.12 AM", "2016-11-16_10-44-12", "Screenshot_2020-05-01-14-30-00"
-  const matchDelimited = fileName.match(
+  // e.g. "Screen Shot 2016-11-16 at 10.44.12 AM", "2016-11-16_10-44-12", "Screenshot_2020-05-01-14-30-00", "2012.06.30"
+  const matchDelimited = stem.match(
     /(?:^|[^0-9a-zA-Z])(19[7-9]\d|20[0-3]\d)[-_.](0[1-9]|1[0-2])[-_.](0[1-9]|[12]\d|3[01])(?:(?:[ _T-]+|\s+at\s+)(0\d|1\d|2[0-3]|[0-9])[-_.:](0\d|[0-5]\d)(?:[-_.:](0\d|[0-5]\d))?(?:\s*(AM|PM))?)?(?:[^0-9a-zA-Z]|$)/i,
   );
   if (matchDelimited) {
@@ -168,15 +186,71 @@ export const parseDateFromFilename = (fileName?: string | null): Date | null => 
     }
   }
 
-  // 2. Compact YYYYMMDD with optional HHMMSS
-  const matchCompact = fileName.match(
-    /(?:^|[^0-9])(19[7-9]\d|20[0-3]\d)(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])(?:[-_ ]?(0\d|1\d|2[0-3])([0-5]\d)([0-5]\d)?)?(?:[^0-9]|$)/,
+  // 2. Compact YYYYMMDD with optional HHMMSS (e.g. PXL_20230615_143022, IMG_20220315, 20191122_155455, 14-digit run)
+  const matchCompact = stem.match(
+    /(?:^|[^0-9])(19[7-9]\d|20[0-3]\d)(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])(?:[-_ ]?(0\d|1\d|2[0-3])([0-5]\d)([0-5]\d)(?:\d{3})?)?(?:[^0-9]|$)/,
   );
   if (matchCompact) {
     const [, yr, mo, dy, hr, min, sec] = matchCompact;
     const d = new Date(Date.UTC(+yr, +mo - 1, +dy, +(hr ?? 0), +(min ?? 0), +(sec ?? 0)));
     if (!isNaN(d.getTime())) {
       return d;
+    }
+  }
+
+  // 3. Month name formats from HausPix: "Dec-15-2012", "December 15 2012" (MDY) or "15-Dec-2012" (DMY)
+  const matchMdy = stem.match(
+    /(?:^|[^0-9a-zA-Z])(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)[-_ ]+([0-3]?\d)[-_ ,]+((?:19[7-9]\d|20[0-3]\d))(?:[^0-9a-zA-Z]|$)/i,
+  );
+  if (matchMdy) {
+    const [, monStr, dayStr, yrStr] = matchMdy;
+    const mo = MONTH_NAMES_MAP[monStr.toLowerCase()];
+    const dy = +dayStr;
+    const yr = +yrStr;
+    if (mo && dy >= 1 && dy <= 31) {
+      const d = new Date(Date.UTC(yr, mo - 1, dy, 12, 0, 0));
+      if (!isNaN(d.getTime())) {
+        return d;
+      }
+    }
+  }
+
+  const matchDmy = stem.match(
+    /(?:^|[^0-9a-zA-Z])([0-3]?\d)[-_ ]+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)[-_ ,]+((?:19[7-9]\d|20[0-3]\d))(?:[^0-9a-zA-Z]|$)/i,
+  );
+  if (matchDmy) {
+    const [, dayStr, monStr, yrStr] = matchDmy;
+    const mo = MONTH_NAMES_MAP[monStr.toLowerCase()];
+    const dy = +dayStr;
+    const yr = +yrStr;
+    if (mo && dy >= 1 && dy <= 31) {
+      const d = new Date(Date.UTC(yr, mo - 1, dy, 12, 0, 0));
+      if (!isNaN(d.getTime())) {
+        return d;
+      }
+    }
+  }
+
+  // 4. WhatsApp: IMG-YYYYMMDD-WA0001
+  const matchWa = stem.match(/IMG-(19[7-9]\d|20[0-3]\d)(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])-WA/i);
+  if (matchWa) {
+    const [, yr, mo, dy] = matchWa;
+    const d = new Date(Date.UTC(+yr, +mo - 1, +dy, 12, 0, 0));
+    if (!isNaN(d.getTime())) {
+      return d;
+    }
+  }
+
+  // 5. Epoch timestamp in seconds (10 digits) or ms (13 digits), between 1980 and 2050
+  const matchEpoch = stem.match(/(?:^|[^0-9])([12]\d{9}|[12]\d{12})(?:[^0-9]|$)/);
+  if (matchEpoch) {
+    const num = +matchEpoch[1];
+    const ms = matchEpoch[1].length === 10 ? num * 1000 : num;
+    if (ms >= 315360000000 && ms <= 2524608000000) {
+      const d = new Date(ms);
+      if (!isNaN(d.getTime())) {
+        return d;
+      }
     }
   }
 
@@ -571,6 +645,17 @@ export const getKeeperScore = (asset: AssetResponseDto, albumCount = 0): number 
 
   score += Math.min(6, countMetadata(asset, albumCount) * 0.5);
 
+  const nameToCheck =
+    asset.originalFileName ||
+    (asset.originalPath ? asset.originalPath.split('/').filter(Boolean).pop() : null);
+  if (nameToCheck && parseDateFromFilename(nameToCheck)) {
+    score += 4;
+  }
+
+  if (isAssetDateSuspect(asset)) {
+    score -= 100;
+  }
+
   if (isProtected(asset)) {
     // Only a tie preference; never permission to discard.
     score -= 2;
@@ -699,8 +784,9 @@ export const assessDuplicateQuality = (
 
   const betterOutside = outsideItems.filter(
     (s) =>
-      s.score - bestOriginalsScore > scoreMargin ||
-      (s.pixels > bestOriginalsPixels * 1.05 && s.score >= bestOriginalsScore - 0.5),
+      !isAssetDateSuspect(s.asset) &&
+      (s.score - bestOriginalsScore > scoreMargin ||
+        (s.pixels > bestOriginalsPixels * 1.05 && s.score >= bestOriginalsScore - 0.5)),
   );
 
   return {
@@ -712,13 +798,43 @@ export const assessDuplicateQuality = (
 };
 
 /**
- * Checks if a date falls into August 2021.
- * Only August 2021 dates are suspect and require review.
- * Everything before 2018 is safe to resolve automatically because originals are prioritized.
+ * Known dates from batch export dumps and system conversion fallbacks
+ * where files lacked embedded camera EXIF dates.
+ */
+export const KNOWN_CORRUPTED_EXPORT_DATES = new Set([
+  '2015-06-30',
+  '2015-07-05',
+  '2013-10-26',
+  '2018-07-10',
+  '2016-07-14',
+  '2014-09-21',
+  '2015-07-02',
+  '2015-06-29',
+  '2015-05-01',
+  '2014-09-14',
+]);
+
+export const isCorruptedBatchDate = (dateValue?: string | Date | null): boolean => {
+  if (!dateValue) {
+    return false;
+  }
+  const str = typeof dateValue === 'string' ? dateValue : dateValue instanceof Date ? dateValue.toISOString() : '';
+  if (!str) {
+    return false;
+  }
+  const ymd = str.slice(0, 10);
+  return KNOWN_CORRUPTED_EXPORT_DATES.has(ymd);
+};
+
+/**
+ * Checks if a date falls into August 2021 or matches a known corrupted fallback date.
  */
 export const isSuspectExifDate = (dateValue?: string | Date | null): boolean => {
   if (!dateValue) {
     return false;
+  }
+  if (isCorruptedBatchDate(dateValue)) {
+    return true;
   }
   if (typeof dateValue === 'string' && !dateValue.includes('2021')) {
     return false;
@@ -748,6 +864,7 @@ export const isAssetDateSuspect = (asset: {
   exifInfo?: { dateTimeOriginal?: string | Date | null } | null;
   fileCreatedAt?: string | Date | null;
   originalFileName?: string | null;
+  originalPath?: string | null;
 }): boolean => {
   if (
     isSuspectExifDate(asset.exifInfo?.dateTimeOriginal) ||
@@ -757,8 +874,21 @@ export const isAssetDateSuspect = (asset: {
     return true;
   }
 
-  if (asset.originalFileName) {
-    const fnDate = parseDateFromFilename(asset.originalFileName);
+  if (
+    asset.originalPath &&
+    (asset.originalPath.includes('/_no date/') ||
+      asset.originalPath.includes('/apple_derivatives/') ||
+      asset.originalPath.includes('/photo exif unknown/'))
+  ) {
+    return true;
+  }
+
+  const nameToCheck =
+    asset.originalFileName ||
+    (asset.originalPath ? asset.originalPath.split('/').filter(Boolean).pop() : null);
+
+  if (nameToCheck) {
+    const fnDate = parseDateFromFilename(nameToCheck);
     if (fnDate) {
       const d = asset.exifInfo?.dateTimeOriginal ?? asset.localDateTime ?? asset.fileCreatedAt;
       if (d) {
@@ -838,7 +968,10 @@ const suggestBySize = (assets: AssetResponseDto[]): AssetResponseDto | undefined
     return undefined;
   }
 
-  let candidates = [...assets].toSorted((a, b) => getFileSize(a) - getFileSize(b));
+  const cleanCandidates = assets.filter((a) => !isAssetDateSuspect(a));
+  const pool = cleanCandidates.length > 0 ? cleanCandidates : assets;
+
+  let candidates = [...pool].toSorted((a, b) => getFileSize(a) - getFileSize(b));
   const largestFileSize = getFileSize(candidates.at(-1)!);
   candidates = candidates.filter((asset) => getFileSize(asset) === largestFileSize);
 
@@ -933,8 +1066,12 @@ export const suggestDuplicate = (
     return undefined;
   }
 
-  if (assets.length === 1 || !preference?.enabled) {
-    return suggestBySize(assets);
+  // Strictly prioritize non-suspect/clean dates: if any clean candidates exist, exclude suspect/corrupted dates
+  const cleanCandidates = assets.filter((a) => !isAssetDateSuspect(a));
+  const candidateAssets = cleanCandidates.length > 0 ? cleanCandidates : assets;
+
+  if (candidateAssets.length === 1 || !preference?.enabled) {
+    return suggestBySize(candidateAssets);
   }
 
   const preferred = compilePatterns(preference.preferredPathPatterns);
@@ -944,7 +1081,7 @@ export const suggestDuplicate = (
 
   const albumCountOf = (asset: AssetResponseDto) => albumCounts?.get(asset.id) ?? 0;
 
-  const scored = assets.map((asset) => ({
+  const scored = candidateAssets.map((asset) => ({
     asset,
     score: getKeeperScore(asset, albumCountOf(asset)),
     tier: getPathTier(asset, preferred, staging, originals, macbookPro),
@@ -955,7 +1092,7 @@ export const suggestDuplicate = (
 
   // Preference for originals as highest tier:
   if (originalsItems.length > 0) {
-    const quality = assessDuplicateQuality(assets, preference, albumCounts);
+    const quality = assessDuplicateQuality(candidateAssets, preference, albumCounts);
     if (quality.betterQualityOutsideOriginals) {
       // Quality is better outside originals: the tool flags this so the user can migrate manually.
       // For a single suggestion, pick the highest quality outside candidate.
