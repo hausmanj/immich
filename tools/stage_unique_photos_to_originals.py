@@ -86,7 +86,15 @@ def main():
             script_lines.append(f"mkdir -p {shlex.quote(dest_dir)} && cp -n {shlex.quote(src)} {shlex.quote(dest_file)}")
         remote_script = "\n".join(script_lines)
 
-        ssh_cmd = ["ssh", "-p", PORT, "-o", "BatchMode=yes", f"{USER}@{REMOTE}", "sh -e"]
+        ssh_cmd = [
+            "ssh",
+            "-p",
+            PORT,
+            "-o",
+            "BatchMode=yes",
+            f"{USER}@{REMOTE}",
+            "/usr/local/bin/docker run --rm -i -v /volume1:/volume1 -v /volume2:/volume2 alpine sh -e",
+        ]
         proc = subprocess.run(ssh_cmd, input=remote_script, text=True, capture_output=True)
         if proc.returncode != 0:
             print(f"Error executing batch {i//batch_size + 1}: {proc.stderr}")

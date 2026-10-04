@@ -198,34 +198,36 @@ def main():
         print("  python3 scan_video_duplicates.py --apply")
         return 0
 
-    # Apply to database
-    print(f"\nApplying {total_groups:,} video duplicate groups to immichx database…")
-    sql_statements = ["BEGIN;"]
+    # Apply to database in batches of 1,000 groups
+    print(f"\nApplying {total_groups:,} video duplicate groups to immichx database in batches...")
+    batch_size = 1000
     now_iso = datetime.now(timezone.utc).isoformat()
 
-    for group in matched_groups:
-        # Check if an existing duplicateId exists in the group
-        existing_dup_ids = [v["duplicate_id"] for v in group if v["duplicate_id"]]
-        target_dup_id = existing_dup_ids[0] if existing_dup_ids else str(uuid.uuid4())
+    for batch_idx in range(0, total_groups, batch_size):
+        batch = matched_groups[batch_idx : batch_idx + batch_size]
+        sql_statements = ["BEGIN;"]
+        for group in batch:
+            existing_dup_ids = [v["duplicate_id"] for v in group if v["duplicate_id"]]
+            target_dup_id = existing_dup_ids[0] if existing_dup_ids else str(uuid.uuid4())
 
-        asset_ids_sql = ", ".join(f"'{v['id']}'::uuid" for v in group)
-        sql_statements.append(f"""
-        UPDATE asset
-        SET "duplicateId" = '{target_dup_id}'::uuid
-        WHERE id IN ({asset_ids_sql});
-        """)
-        sql_statements.append(f"""
-        INSERT INTO asset_job_status ("assetId", "duplicatesDetectedAt")
-        VALUES {', '.join(f"('{v['id']}'::uuid, '{now_iso}')" for v in group)}
-        ON CONFLICT ("assetId") DO UPDATE
-        SET "duplicatesDetectedAt" = EXCLUDED."duplicatesDetectedAt";
-        """)
+            asset_ids_sql = ", ".join(f"'{v['id']}'::uuid" for v in group)
+            sql_statements.append(f"""
+            UPDATE asset
+            SET "duplicateId" = '{target_dup_id}'::uuid
+            WHERE id IN ({asset_ids_sql});
+            """)
+            sql_statements.append(f"""
+            INSERT INTO asset_job_status ("assetId", "duplicatesDetectedAt")
+            VALUES {', '.join(f"('{v['id']}'::uuid, '{now_iso}')" for v in group)}
+            ON CONFLICT ("assetId") DO UPDATE
+            SET "duplicatesDetectedAt" = EXCLUDED."duplicatesDetectedAt";
+            """)
+        sql_statements.append("COMMIT;")
+        batch_script = "\n".join(sql_statements)
+        execute_sql(batch_script)
+        applied_so_far = min(batch_idx + batch_size, total_groups)
+        print(f"  Applied {applied_so_far:,}/{total_groups:,} groups...")
 
-    sql_statements.append("COMMIT;")
-    batch_script = "\n".join(sql_statements)
-
-    print("Executing update transaction over SSH…")
-    execute_sql(batch_script)
     print("Successfully updated video duplicate links in ImmichX database!")
     return 0
 
