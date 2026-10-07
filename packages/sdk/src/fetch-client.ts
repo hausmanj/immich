@@ -7493,7 +7493,7 @@ export function tagAssets({ id, bulkIdsDto }: {
 /**
  * Get time bucket
  */
-export function getTimeBucket({ albumId, bbox, isFavorite, isTrashed, key, order, orderBy, personId, slug, tagId, timeBucket, userId, visibility, withCoordinates, withPartners, withStacked }: {
+export function getTimeBucket({ albumId, bbox, isFavorite, isTrashed, key, order, orderBy, personId, sizeGreaterThan, sizeLessThan, slug, tagId, timeBucket, userId, visibility, withCoordinates, withPartners, withStacked }: {
     albumId?: string;
     bbox?: string;
     isFavorite?: boolean;
@@ -7502,6 +7502,8 @@ export function getTimeBucket({ albumId, bbox, isFavorite, isTrashed, key, order
     order?: AssetOrder;
     orderBy?: AssetOrderBy;
     personId?: string;
+    sizeGreaterThan?: number;
+    sizeLessThan?: number;
     slug?: string;
     tagId?: string;
     timeBucket: string;
@@ -7523,6 +7525,8 @@ export function getTimeBucket({ albumId, bbox, isFavorite, isTrashed, key, order
         order,
         orderBy,
         personId,
+        sizeGreaterThan,
+        sizeLessThan,
         slug,
         tagId,
         timeBucket,
@@ -7538,7 +7542,7 @@ export function getTimeBucket({ albumId, bbox, isFavorite, isTrashed, key, order
 /**
  * Get time buckets
  */
-export function getTimeBuckets({ albumId, bbox, isFavorite, isTrashed, key, order, orderBy, personId, slug, tagId, userId, visibility, withCoordinates, withPartners, withStacked }: {
+export function getTimeBuckets({ albumId, bbox, isFavorite, isTrashed, key, order, orderBy, personId, sizeGreaterThan, sizeLessThan, slug, tagId, userId, visibility, withCoordinates, withPartners, withStacked }: {
     albumId?: string;
     bbox?: string;
     isFavorite?: boolean;
@@ -7547,6 +7551,8 @@ export function getTimeBuckets({ albumId, bbox, isFavorite, isTrashed, key, orde
     order?: AssetOrder;
     orderBy?: AssetOrderBy;
     personId?: string;
+    sizeGreaterThan?: number;
+    sizeLessThan?: number;
     slug?: string;
     tagId?: string;
     userId?: string;
@@ -7567,6 +7573,8 @@ export function getTimeBuckets({ albumId, bbox, isFavorite, isTrashed, key, orde
         order,
         orderBy,
         personId,
+        sizeGreaterThan,
+        sizeLessThan,
         slug,
         tagId,
         userId,

@@ -73,10 +73,10 @@
   );
 </script>
 
-<div class="min-w-60 flex-1 rounded-lg border transition-colors">
+<div class="min-w-[260px] flex-1 rounded-xl border transition-colors overflow-hidden">
   <div class="relative w-full">
     {#if isPlayingVideo}
-      <div class="relative h-60 w-full bg-black rounded-t-md overflow-hidden">
+      <div class="relative h-[32vh] sm:h-[35vh] max-h-[380px] min-h-[160px] w-full bg-black rounded-t-md overflow-hidden">
         <video
           src={getAssetPlaybackUrl({ id: asset.id })}
           controls
@@ -98,7 +98,7 @@
       <button
         type="button"
         onclick={() => onSelectAsset(asset)}
-        class="relative block w-full"
+        class="relative block w-full bg-black/5 dark:bg-black/30"
         aria-pressed={isSelected}
         aria-label={$t('keep')}
       >
@@ -106,7 +106,7 @@
         <img
           src={getAssetMediaUrl({ id: asset.id })}
           alt={$getAltText(toTimelineAsset(asset))}
-          class="h-60 w-full rounded-t-md object-cover"
+          class="h-[32vh] sm:h-[35vh] max-h-[380px] min-h-[160px] w-full rounded-t-md object-contain"
           draggable="false"
         />
 
@@ -188,7 +188,7 @@
 
     <!-- VIDEO PLAY OVERLAY BUTTON -->
     {#if isVideo && !isPlayingVideo}
-      <div class="pointer-events-none absolute inset-x-0 top-0 h-60 flex items-center justify-center">
+      <div class="pointer-events-none absolute inset-x-0 top-0 h-[32vh] sm:h-[35vh] max-h-[380px] min-h-[160px] flex items-center justify-center">
         <button
           type="button"
           onclick={(e) => {
@@ -214,7 +214,7 @@
   </div>
 
   <div
-    class="grid place-items-start gap-y-2 rounded-b-lg py-2 text-sm transition-colors {isSelected
+    class="grid place-items-start gap-y-1 rounded-b-lg py-1.5 px-2 text-xs sm:text-sm transition-colors {isSelected
       ? 'bg-success/15 dark:bg-[#001a06]'
       : 'bg-transparent'}"
   >

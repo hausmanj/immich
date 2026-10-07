@@ -237,9 +237,9 @@
   ]}
 />
 
-<div class="px-0.2 mx-auto mb-4 max-w-5xl rounded-3xl border border-gray-300 py-6 dark:border-2 dark:border-gray-700">
+<div class="w-full mb-3 rounded-2xl border border-gray-300 py-3 dark:border-2 dark:border-gray-700">
   <!-- WHY THIS GROUP EXISTS & COMPARISON DETAILS -->
-  <div class="mb-4 flex flex-col gap-1.5 px-6 text-xs">
+  <div class="mb-2 flex flex-col gap-1 px-4 text-xs">
     <div class="flex items-center gap-2">
       <Icon icon={evidence.reviewOnly ? mdiEyeCheckOutline : mdiCheck} size="18" class="shrink-0" />
       <span class="font-medium text-gray-700 dark:text-gray-200">{$t(evidence.key)}</span>
@@ -347,7 +347,7 @@
   </div>
 
   <div class="overflow-x-auto p-2">
-    <div class="mx-auto flex w-fit min-w-full flex-nowrap place-items-start justify-center gap-1">
+    <div class="mx-auto flex w-fit min-w-full flex-nowrap place-items-start justify-center gap-3">
       {#each assets as asset (asset.id)}
         <DuplicateAsset
           {asset}

@@ -227,11 +227,11 @@ export const asQueueItem = ($t: MessageFormatter, queue: { name: QueueName }): Q
       title: $t('admin.background_task_job'),
     },
     [QueueName.Search]: {
-      icon: '',
+      icon: mdiImageSearch,
       title: $t('search'),
     },
     [QueueName.Notifications]: {
-      icon: '',
+      icon: mdiTrayFull,
       title: $t('notifications'),
     },
     [QueueName.BackupDatabase]: {
@@ -252,5 +252,11 @@ export const asQueueItem = ($t: MessageFormatter, queue: { name: QueueName }): Q
     },
   };
 
-  return items[queue.name];
+  return (
+    items[queue.name as QueueName] ?? {
+      icon: mdiTrayFull,
+      title: transformToTitleCase(queue.name),
+      subtitle: `Queue: ${queue.name}`,
+    }
+  );
 };

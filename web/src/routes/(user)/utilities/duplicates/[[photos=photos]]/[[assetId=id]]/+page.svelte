@@ -193,7 +193,7 @@
       const keepIds = new Set(
         group.suggestedKeepAssetIds?.length > 0 ? group.suggestedKeepAssetIds : [group.assets[0]?.id],
       );
-      return group.assets.map((asset) => asset.id).filter((id) => !keepIds.has(id));
+      return group.assets.filter((asset) => !keepIds.has(asset.id)).map((asset) => asset.id);
     });
 
     if (idsToDelete.length === 0) {
@@ -219,20 +219,26 @@
       for (let i = 0; i < selectedGroups.length; i += batchSize) {
         currentBatch++;
         const batch = selectedGroups.slice(i, i + batchSize);
+        const dtoGroups = batch.map((group) => {
+          const keepIds = new Set(
+            group.suggestedKeepAssetIds?.length > 0 ? group.suggestedKeepAssetIds : [group.assets[0]?.id],
+          );
+          return {
+            duplicateId: group.duplicateId,
+            keepAssetIds: [...keepIds],
+            trashAssetIds: group.assets
+              .filter((asset) => !keepIds.has(asset.id))
+              .map((asset) => asset.id),
+            reviewed: true,
+          };
+        });
+
+        const trashCountMap = new Map(dtoGroups.map((g) => [g.duplicateId, g.trashAssetIds.length]));
+
         try {
           const response = await resolveDuplicates({
             duplicateResolveDto: {
-              groups: batch.map((group) => {
-                const keepAssetIds =
-                  group.suggestedKeepAssetIds?.length > 0 ? group.suggestedKeepAssetIds : [group.assets[0]?.id];
-                const keepIds = new Set(keepAssetIds);
-                return {
-                  duplicateId: group.duplicateId,
-                  keepAssetIds,
-                  trashAssetIds: group.assets.map((asset) => asset.id).filter((id) => !keepIds.has(id)),
-                  reviewed: true,
-                };
-              }),
+              groups: dtoGroups,
             },
           });
 
@@ -240,15 +246,10 @@
           if (successfulIds.size > 0) {
             totalResolvedGroups += successfulIds.size;
             progressCurrent += successfulIds.size;
-            for (const g of batch) {
-              if (successfulIds.has(g.duplicateId)) {
-                const keepIds = new Set(
-                  g.suggestedKeepAssetIds?.length > 0 ? g.suggestedKeepAssetIds : [g.assets[0]?.id],
-                );
-                const trashedInGroup = g.assets.filter((a) => !keepIds.has(a.id)).length;
-                totalTrashedAssets += trashedInGroup;
-                progressTrashed += trashedInGroup;
-              }
+            for (const id of successfulIds) {
+              const trashed = trashCountMap.get(id) ?? 0;
+              totalTrashedAssets += trashed;
+              progressTrashed += trashed;
             }
             duplicates = duplicates.filter(({ duplicateId }) => !successfulIds.has(duplicateId));
           } else {
@@ -303,11 +304,33 @@
   const handleCopyBetterToHolding = async () => {
     isCopyingHolding = true;
     try {
-      const res = await copyBetterToHolding();
-      if (res.failed > 0 && res.copied === 0 && res.alreadyExisted === 0) {
-        toastManager.danger(res.errors[0] || 'Failed to copy better copies to holding');
+      const betterGroups = duplicates.filter((g) => g.betterQualityOutsideOriginals);
+      if (betterGroups.length === 0) {
+        toastManager.primary('No groups with higher quality outside originals found.');
+        return;
+      }
+
+      toastManager.primary(`Copying better copies from ${betterGroups.length} groups to holding folder…`);
+
+      const batchSize = 100;
+      let totalCopied = 0;
+      let totalExisted = 0;
+      let totalFound = 0;
+      let failed = 0;
+
+      for (let i = 0; i < betterGroups.length; i += batchSize) {
+        const batchIds = betterGroups.slice(i, i + batchSize).map((g) => g.duplicateId);
+        const res = await copyBetterToHolding(batchIds);
+        totalCopied += res.copied;
+        totalExisted += res.alreadyExisted;
+        totalFound += res.totalFound;
+        failed += res.failed;
+      }
+
+      if (failed > 0 && totalCopied === 0 && totalExisted === 0) {
+        toastManager.danger('Failed to copy better copies to holding');
       } else {
-        const msg = `Copied ${res.copied} better quality files to holding folder (${res.alreadyExisted} already in holding)`;
+        const msg = `Copied ${totalCopied} better quality files to holding folder (${totalExisted} already in holding)`;
         toastManager.primary(msg);
       }
     } catch (err: any) {
@@ -482,7 +505,7 @@
     {/if}
 
     {#if activeDuplicates && activeDuplicates.length > 0}
-      <Text size="small" color="muted" class="mb-4">
+      <Text size="small" color="muted" class="mb-2">
         <p>{$t('duplicates_description')} <LinkToDocs href="https://docs.immich.app/features/duplicates-utility" /></p>
       </Text>
 
@@ -501,8 +524,8 @@
             handleResolve(activeDuplicates[duplicatesIndex].duplicateId, duplicateAssetIds, trashIds)}
           onStack={(assets) => handleStack(activeDuplicates[duplicatesIndex].duplicateId, assets)}
         />
-        <div class="mx-auto mb-16 max-w-5xl">
-          <div class="mb-4 flex w-full place-content-center place-items-center items-center justify-between sm:px-6">
+        <div class="w-full mb-2">
+          <div class="mb-2 flex w-full place-content-center place-items-center items-center justify-between sm:px-6">
             <div class="flex text-xs text-black">
               <Button
                 size="small"

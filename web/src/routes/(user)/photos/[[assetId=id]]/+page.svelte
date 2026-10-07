@@ -31,13 +31,62 @@
   import { toTimelineAsset } from '$lib/utils/timeline-util';
   import { AssetVisibility } from '@immich/sdk';
   import MemoryCard from '$lib/components/memories/MemoryCard.svelte';
-  import { ActionButton, CommandPaletteDefaultProvider, ImageCarousel } from '@immich/ui';
-  import { mdiDotsVertical } from '@mdi/js';
+  import { page } from '$app/state';
+  import { ActionButton, CommandPaletteDefaultProvider, Icon, ImageCarousel } from '@immich/ui';
+  import { mdiClose, mdiDotsVertical, mdiFilterVariant } from '@mdi/js';
   import { DateTime } from 'luxon';
   import { t } from 'svelte-i18n';
 
   let timelineManager = $state<TimelineManager>() as TimelineManager;
-  const options = { visibility: AssetVisibility.Timeline, withStacked: true, withPartners: true };
+
+  const SIZE_PRESETS = [
+    { label: 'All', value: null },
+    { label: '< 50 KB', value: 50 * 1024 },
+    { label: '< 100 KB', value: 100 * 1024 },
+    { label: '< 250 KB', value: 250 * 1024 },
+    { label: '< 500 KB', value: 500 * 1024 },
+    { label: '< 1 MB', value: 1024 * 1024 },
+  ];
+
+  let selectedSizeLimit = $state<number | null>(() => {
+    const param = page.url.searchParams.get('maxSize');
+    if (param && !isNaN(Number(param))) {
+      return Number(param);
+    }
+    return null;
+  });
+  let customKbInput = $state<string>('');
+
+  const selectPreset = (value: number | null) => {
+    selectedSizeLimit = value;
+    customKbInput = '';
+  };
+
+  const applyCustomKb = () => {
+    const kb = parseFloat(customKbInput.trim());
+    if (!isNaN(kb) && kb > 0) {
+      selectedSizeLimit = Math.round(kb * 1024);
+    }
+  };
+
+  const clearFilter = () => {
+    selectedSizeLimit = null;
+    customKbInput = '';
+  };
+
+  const formatBytes = (bytes: number) => {
+    if (bytes < 1024 * 1024) {
+      return `${Math.round(bytes / 1024)} KB`;
+    }
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const options = $derived({
+    visibility: AssetVisibility.Timeline,
+    withStacked: true,
+    withPartners: true,
+    ...(selectedSizeLimit !== null ? { sizeLessThan: selectedSizeLimit } : {}),
+  });
 
   let selectedAssets = $derived(assetMultiSelectManager.assets);
   let isLinkActionAvailable = $derived.by(() => {
@@ -90,26 +139,103 @@
 </script>
 
 <UserPageLayout hideNavbar={assetMultiSelectManager.selectionActive} scrollbar={false}>
-  <Timeline
-    enableRouting={true}
-    bind:timelineManager
-    {options}
-    assetInteraction={assetMultiSelectManager}
-    removeAction={AssetAction.ARCHIVE}
-    onEscape={handleEscape}
-    withStacked
-  >
-    {#if authManager.preferences.memories.enabled}
-      <ImageCarousel {items}>
-        {#snippet child(item)}
-          <MemoryCard {item} />
+  <div class="flex flex-col h-full w-full">
+    <!-- File Size Filter Toolbar -->
+    <div
+      class="flex flex-wrap items-center gap-2 px-3 py-1.5 bg-immich-bg dark:bg-immich-dark-bg border-b border-gray-200/80 dark:border-gray-800 text-xs shrink-0 select-none z-10"
+    >
+      <div class="flex items-center gap-1.5 font-semibold text-gray-700 dark:text-gray-300 me-1">
+        <Icon icon={mdiFilterVariant} size="16" />
+        <span>File Size:</span>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-1.5">
+        {#each SIZE_PRESETS as preset}
+          {@const isSelected = selectedSizeLimit === preset.value}
+          <button
+            type="button"
+            class="px-2.5 py-1 rounded-full font-medium transition-colors {isSelected
+              ? 'bg-primary text-light dark:bg-immich-dark-primary dark:text-immich-dark-gray shadow-xs'
+              : 'bg-gray-100 hover:bg-gray-200 text-gray-700 dark:bg-gray-800 dark:hover:bg-gray-700 dark:text-gray-300'}"
+            onclick={() => selectPreset(preset.value)}
+          >
+            {preset.label}
+          </button>
+        {/each}
+      </div>
+
+      <form
+        class="flex items-center gap-1 ms-1"
+        onsubmit={(e) => {
+          e.preventDefault();
+          applyCustomKb();
+        }}
+      >
+        <span class="text-gray-500 dark:text-gray-400">&lt;</span>
+        <input
+          type="number"
+          min="1"
+          placeholder="Custom KB"
+          bind:value={customKbInput}
+          class="w-20 px-2 py-0.5 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 text-xs focus:outline-hidden focus:ring-1 focus:ring-primary"
+        />
+        <button
+          type="submit"
+          class="px-2 py-0.5 rounded bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200 font-medium"
+        >
+          Apply
+        </button>
+      </form>
+
+      {#if selectedSizeLimit !== null}
+        <div class="flex items-center gap-1 ms-auto text-xs">
+          <span
+            class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-primary/10 text-primary dark:bg-immich-dark-primary/20 dark:text-immich-dark-primary font-medium"
+          >
+            Filtering: &lt; {formatBytes(selectedSizeLimit)}
+          </span>
+          <button
+            type="button"
+            class="p-1 rounded-full text-gray-400 hover:text-red-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+            title="Clear filter"
+            onclick={clearFilter}
+          >
+            <Icon icon={mdiClose} size="14" />
+          </button>
+        </div>
+      {/if}
+    </div>
+
+    <!-- Timeline Grid -->
+    <div class="flex-1 min-h-0 relative">
+      <Timeline
+        enableRouting={true}
+        bind:timelineManager
+        {options}
+        assetInteraction={assetMultiSelectManager}
+        removeAction={AssetAction.ARCHIVE}
+        onEscape={handleEscape}
+        withStacked
+      >
+        {#if authManager.preferences.memories.enabled}
+          <ImageCarousel {items}>
+            {#snippet child(item)}
+              <MemoryCard {item} />
+            {/snippet}
+          </ImageCarousel>
+        {/if}
+        {#snippet empty()}
+          <EmptyPlaceholder
+            text={selectedSizeLimit !== null
+              ? `No assets found under ${formatBytes(selectedSizeLimit)}`
+              : $t('no_assets_message')}
+            onClick={() => (selectedSizeLimit !== null ? clearFilter() : openFileUploadDialog())}
+            class="mx-auto mt-10"
+          />
         {/snippet}
-      </ImageCarousel>
-    {/if}
-    {#snippet empty()}
-      <EmptyPlaceholder text={$t('no_assets_message')} onClick={() => openFileUploadDialog()} class="mx-auto mt-10" />
-    {/snippet}
-  </Timeline>
+      </Timeline>
+    </div>
+  </div>
 </UserPageLayout>
 
 {#if assetMultiSelectManager.selectionActive}

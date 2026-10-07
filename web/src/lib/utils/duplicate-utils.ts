@@ -309,7 +309,7 @@ export const computeDifferingMetadataFields = (assets: AssetResponseDto[]): Diff
 };
 
 const GENERIC_SEGMENT_REGEX =
-  /^(mnt|volume\d+(_\w+)?|photosync|docker|upload[s]?|usr|app|var|data|home|users|originals(_clean)?|uploads_macbookpro|uploads_immich|master photo library|mainphoto|laptop backup|photos|dcim|\d{3}[a-z0-9_]+|camera(_roll)?|sdcard|internal_storage|\d{4}|\d{2}|\d{4}[-_.]\d{2}([-_.]\d{2})?|\d{8}|(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|january|february|march|april|june|july|august|september|october|november|december))$/i;
+  /^(mnt|volume\d+(_\w+)?|photosync|docker|upload[s]?|usr|app|var|data|home|users|originals(_clean)?|uploads_macbookpro|uploads_immich|master photo library|mainphoto|laptop backup|photos|dcim|\d{3}[a-z0-9_]+|camera(_roll)?|sdcard|internal_storage|_?no[ _]?date|apple_derivatives|_app_assets|photo exif unknown|moved.*|.*mistaken duplicate.*|\d{4}|\d{2}|\d{4}[-_.]\d{2}([-_.]\d{2})?|\d{8}|(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|january|february|march|april|june|july|august|september|october|november|december))$/i;
 
 export interface FolderOrganizationScore {
   descriptiveSegmentsCount: number;

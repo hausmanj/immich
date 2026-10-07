@@ -58,7 +58,7 @@ export const mapQueuesLegacy = (responses: QueueResponseDto[]): QueuesResponseLe
   const legacy = new QueuesResponseLegacyDto();
 
   for (const response of responses) {
-    legacy[response.name] = mapQueueLegacy(response);
+    (legacy as any)[response.name] = mapQueueLegacy(response);
   }
 
   return legacy;

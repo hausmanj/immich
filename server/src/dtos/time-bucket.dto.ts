@@ -29,6 +29,14 @@ const TimeBucketQueryBaseSchema = z
     visibility: AssetVisibilitySchema.optional().describe(
       'Filter by asset visibility status (ARCHIVE, TIMELINE, HIDDEN, LOCKED)',
     ),
+    sizeLessThan: z.coerce
+      .number()
+      .optional()
+      .describe('Filter assets with file size in bytes less than this value'),
+    sizeGreaterThan: z.coerce
+      .number()
+      .optional()
+      .describe('Filter assets with file size in bytes greater than this value'),
     withCoordinates: stringToBool.optional().describe('Include location data in the response'),
     key: z.string().optional(),
     slug: z.string().optional(),

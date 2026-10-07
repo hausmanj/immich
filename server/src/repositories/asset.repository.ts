@@ -99,6 +99,8 @@ interface AssetBuilderOptions {
 export interface TimeBucketOptions extends AssetBuilderOptions {
   order?: AssetOrder;
   orderBy?: AssetOrderBy;
+  sizeLessThan?: number;
+  sizeGreaterThan?: number;
 }
 
 export interface TimeBucketItem {
@@ -772,6 +774,16 @@ export class AssetRepository {
 
             return withBoundingBox(withBoundingCircle, bbox);
           })
+          .$if(options.sizeLessThan !== undefined || options.sizeGreaterThan !== undefined, (qb) => {
+            const joined = options.bbox ? qb : (qb as any).innerJoin('asset_exif', 'asset.id', 'asset_exif.assetId');
+            return joined
+              .$if(options.sizeLessThan !== undefined, (q: any) =>
+                q.where(sql`"asset_exif"."fileSizeInByte"`, '<', options.sizeLessThan!),
+              )
+              .$if(options.sizeGreaterThan !== undefined, (q: any) =>
+                q.where(sql`"asset_exif"."fileSizeInByte"`, '>', options.sizeGreaterThan!),
+              );
+          })
           .$if(options.visibility === undefined, withDefaultVisibility)
           .$if(!!options.visibility, (qb) => qb.where('asset.visibility', '=', options.visibility!))
           .$if(!!options.albumId, (qb) =>
@@ -867,6 +879,12 @@ export class AssetRepository {
 
             return withBoundingBox(withBoundingCircle, bbox);
           })
+          .$if(options.sizeLessThan !== undefined, (qb) =>
+            qb.where('asset_exif.fileSizeInByte', '<', options.sizeLessThan!),
+          )
+          .$if(options.sizeGreaterThan !== undefined, (qb) =>
+            qb.where('asset_exif.fileSizeInByte', '>', options.sizeGreaterThan!),
+          )
           .where(truncatedDate(options.orderBy), '=', timeBucket.replace(/^[+-]/, ''))
           .$if(!!options.albumId, (qb) =>
             qb.where((eb) =>

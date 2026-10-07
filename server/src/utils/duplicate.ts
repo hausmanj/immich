@@ -288,6 +288,10 @@ export const classifyDuplicateMetadata = (assets: ClassifiableAsset[]): Duplicat
     return DuplicateClassification.Exact;
   }
 
+  if (assets.length > 12) {
+    return DuplicateClassification.Possible;
+  }
+
   let allContentIdentical = true;
   let allHighConfidence = true;
   let hasAnyEvidence = false;
@@ -389,6 +393,10 @@ export const classifyDuplicateGroup = (
   if (fingerprints) {
     if (assets.some(({ id }) => !fingerprints.get(id))) {
       return DuplicateClassification.Unanalyzed;
+    }
+
+    if (assets.length > 12) {
+      return DuplicateClassification.Possible;
     }
 
     let best = DuplicateClassification.ContentIdentical;
@@ -697,6 +705,16 @@ const compilePatterns = (patterns: string[] = []): RegExp[] => {
  * subfolders (`_2026-08-30 import intake/2012-10-15/...`), and the staging root is the truth about
  * that file, not the dated folder underneath it.
  */
+export const isOriginalsPath = (filePath?: string | null): boolean => {
+  if (!filePath) return false;
+  const normalized = filePath.replace(/\\/g, '/');
+  return (
+    normalized.startsWith('/mnt/originals/') ||
+    normalized.startsWith('/mnt/originals_clean/') ||
+    /\/(originals|originals_clean)\b/i.test(normalized)
+  );
+};
+
 export const getPathTier = (
   asset: AssetResponseDto,
   preferred: RegExp[],
@@ -704,6 +722,10 @@ export const getPathTier = (
   originals: RegExp[] = compilePatterns(['^originals(_clean)?$']),
   macbookPro: RegExp[] = compilePatterns(['^uploads_macbookpro$']),
 ): PathTier => {
+  if (isOriginalsPath(asset.originalPath)) {
+    return PathTier.Originals;
+  }
+
   const segments = asset.originalPath.split('/').filter(Boolean);
 
   // Highest tier: originals library (/mnt/originals or originals_clean)
@@ -711,9 +733,6 @@ export const getPathTier = (
     if (originals.some((pattern) => pattern.test(segment))) {
       return PathTier.Originals;
     }
-  }
-  if (/\/(originals|originals_clean)\b/i.test(asset.originalPath) || /^\/mnt\/originals\b/i.test(asset.originalPath)) {
-    return PathTier.Originals;
   }
 
   // Second highest tier: MacBook Pro uploads (/mnt/uploads_macbookpro)
@@ -911,7 +930,7 @@ const getFileSize = (asset: AssetResponseDto): number => asset.exifInfo?.fileSiz
  * that do not represent curated human-named location or event organization.
  */
 const GENERIC_SEGMENT_REGEX =
-  /^(mnt|volume\d+(_\w+)?|photosync|docker|upload[s]?|usr|app|var|data|home|users|originals(_clean)?|uploads_macbookpro|uploads_immich|master photo library|mainphoto|laptop backup|photos|dcim|\d{3}[a-z0-9_]+|camera(_roll)?|sdcard|internal_storage|\d{4}|\d{2}|\d{4}[-_.]\d{2}([-_.]\d{2})?|\d{8}|(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|january|february|march|april|june|july|august|september|october|november|december))$/i;
+  /^(mnt|volume\d+(_\w+)?|photosync|docker|upload[s]?|usr|app|var|data|home|users|originals(_clean)?|uploads_macbookpro|uploads_immich|master photo library|mainphoto|laptop backup|photos|dcim|\d{3}[a-z0-9_]+|camera(_roll)?|sdcard|internal_storage|_?no[ _]?date|apple_derivatives|_app_assets|photo exif unknown|moved.*|.*mistaken duplicate.*|\d{4}|\d{2}|\d{4}[-_.]\d{2}([-_.]\d{2})?|\d{8}|(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|january|february|march|april|june|july|august|september|october|november|december))$/i;
 
 export interface FolderOrganizationScore {
   descriptiveSegmentsCount: number;
@@ -1070,14 +1089,17 @@ export const suggestDuplicate = (
   const cleanCandidates = assets.filter((a) => !isAssetDateSuspect(a));
   const candidateAssets = cleanCandidates.length > 0 ? cleanCandidates : assets;
 
-  if (candidateAssets.length === 1 || !preference?.enabled) {
+  if (candidateAssets.length === 1) {
     return suggestBySize(candidateAssets);
   }
 
-  const preferred = compilePatterns(preference.preferredPathPatterns);
-  const staging = compilePatterns(preference.stagingPathPatterns);
-  const originals = compilePatterns(preference.originalsPathPatterns ?? ['^originals(_clean)?$']);
-  const macbookPro = compilePatterns(preference.macbookProPathPatterns ?? ['^uploads_macbookpro$']);
+  const scoreMargin = preference?.scoreMargin ?? 1;
+  const sizeTolerance = preference?.sizeTolerance ?? 0.05;
+
+  const preferred = compilePatterns(preference?.preferredPathPatterns);
+  const staging = compilePatterns(preference?.stagingPathPatterns);
+  const originals = compilePatterns(preference?.originalsPathPatterns ?? ['^originals(_clean)?$']);
+  const macbookPro = compilePatterns(preference?.macbookProPathPatterns ?? ['^uploads_macbookpro$']);
 
   const albumCountOf = (asset: AssetResponseDto) => albumCounts?.get(asset.id) ?? 0;
 
@@ -1106,7 +1128,7 @@ export const suggestDuplicate = (
     // Quality in originals is equal to, within margin, or better than outside: Originals wins!
     let candidates = originalsItems;
     const bestOrigScore = Math.max(...candidates.map((s) => s.score));
-    candidates = candidates.filter((s) => bestOrigScore - s.score <= preference.scoreMargin);
+    candidates = candidates.filter((s) => bestOrigScore - s.score <= scoreMargin);
 
     if (candidates.length === 1) {
       return candidates[0].asset;
@@ -1119,7 +1141,7 @@ export const suggestDuplicate = (
       originals,
       macbookPro,
       albumCounts,
-      preference.sizeTolerance,
+      sizeTolerance,
     );
   }
 
@@ -1127,12 +1149,12 @@ export const suggestDuplicate = (
   if (macbookProItems.length > 0) {
     const bestMbScore = Math.max(...macbookProItems.map((s) => s.score));
     const betterOutside = scored.filter(
-      (s) => s.tier < PathTier.UploadsMacbookPro && s.score - bestMbScore > preference.scoreMargin,
+      (s) => s.tier < PathTier.UploadsMacbookPro && s.score - bestMbScore > scoreMargin,
     );
 
     if (betterOutside.length === 0) {
       // UploadsMacbookPro wins!
-      let candidates = macbookProItems.filter((s) => bestMbScore - s.score <= preference.scoreMargin);
+      let candidates = macbookProItems.filter((s) => bestMbScore - s.score <= scoreMargin);
       if (candidates.length === 1) {
         return candidates[0].asset;
       }
@@ -1143,14 +1165,14 @@ export const suggestDuplicate = (
         originals,
         macbookPro,
         albumCounts,
-        preference.sizeTolerance,
+        sizeTolerance,
       );
     }
   }
 
   // General case: keeper score lead if > scoreMargin, else tier ranking and tie-breakers
   const bestScore = Math.max(...scored.map(({ score }) => score));
-  let candidates = scored.filter(({ score }) => bestScore - score <= preference.scoreMargin).map(({ asset }) => asset);
+  let candidates = scored.filter(({ score }) => bestScore - score <= scoreMargin).map(({ asset }) => asset);
 
   if (candidates.length === 1) {
     return candidates[0];
@@ -1163,7 +1185,7 @@ export const suggestDuplicate = (
     originals,
     macbookPro,
     albumCounts,
-    preference.sizeTolerance,
+    sizeTolerance,
   );
 };
 
@@ -1196,19 +1218,17 @@ export const suggestDuplicateKeepAssetIds = (
     return [];
   }
 
-  if (preference?.enabled) {
-    const quality = assessDuplicateQuality(assets, preference, albumCounts);
-    if (quality.betterQualityOutsideOriginals) {
-      // Keep both the originals copy and the better-quality outside copy
-      const keepIds = new Set<string>();
-      for (const id of quality.originalsAssetIds) {
-        keepIds.add(id);
-      }
-      for (const id of quality.betterQualityAssetIds) {
-        keepIds.add(id);
-      }
-      return [...keepIds];
+  const quality = assessDuplicateQuality(assets, preference, albumCounts);
+  if (quality.betterQualityOutsideOriginals) {
+    // Keep both the originals copy and the better-quality outside copy
+    const keepIds = new Set<string>();
+    for (const id of quality.originalsAssetIds) {
+      keepIds.add(id);
     }
+    for (const id of quality.betterQualityAssetIds) {
+      keepIds.add(id);
+    }
+    return [...keepIds];
   }
 
   const suggested = suggestDuplicate(assets, preference, albumCounts);

@@ -23,6 +23,7 @@ import {
   getKeeperScore,
   getPathTier,
   isAssetDateSuspect,
+  isOriginalsPath,
   PathTier,
   suggestDuplicateKeepAssetIds,
 } from 'src/utils/duplicate.js';
@@ -177,8 +178,24 @@ export class DuplicateService extends BaseService {
     const groupAssetIds = new Set(duplicateGroup.assets.map((a) => a.id));
 
     // ignore/skip asset IDs not in the group
-    const idsToKeep = keepAssetIds.filter((id) => groupAssetIds.has(id));
-    const idsToTrash = trashAssetIds.filter((id) => groupAssetIds.has(id));
+    let idsToKeep = keepAssetIds.filter((id) => groupAssetIds.has(id));
+    let idsToTrash = trashAssetIds.filter((id) => groupAssetIds.has(id));
+
+    // GUARD: If the group contains assets in originals, ensure at least one original is preserved in idsToKeep
+    const groupOriginals = duplicateGroup.assets.filter((a) => isOriginalsPath(a.originalPath));
+    if (groupOriginals.length > 0) {
+      const keepingOriginal = idsToKeep.some((id) => groupOriginals.some((o) => o.id === id));
+      if (!keepingOriginal) {
+        const bestOriginal = groupOriginals[0];
+        this.logger.warn(
+          `PROTECTED: No originals kept in group ${duplicateId}. Rescuing original ${bestOriginal.id} into keepAssetIds`,
+        );
+        idsToTrash = idsToTrash.filter((id) => id !== bestOriginal.id);
+        if (!idsToKeep.includes(bestOriginal.id)) {
+          idsToKeep.push(bestOriginal.id);
+        }
+      }
+    }
 
     for (const assetId of groupAssetIds) {
       if (idsToKeep.includes(assetId) && idsToTrash.includes(assetId)) {
@@ -265,7 +282,14 @@ export class DuplicateService extends BaseService {
       }
 
       if (hasExifUpdate || hasTagUpdate) {
-        await this.jobRepository.queueAll(idsToKeep.map((id) => ({ name: JobName.SidecarWrite, data: { id } })));
+        // Do not write sidecars to read-only originals archive
+        const writableKeepIds = idsToKeep.filter((id) => {
+          const asset = duplicateGroup.assets.find((a) => a.id === id);
+          return !asset || !isOriginalsPath(asset.originalPath);
+        });
+        if (writableKeepIds.length > 0) {
+          await this.jobRepository.queueAll(writableKeepIds.map((id) => ({ name: JobName.SidecarWrite, data: { id } })));
+        }
       }
 
       await this.assetRepository.updateAll(idsToKeep, { duplicateId: null, ...assetUpdate });
@@ -360,6 +384,8 @@ export class DuplicateService extends BaseService {
     const seenDests = new Map<string, number>();
 
     for (const { assets } of targetDuplicates) {
+      await new Promise((resolve) => setImmediate(resolve));
+
       const mappedAssets = assets.map((asset) => mapAsset(asset, { auth }));
       const quality = assessDuplicateQuality(mappedAssets, keepPreference, albumCounts);
 
@@ -405,7 +431,7 @@ export class DuplicateService extends BaseService {
         }
 
         try {
-          const srcStat = fs.statSync(srcPath);
+          const srcStat = await fs.promises.stat(srcPath);
           const srcName = path.basename(srcPath);
           const ext = path.extname(srcName);
           const stem = path.basename(srcName, ext);
@@ -415,9 +441,9 @@ export class DuplicateService extends BaseService {
           let targetName = `${cleanedStem}${ext}`;
 
           const destDir = path.join(holdingRoot, relDir);
-          fs.mkdirSync(destDir, { recursive: true });
+          await fs.promises.mkdir(destDir, { recursive: true });
           try {
-            fs.chmodSync(destDir, 0o777);
+            await fs.promises.chmod(destDir, 0o777);
           } catch {}
 
           let destFile = path.join(destDir, targetName);
@@ -432,7 +458,7 @@ export class DuplicateService extends BaseService {
           }
 
           if (fs.existsSync(destFile)) {
-            const destStat = fs.statSync(destFile);
+            const destStat = await fs.promises.stat(destFile);
             if (destStat.size === srcStat.size) {
               alreadyExisted++;
               manifestMap.set(destFile, {
@@ -450,10 +476,10 @@ export class DuplicateService extends BaseService {
             }
           }
 
-          fs.copyFileSync(srcPath, destFile);
+          await fs.promises.copyFile(srcPath, destFile);
           try {
-            fs.utimesSync(destFile, srcStat.atime, srcStat.mtime);
-            fs.chmodSync(destFile, 0o666);
+            await fs.promises.utimes(destFile, srcStat.atime, srcStat.mtime);
+            await fs.promises.chmod(destFile, 0o666);
           } catch {}
 
           // Copy companion sidecars
@@ -468,11 +494,11 @@ export class DuplicateService extends BaseService {
             if (fs.existsSync(sc) && sc !== srcPath) {
               const scName = path.basename(sc);
               const scDest = path.join(destDir, scName);
-              fs.copyFileSync(sc, scDest);
+              await fs.promises.copyFile(sc, scDest);
               try {
-                const scStat = fs.statSync(sc);
-                fs.utimesSync(scDest, scStat.atime, scStat.mtime);
-                fs.chmodSync(scDest, 0o666);
+                const scStat = await fs.promises.stat(sc);
+                await fs.promises.utimes(scDest, scStat.atime, scStat.mtime);
+                await fs.promises.chmod(scDest, 0o666);
               } catch {}
               sidecarsCopied.push(scDest);
             }
@@ -499,9 +525,9 @@ export class DuplicateService extends BaseService {
     }
 
     try {
-      fs.writeFileSync(manifestPath, JSON.stringify([...manifestMap.values()], null, 2), 'utf8');
+      await fs.promises.writeFile(manifestPath, JSON.stringify([...manifestMap.values()], null, 2), 'utf8');
       try {
-        fs.chmodSync(manifestPath, 0o666);
+        await fs.promises.chmod(manifestPath, 0o666);
       } catch {}
     } catch (err: any) {
       this.logger.error(`Failed to update manifest.json: ${err.message}`);

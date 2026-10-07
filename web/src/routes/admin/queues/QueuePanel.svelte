@@ -86,9 +86,61 @@
     [QueueName.Migration]: {
       missingText: $t('start'),
     },
+    [QueueName.BackgroundTask]: {
+      missingText: $t('start'),
+    },
+    [QueueName.Search]: {
+      allText: $t('all'),
+      missingText: $t('start'),
+    },
+    [QueueName.Notifications]: {
+      missingText: $t('start'),
+    },
+    [QueueName.BackupDatabase]: {
+      missingText: $t('start'),
+    },
+    [QueueName.Workflow]: {
+      missingText: $t('start'),
+    },
+    [QueueName.IntegrityCheck]: {
+      missingText: $t('start'),
+    },
+    [QueueName.Editor]: {
+      missingText: $t('start'),
+    },
   };
 
-  let queueList = Object.entries(queueDetails) as [QueueName, QueueDetails][];
+  const allDisplayQueues = $derived(
+    (() => {
+      const defined = Object.entries(queueDetails) as [QueueName, QueueDetails][];
+      const seen = new Set<string>();
+      const result: { queue: QueueResponseDto; queueName: QueueName; props: QueueDetails }[] = [];
+
+      for (const [name, props] of defined) {
+        const queue = queues.find((q) => q.name === name);
+        if (queue) {
+          seen.add(queue.name);
+          result.push({ queue, queueName: name, props });
+        }
+      }
+
+      for (const queue of queues) {
+        if (!seen.has(queue.name)) {
+          seen.add(queue.name);
+          result.push({
+            queue,
+            queueName: queue.name as QueueName,
+            props: {
+              missingText: $t('start') || 'Start',
+              allText: $t('all') || 'All',
+            },
+          });
+        }
+      }
+
+      return result;
+    })(),
+  );
 
   const handleCommand = async (name: QueueName, dto: QueueCommandDto) => {
     const item = asQueueItem($t, { name });
@@ -125,10 +177,7 @@
 </script>
 
 <div class="mt-10 flex flex-col gap-7">
-  {#each queueList as [queueName, props] (queueName)}
-    {@const queue = queues.find(({ name }) => name === queueName)}
-    {#if queue}
-      <QueueCard {queue} onCommand={(command) => handleCommand(queueName, command)} {...props} />
-    {/if}
+  {#each allDisplayQueues as { queue, queueName, props } (queue.name)}
+    <QueueCard {queue} onCommand={(command) => handleCommand(queueName, command)} {...props} />
   {/each}
 </div>

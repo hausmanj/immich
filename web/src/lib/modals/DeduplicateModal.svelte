@@ -48,7 +48,9 @@
   };
 
   const getTrashCount = (group: DuplicateResponseDto) => {
-    const keepIds = new Set(group.suggestedKeepAssetIds);
+    const keepIds = new Set(
+      group.suggestedKeepAssetIds?.length > 0 ? group.suggestedKeepAssetIds : [group.assets[0]?.id],
+    );
     return group.assets.filter((a) => !keepIds.has(a.id)).length;
   };
 
@@ -144,12 +146,31 @@
     isCopyingHolding = true;
     try {
       const ids = betterQualityOutsideGroups.map((g) => g.duplicateId);
-      const res = await copyBetterToHolding(ids);
-      if (res.failed > 0 && res.copied === 0 && res.alreadyExisted === 0) {
-        toastManager.danger(res.errors[0] || 'Failed to copy better copies');
+      if (ids.length === 0) {
+        toastManager.primary('No groups with higher quality outside originals found.');
+        return;
+      }
+
+      toastManager.primary(`Copying better copies from ${ids.length} groups to holding folder…`);
+
+      const batchSize = 100;
+      let totalCopied = 0;
+      let totalExisted = 0;
+      let failed = 0;
+
+      for (let i = 0; i < ids.length; i += batchSize) {
+        const batchIds = ids.slice(i, i + batchSize);
+        const res = await copyBetterToHolding(batchIds);
+        totalCopied += res.copied;
+        totalExisted += res.alreadyExisted;
+        failed += res.failed;
+      }
+
+      if (failed > 0 && totalCopied === 0 && totalExisted === 0) {
+        toastManager.danger('Failed to copy better copies');
       } else {
         toastManager.primary(
-          `Copied ${res.copied} better quality files to holding folder (${res.alreadyExisted} already in holding)`,
+          `Copied ${totalCopied} better quality files to holding folder (${totalExisted} already in holding)`,
         );
       }
     } catch (err: any) {
