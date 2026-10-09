@@ -187,8 +187,8 @@
         </button>
       </form>
 
-      {#if selectedSizeLimit !== null}
-        <div class="flex items-center gap-1 ms-auto text-xs">
+      <div class="flex items-center gap-2 ms-auto text-xs">
+        {#if selectedSizeLimit !== null}
           <span
             class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-primary/10 text-primary dark:bg-immich-dark-primary/20 dark:text-immich-dark-primary font-medium"
           >
@@ -202,8 +202,14 @@
           >
             <Icon icon={mdiClose} size="14" />
           </button>
-        </div>
-      {/if}
+        {/if}
+
+        {#if timelineManager?.assetCount !== undefined}
+          <span class="font-medium text-gray-600 dark:text-gray-300">
+            {timelineManager.assetCount.toLocaleString()} {timelineManager.assetCount === 1 ? 'item' : 'items'}
+          </span>
+        {/if}
+      </div>
     </div>
 
     <!-- Timeline Grid -->
