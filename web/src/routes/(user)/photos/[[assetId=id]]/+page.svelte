@@ -33,7 +33,7 @@
   import MemoryCard from '$lib/components/memories/MemoryCard.svelte';
   import { page } from '$app/state';
   import { ActionButton, CommandPaletteDefaultProvider, Icon, ImageCarousel } from '@immich/ui';
-  import { mdiClose, mdiDotsVertical, mdiFilterVariant } from '@mdi/js';
+  import { mdiCheckAll, mdiClose, mdiDotsVertical, mdiFilterVariant } from '@mdi/js';
   import { DateTime } from 'luxon';
   import { t } from 'svelte-i18n';
 
@@ -48,6 +48,14 @@
     { label: '< 1 MB', value: 1024 * 1024 },
   ];
 
+  const FORMAT_PRESETS = [
+    { label: 'All Formats', value: null },
+    { label: 'PNG', value: 'png' },
+    { label: 'JPG / JPEG', value: 'jpg' },
+    { label: 'GIF', value: 'gif' },
+    { label: 'HEIC', value: 'heic' },
+  ];
+
   let selectedSizeLimit = $state<number | null>(() => {
     const param = page.url.searchParams.get('maxSize');
     if (param && !isNaN(Number(param))) {
@@ -55,11 +63,16 @@
     }
     return null;
   });
+  let selectedFormat = $state<string | null>(() => page.url.searchParams.get('format') ?? null);
   let customKbInput = $state<string>('');
 
   const selectPreset = (value: number | null) => {
     selectedSizeLimit = value;
     customKbInput = '';
+  };
+
+  const selectFormatPreset = (value: string | null) => {
+    selectedFormat = value;
   };
 
   const applyCustomKb = () => {
@@ -71,6 +84,16 @@
 
   const clearFilter = () => {
     selectedSizeLimit = null;
+    customKbInput = '';
+  };
+
+  const clearFormatFilter = () => {
+    selectedFormat = null;
+  };
+
+  const clearAllFilters = () => {
+    selectedSizeLimit = null;
+    selectedFormat = null;
     customKbInput = '';
   };
 
@@ -86,7 +109,36 @@
     withStacked: true,
     withPartners: true,
     ...(selectedSizeLimit !== null ? { sizeLessThan: selectedSizeLimit } : {}),
+    ...(selectedFormat ? { format: selectedFormat } : {}),
   });
+
+  let loadedAssetsCount = $derived.by(() => {
+    if (!timelineManager?.months) return 0;
+    let count = 0;
+    for (const month of timelineManager.months) {
+      for (const day of month.timelineDays) {
+        count += day.viewerAssets.length;
+      }
+    }
+    return count;
+  });
+
+  const selectLoadedAssets = () => {
+    if (!timelineManager?.months) return;
+    const loaded: TimelineAsset[] = [];
+    for (const month of timelineManager.months) {
+      for (const day of month.timelineDays) {
+        for (const va of day.viewerAssets) {
+          if (va.asset) {
+            loaded.push(va.asset);
+          }
+        }
+      }
+    }
+    if (loaded.length > 0) {
+      assetMultiSelectManager.selectAssets(loaded);
+    }
+  };
 
   let selectedAssets = $derived(assetMultiSelectManager.assets);
   let isLinkActionAvailable = $derived.by(() => {
@@ -187,27 +239,78 @@
         </button>
       </form>
 
+      <!-- Divider -->
+      <div class="h-4 w-px bg-gray-300 dark:bg-gray-700 mx-1"></div>
+
+      <!-- Format Filter -->
+      <div class="flex items-center gap-1.5 font-semibold text-gray-700 dark:text-gray-300 me-1">
+        <span>Format:</span>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-1.5">
+        {#each FORMAT_PRESETS as preset}
+          {@const isSelected = selectedFormat === preset.value}
+          <button
+            type="button"
+            class="px-2.5 py-1 rounded-full font-medium transition-colors {isSelected
+              ? 'bg-primary text-light dark:bg-immich-dark-primary dark:text-immich-dark-gray shadow-xs'
+              : 'bg-gray-100 hover:bg-gray-200 text-gray-700 dark:bg-gray-800 dark:hover:bg-gray-700 dark:text-gray-300'}"
+            onclick={() => selectFormatPreset(preset.value)}
+          >
+            {preset.label}
+          </button>
+        {/each}
+      </div>
+
       <div class="flex items-center gap-2 ms-auto text-xs">
         {#if selectedSizeLimit !== null}
           <span
             class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-primary/10 text-primary dark:bg-immich-dark-primary/20 dark:text-immich-dark-primary font-medium"
           >
-            Filtering: &lt; {formatBytes(selectedSizeLimit)}
+            &lt; {formatBytes(selectedSizeLimit)}
+            <button
+              type="button"
+              class="p-0.5 rounded-full text-gray-400 hover:text-red-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+              title="Clear size filter"
+              onclick={clearFilter}
+            >
+              <Icon icon={mdiClose} size="12" />
+            </button>
           </span>
-          <button
-            type="button"
-            class="p-1 rounded-full text-gray-400 hover:text-red-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-            title="Clear filter"
-            onclick={clearFilter}
+        {/if}
+
+        {#if selectedFormat !== null}
+          <span
+            class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-primary/10 text-primary dark:bg-immich-dark-primary/20 dark:text-immich-dark-primary font-medium"
           >
-            <Icon icon={mdiClose} size="14" />
-          </button>
+            {selectedFormat.toUpperCase()}
+            <button
+              type="button"
+              class="p-0.5 rounded-full text-gray-400 hover:text-red-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+              title="Clear format filter"
+              onclick={clearFormatFilter}
+            >
+              <Icon icon={mdiClose} size="12" />
+            </button>
+          </span>
         {/if}
 
         {#if timelineManager?.assetCount !== undefined}
           <span class="font-medium text-gray-600 dark:text-gray-300">
             {timelineManager.assetCount.toLocaleString()} {timelineManager.assetCount === 1 ? 'item' : 'items'}
           </span>
+        {/if}
+
+        {#if loadedAssetsCount > 0}
+          <button
+            type="button"
+            class="flex items-center gap-1 px-2 py-0.5 rounded bg-primary/10 hover:bg-primary/20 text-primary dark:bg-immich-dark-primary/20 dark:hover:bg-immich-dark-primary/30 dark:text-immich-dark-primary font-medium transition-colors"
+            title="Select all currently loaded assets on screen for bulk trashing or management"
+            onclick={selectLoadedAssets}
+          >
+            <Icon icon={mdiCheckAll} size="14" />
+            <span>Select Loaded ({loadedAssetsCount})</span>
+          </button>
         {/if}
       </div>
     </div>
@@ -232,10 +335,10 @@
         {/if}
         {#snippet empty()}
           <EmptyPlaceholder
-            text={selectedSizeLimit !== null
-              ? `No assets found under ${formatBytes(selectedSizeLimit)}`
+            text={selectedSizeLimit !== null || selectedFormat !== null
+              ? 'No assets found matching current filters'
               : $t('no_assets_message')}
-            onClick={() => (selectedSizeLimit !== null ? clearFilter() : openFileUploadDialog())}
+            onClick={() => (selectedSizeLimit !== null || selectedFormat !== null ? clearAllFilters() : openFileUploadDialog())}
             class="mx-auto mt-10"
           />
         {/snippet}

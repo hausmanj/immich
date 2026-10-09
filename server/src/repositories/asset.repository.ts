@@ -101,6 +101,7 @@ export interface TimeBucketOptions extends AssetBuilderOptions {
   orderBy?: AssetOrderBy;
   sizeLessThan?: number;
   sizeGreaterThan?: number;
+  format?: string;
 }
 
 export interface TimeBucketItem {
@@ -784,6 +785,15 @@ export class AssetRepository {
                 q.where(sql`"asset_exif"."fileSizeInByte"`, '>', options.sizeGreaterThan!),
               );
           })
+          .$if(!!options.format, (qb) => {
+            const fmt = options.format!.toLowerCase().trim();
+            if (fmt === 'jpg' || fmt === 'jpeg') {
+              return qb.where(
+                sql<boolean>`lower("asset"."originalFileName") like '%.jpg' or lower("asset"."originalFileName") like '%.jpeg'`,
+              );
+            }
+            return qb.where(sql<boolean>`lower("asset"."originalFileName") like ${`%.${fmt}`}`);
+          })
           .$if(options.visibility === undefined, withDefaultVisibility)
           .$if(!!options.visibility, (qb) => qb.where('asset.visibility', '=', options.visibility!))
           .$if(!!options.albumId, (qb) =>
@@ -885,6 +895,15 @@ export class AssetRepository {
           .$if(options.sizeGreaterThan !== undefined, (qb) =>
             qb.where('asset_exif.fileSizeInByte', '>', options.sizeGreaterThan!),
           )
+          .$if(!!options.format, (qb) => {
+            const fmt = options.format!.toLowerCase().trim();
+            if (fmt === 'jpg' || fmt === 'jpeg') {
+              return qb.where(
+                sql<boolean>`lower("asset"."originalFileName") like '%.jpg' or lower("asset"."originalFileName") like '%.jpeg'`,
+              );
+            }
+            return qb.where(sql<boolean>`lower("asset"."originalFileName") like ${`%.${fmt}`}`);
+          })
           .where(truncatedDate(options.orderBy), '=', timeBucket.replace(/^[+-]/, ''))
           .$if(!!options.albumId, (qb) =>
             qb.where((eb) =>

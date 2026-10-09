@@ -37,6 +37,10 @@ const TimeBucketQueryBaseSchema = z
       .number()
       .optional()
       .describe('Filter assets with file size in bytes greater than this value'),
+    format: z
+      .string()
+      .optional()
+      .describe('Filter assets by file format/extension (e.g. png, jpg, gif)'),
     withCoordinates: stringToBool.optional().describe('Include location data in the response'),
     key: z.string().optional(),
     slug: z.string().optional(),
