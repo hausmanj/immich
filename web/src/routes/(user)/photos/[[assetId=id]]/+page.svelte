@@ -56,14 +56,11 @@
     { label: 'HEIC', value: 'heic' },
   ];
 
-  let selectedSizeLimit = $state<number | null>(() => {
-    const param = page.url.searchParams.get('maxSize');
-    if (param && !isNaN(Number(param))) {
-      return Number(param);
-    }
-    return null;
-  });
-  let selectedFormat = $state<string | null>(() => page.url.searchParams.get('format') ?? null);
+  const initMaxSize = page.url.searchParams.get('maxSize');
+  let selectedSizeLimit = $state<number | null>(
+    initMaxSize && !isNaN(Number(initMaxSize)) ? Number(initMaxSize) : null,
+  );
+  let selectedFormat = $state<string | null>(page.url.searchParams.get('format') ?? null);
   let customKbInput = $state<string>('');
 
   const selectPreset = (value: number | null) => {
@@ -116,7 +113,9 @@
     if (!timelineManager?.months) return 0;
     let count = 0;
     for (const month of timelineManager.months) {
+      if (!month?.timelineDays) continue;
       for (const day of month.timelineDays) {
+        if (!day?.viewerAssets) continue;
         count += day.viewerAssets.length;
       }
     }
@@ -127,9 +126,11 @@
     if (!timelineManager?.months) return;
     const loaded: TimelineAsset[] = [];
     for (const month of timelineManager.months) {
+      if (!month?.timelineDays) continue;
       for (const day of month.timelineDays) {
+        if (!day?.viewerAssets) continue;
         for (const va of day.viewerAssets) {
-          if (va.asset) {
+          if (va?.asset) {
             loaded.push(va.asset);
           }
         }
