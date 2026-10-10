@@ -5,11 +5,11 @@ import { InjectKysely } from 'nestjs-kysely';
 import { columns } from 'src/database.js';
 import { Chunked, DummyValue, GenerateSql } from 'src/decorators.js';
 import { MapAsset } from 'src/dtos/asset-response.dto.js';
-import { AssetType, VectorIndex } from 'src/enum.js';
+import { AssetType, AssetVisibility, VectorIndex } from 'src/enum.js';
 import { probes } from 'src/repositories/database.repository.js';
 import { DB } from 'src/schema/index.js';
 import { AssetExifTable } from 'src/schema/tables/asset-exif.table.js';
-import { anyUuid, asUuid, withDefaultVisibility } from 'src/utils/database.js';
+import { anyUuid, asUuid } from 'src/utils/database.js';
 
 // Maximum number of candidate duplicates to return from vector search
 const DUPLICATE_SEARCH_LIMIT = 64;
@@ -39,7 +39,7 @@ export class DuplicateRepository {
         .with('duplicates', (qb) =>
           qb
             .selectFrom('asset')
-            .$call(withDefaultVisibility)
+            .where('asset.visibility', '!=', sql.lit(AssetVisibility.Locked))
             // Use innerJoinLateral to build a composite object per asset that includes
             // exifInfo and tags. This "asset2" object is then aggregated via jsonAgg.
             // Tags must be included here (not via separate joins) so they appear in the
@@ -116,7 +116,7 @@ export class DuplicateRepository {
   async get(duplicateId: string): Promise<{ duplicateId: string; assets: MapAsset[] } | undefined> {
     const result = await this.db
       .selectFrom('asset')
-      .$call(withDefaultVisibility)
+      .where('asset.visibility', '!=', sql.lit(AssetVisibility.Locked))
       // Use innerJoinLateral to build a composite object per asset that includes
       // exifInfo and tags. This "asset2" object is then aggregated via jsonAgg.
       // Tags must be included here (not via separate joins) so they appear in the
@@ -198,7 +198,7 @@ export class DuplicateRepository {
         .with('cte', (qb) =>
           qb
             .selectFrom('asset')
-            .$call(withDefaultVisibility)
+            .where('asset.visibility', '!=', sql.lit(AssetVisibility.Locked))
             .select([
               'asset.id as assetId',
               'asset.duplicateId',

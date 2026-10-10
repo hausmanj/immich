@@ -95,6 +95,10 @@
   const photoDuplicates = $derived(duplicates.filter((g) => g.assets.some((a) => a.type === 'IMAGE')));
   const videoDuplicates = $derived(duplicates.filter((g) => g.assets.some((a) => a.type === 'VIDEO')));
 
+  const totalAssetsCount = $derived(duplicates.reduce((sum, g) => sum + g.assets.length, 0));
+  const photoAssetsCount = $derived(photoDuplicates.reduce((sum, g) => sum + g.assets.length, 0));
+  const videoAssetsCount = $derived(videoDuplicates.reduce((sum, g) => sum + g.assets.length, 0));
+
   const activeDuplicates = $derived(
     mediaFilter === 'video'
       ? videoDuplicates
@@ -457,7 +461,7 @@
             : 'text-gray-600 dark:text-gray-300 hover:text-black dark:hover:text-white'}"
           onclick={() => switchMediaFilter('all')}
         >
-          All Duplicates {mediaFilter === 'all' ? `(${duplicates.length.toLocaleString($locale)})` : ''}
+          All Duplicates {mediaFilter === 'all' ? `(${duplicates.length.toLocaleString($locale)} sets · ${totalAssetsCount.toLocaleString($locale)} items)` : ''}
         </button>
         <button
           type="button"
@@ -466,7 +470,7 @@
             : 'text-gray-600 dark:text-gray-300 hover:text-black dark:hover:text-white'}"
           onclick={() => switchMediaFilter('photo')}
         >
-          📷 Photos {mediaFilter === 'photo' ? `(${duplicates.length.toLocaleString($locale)})` : (mediaFilter === 'all' ? `(${photoDuplicates.length.toLocaleString($locale)})` : '')}
+          📷 Photos {mediaFilter === 'photo' ? `(${duplicates.length.toLocaleString($locale)} sets · ${photoAssetsCount.toLocaleString($locale)} items)` : (mediaFilter === 'all' ? `(${photoDuplicates.length.toLocaleString($locale)} sets · ${photoAssetsCount.toLocaleString($locale)} items)` : '')}
         </button>
         <button
           type="button"
@@ -475,7 +479,7 @@
             : 'text-gray-600 dark:text-gray-300 hover:text-black dark:hover:text-white'}"
           onclick={() => switchMediaFilter('video')}
         >
-          🎬 Videos {mediaFilter === 'video' ? `(${duplicates.length.toLocaleString($locale)})` : (mediaFilter === 'all' ? `(${videoDuplicates.length.toLocaleString($locale)})` : '')}
+          🎬 Videos {mediaFilter === 'video' ? `(${duplicates.length.toLocaleString($locale)} sets · ${videoAssetsCount.toLocaleString($locale)} items)` : (mediaFilter === 'all' ? `(${videoDuplicates.length.toLocaleString($locale)} sets · ${videoAssetsCount.toLocaleString($locale)} items)` : '')}
         </button>
       </div>
     </div>
