@@ -102,6 +102,7 @@ export interface TimeBucketOptions extends AssetBuilderOptions {
   sizeLessThan?: number;
   sizeGreaterThan?: number;
   format?: string;
+  filename?: string;
 }
 
 export interface TimeBucketItem {
@@ -794,6 +795,12 @@ export class AssetRepository {
             }
             return qb.where(sql<boolean>`lower("asset"."originalFileName") like ${`%.${fmt}`}`);
           })
+          .$if(!!options.filename, (qb) => {
+            const pat = `%${options.filename!.toLowerCase().trim()}%`;
+            return qb.where(
+              sql<boolean>`lower("asset"."originalFileName") like ${pat} or lower("asset"."originalPath") like ${pat}`,
+            );
+          })
           .$if(options.visibility === undefined, withDefaultVisibility)
           .$if(!!options.visibility, (qb) => qb.where('asset.visibility', '=', options.visibility!))
           .$if(!!options.albumId, (qb) =>
@@ -903,6 +910,12 @@ export class AssetRepository {
               );
             }
             return qb.where(sql<boolean>`lower("asset"."originalFileName") like ${`%.${fmt}`}`);
+          })
+          .$if(!!options.filename, (qb) => {
+            const pat = `%${options.filename!.toLowerCase().trim()}%`;
+            return qb.where(
+              sql<boolean>`lower("asset"."originalFileName") like ${pat} or lower("asset"."originalPath") like ${pat}`,
+            );
           })
           .where(truncatedDate(options.orderBy), '=', timeBucket.replace(/^[+-]/, ''))
           .$if(!!options.albumId, (qb) =>

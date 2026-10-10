@@ -33,7 +33,7 @@
   import MemoryCard from '$lib/components/memories/MemoryCard.svelte';
   import { page } from '$app/state';
   import { ActionButton, CommandPaletteDefaultProvider, Icon, ImageCarousel } from '@immich/ui';
-  import { mdiCheckAll, mdiClose, mdiDotsVertical, mdiFilterVariant } from '@mdi/js';
+  import { mdiCheckAll, mdiClose, mdiDotsVertical, mdiFilterVariant, mdiMagnify } from '@mdi/js';
   import { DateTime } from 'luxon';
   import { t } from 'svelte-i18n';
 
@@ -61,37 +61,41 @@
     initMaxSize && !isNaN(Number(initMaxSize)) ? Number(initMaxSize) : null,
   );
   let selectedFormat = $state<string | null>(page.url.searchParams.get('format') ?? null);
-  let customKbInput = $state<string>('');
+  const initFilename = page.url.searchParams.get('filename');
+  let selectedFilename = $state<string | null>(initFilename ? initFilename.trim() : null);
+  let filenameInput = $state<string>(initFilename ? initFilename.trim() : '');
 
   const selectPreset = (value: number | null) => {
     selectedSizeLimit = value;
-    customKbInput = '';
   };
 
   const selectFormatPreset = (value: string | null) => {
     selectedFormat = value;
   };
 
-  const applyCustomKb = () => {
-    const kb = parseFloat(customKbInput.trim());
-    if (!isNaN(kb) && kb > 0) {
-      selectedSizeLimit = Math.round(kb * 1024);
-    }
+  const applyFilenameSearch = () => {
+    const val = filenameInput.trim();
+    selectedFilename = val.length > 0 ? val : null;
   };
 
   const clearFilter = () => {
     selectedSizeLimit = null;
-    customKbInput = '';
   };
 
   const clearFormatFilter = () => {
     selectedFormat = null;
   };
 
+  const clearFilenameFilter = () => {
+    filenameInput = '';
+    selectedFilename = null;
+  };
+
   const clearAllFilters = () => {
     selectedSizeLimit = null;
     selectedFormat = null;
-    customKbInput = '';
+    selectedFilename = null;
+    filenameInput = '';
   };
 
   const formatBytes = (bytes: number) => {
@@ -107,6 +111,7 @@
     withPartners: true,
     ...(selectedSizeLimit !== null ? { sizeLessThan: selectedSizeLimit } : {}),
     ...(selectedFormat ? { format: selectedFormat } : {}),
+    ...(selectedFilename ? { filename: selectedFilename } : {}),
   });
 
   let loadedAssetsCount = $derived.by(() => {
@@ -217,26 +222,40 @@
         {/each}
       </div>
 
+      <!-- Filename Search -->
       <form
         class="flex items-center gap-1 ms-1"
         onsubmit={(e) => {
           e.preventDefault();
-          applyCustomKb();
+          applyFilenameSearch();
         }}
       >
-        <span class="text-gray-500 dark:text-gray-400">&lt;</span>
-        <input
-          type="number"
-          min="1"
-          placeholder="Custom KB"
-          bind:value={customKbInput}
-          class="w-20 px-2 py-0.5 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 text-xs focus:outline-hidden focus:ring-1 focus:ring-primary"
-        />
+        <div class="relative flex items-center">
+          <span class="absolute left-2 text-gray-400 pointer-events-none flex items-center">
+            <Icon icon={mdiMagnify} size="14" />
+          </span>
+          <input
+            type="text"
+            placeholder="Search filename or path (e.g. derivative)..."
+            bind:value={filenameInput}
+            class="w-56 sm:w-64 pl-7 pr-6 py-0.5 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 text-xs focus:outline-hidden focus:ring-1 focus:ring-primary placeholder:text-gray-400"
+          />
+          {#if filenameInput.length > 0}
+            <button
+              type="button"
+              class="absolute right-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 p-0.5"
+              onclick={clearFilenameFilter}
+              title="Clear search"
+            >
+              <Icon icon={mdiClose} size="12" />
+            </button>
+          {/if}
+        </div>
         <button
           type="submit"
-          class="px-2 py-0.5 rounded bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200 font-medium"
+          class="px-2 py-0.5 rounded bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200 font-medium transition-colors"
         >
-          Apply
+          Search
         </button>
       </form>
 
@@ -296,6 +315,22 @@
           </span>
         {/if}
 
+        {#if selectedFilename !== null}
+          <span
+            class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-primary/10 text-primary dark:bg-immich-dark-primary/20 dark:text-immich-dark-primary font-medium"
+          >
+            "{selectedFilename}"
+            <button
+              type="button"
+              class="p-0.5 rounded-full text-gray-400 hover:text-red-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+              title="Clear filename filter"
+              onclick={clearFilenameFilter}
+            >
+              <Icon icon={mdiClose} size="12" />
+            </button>
+          </span>
+        {/if}
+
         {#if timelineManager?.assetCount !== undefined}
           <span class="font-medium text-gray-600 dark:text-gray-300">
             {timelineManager.assetCount.toLocaleString()} {timelineManager.assetCount === 1 ? 'item' : 'items'}
@@ -336,10 +371,12 @@
         {/if}
         {#snippet empty()}
           <EmptyPlaceholder
-            text={selectedSizeLimit !== null || selectedFormat !== null
-              ? 'No assets found matching current filters'
-              : $t('no_assets_message')}
-            onClick={() => (selectedSizeLimit !== null || selectedFormat !== null ? clearAllFilters() : openFileUploadDialog())}
+            text={selectedFilename !== null
+              ? `No assets found matching "${selectedFilename}"`
+              : selectedSizeLimit !== null || selectedFormat !== null
+                ? 'No assets found matching current filters'
+                : $t('no_assets_message')}
+            onClick={() => (selectedFilename !== null || selectedSizeLimit !== null || selectedFormat !== null ? clearAllFilters() : openFileUploadDialog())}
             class="mx-auto mt-10"
           />
         {/snippet}
