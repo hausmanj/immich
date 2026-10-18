@@ -658,10 +658,15 @@ export class DuplicateService extends BaseService {
       return JobStatus.Failed;
     }
 
+    const maxDistance =
+      asset.type === AssetType.Video
+        ? Math.min(machineLearning.duplicateDetection.maxDistance, 0.005)
+        : machineLearning.duplicateDetection.maxDistance;
+
     const duplicateAssets = await this.duplicateRepository.search({
       assetId: asset.id,
       embedding: asset.embedding,
-      maxDistance: machineLearning.duplicateDetection.maxDistance,
+      maxDistance,
       type: asset.type,
       userIds: [asset.ownerId],
     });
@@ -687,7 +692,7 @@ export class DuplicateService extends BaseService {
     asset: { id: string; duplicateId: string | null },
     duplicateAssets: AssetDuplicateResult[],
   ): Promise<string[]> {
-    const duplicateIds = [
+    const existingGroupIds = [
       ...new Set(
         duplicateAssets
           .filter((asset): asset is AssetDuplicateResult & { duplicateId: string } => !!asset.duplicateId)
@@ -695,16 +700,24 @@ export class DuplicateService extends BaseService {
       ),
     ];
 
-    const targetDuplicateId = asset.duplicateId ?? duplicateIds.shift() ?? this.cryptoRepository.randomUUID();
+    // Pick target duplicate group (existing or new)
+    const targetDuplicateId = asset.duplicateId ?? existingGroupIds[0] ?? this.cryptoRepository.randomUUID();
+
+    // Guard against single-linkage chaining:
+    // Only add the current asset and unassigned matched candidates to targetDuplicateId.
+    // Never fuse distinct pre-existing groups together (sourceIds is always empty).
     const assetIdsToUpdate = duplicateAssets
-      .filter((asset) => asset.duplicateId !== targetDuplicateId)
+      .filter((candidate) => !candidate.duplicateId && candidate.assetId !== targetDuplicateId)
       .map((duplicate) => duplicate.assetId);
-    assetIdsToUpdate.push(asset.id);
+
+    if (!assetIdsToUpdate.includes(asset.id)) {
+      assetIdsToUpdate.push(asset.id);
+    }
 
     await this.duplicateRepository.merge({
       targetId: targetDuplicateId,
       assetIds: assetIdsToUpdate,
-      sourceIds: duplicateIds,
+      sourceIds: [],
     });
     return assetIdsToUpdate;
   }

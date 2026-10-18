@@ -354,6 +354,7 @@ export const classifyDuplicateMetadata = (assets: ClassifiableAsset[]): Duplicat
         continue;
       } else if (sameAspect || sameDate || sameName) {
         allContentIdentical = false;
+        allHighConfidence = false;
         continue;
       } else {
         allContentIdentical = false;
